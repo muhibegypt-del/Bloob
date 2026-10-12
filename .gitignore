@@ -1,0 +1,35 @@
+# Extracted reference application and assets (local research inputs).
+/*TV
+/appinfo.json
+/drm.nfz
+/*.png
+/data/
+/lib/
+/res/
+/resources/
+
+# Third-party checkouts, analysis databases, downloaded runtimes, and exports
+# containing decompiled third-party implementation text.
+/research/stremio-webos-audit/
+/research/ghidra-projects/
+/research/tools/
+/research/*.formatted.js
+/research/*-decomp.txt
+/research/track-pump-constructor.txt
+/research/*.proc.txt
+
+# Local dependencies, generated frontend, and redundant packages.
+/tv-app/node_modules/
+/tv-app/dist/
+/tv-app/service/www/assets/
+/tv-app/service/www/index.html
+/tv-app/com.muhib.tvprototype_0.1.0_all.ipk
+/tv-app/artifacts/player-ui.png
+
+# Account material and local development settings.
+**/.env
+**/.env.*
+**/account.json
+**/*credentials*
+**/*.pem
+**/*.key

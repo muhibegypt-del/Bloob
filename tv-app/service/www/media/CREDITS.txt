@@ -1,0 +1,4 @@
+Big Buck Bunny (2008) © Blender Foundation / www.bigbuckbunny.org
+Licensed under Creative Commons Attribution 3.0.
+This package includes a 30-second H.264/AAC sample encoded by chthomos/video-media-samples.
+Source: https://github.com/chthomos/video-media-samples

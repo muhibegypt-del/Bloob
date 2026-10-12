@@ -1,0 +1,164 @@
+# Bloob and Buna: complete project handoff
+
+Read this file before changing the application. This repository contains an independent LG webOS TV streaming prototype, research notes about a reference app called **Elements of A**, and a plan for **Buna**, our own playback and UI runtime. The user wants a polished television experience with excellent browsing, source choice, reliable playback, accurate seeking, working audio/subtitle controls, and efficient use of the LG media pipeline. The user explicitly wants no protected-content investigation. Do not present static code analysis as a live trace.
+
+## The user's actual goal
+
+Build **Bloob**, a distinct webOS application with:
+
+1. A calm, premium TV interface: clear information hierarchy, spacious artwork, predictable focus, minimal player chrome, and graceful loading/error states. Take organizational and performance lessons from Elements of A; create original visuals, assets, text, and implementation.
+2. A direct catalog-to-playback path: browse films and series, pick an episode, discover candidate sources, resolve an authorized source through AllDebrid, select the correct file or quality when needed, and play through the TV media path.
+3. **Buna**, an app-owned runtime layer that coordinates navigation, focus, playback sessions, source adapters, media state, tracks, metrics, and lifecycle. It should be independent, testable, and able to choose a web video backend now and a more capable native or segmented backend later if evidence justifies one.
+4. Measured performance: fast first frame, stable HDR/audio output when the TV and source support it, smooth seeking, low idle overhead, memory release after exit, and no repeated work that harms TV responsiveness.
+
+The current prototype is a vertical slice, not the finished product. The user has seen a high-quality resolved stream play with HDR and Atmos on this TV, but has criticized the player overlay and source chooser. A seek bar had been unsynchronized on a prior build. Some fixes have been implemented but require renewed TV verification. The user also reported having to pair AllDebrid at every app start; persistence code exists now, but a successful pair/restart test has **not** confirmed it.
+
+## Repository and local-only material
+
+| Path | Purpose |
+| --- | --- |
+| `tv-app/src/` | SolidJS TV UI, focus/navigation, catalog and playback screens |
+| `tv-app/service/` | Local Node service for UI hosting, source discovery, AllDebrid PIN pairing, resolution, and a range-enabled test clip |
+| `tv-app/app/` | webOS app manifest and launch shell |
+| `tv-app/scripts/` | TV inspection and playback probes for our own app |
+| `tv-app/artifacts/` | Last known installable prototype IPK; rebuild after source changes |
+| `research/Elements-of-A-system-map.md` | Reference app organization, watch path, native adapter map, and evidence limits |
+| `research/Buna-player-study.md` | Focused player UI/session/seek/track analysis and translation ideas |
+| `research/live-episode-study.md` | Paid-episode process sample and pause/resume comparison |
+| `research/ghidra-scripts/` | Scripts used to inventory focused native functions |
+| `research/*.tsv` | Function and vtable inventories, not executable code |
+
+The local checkout also contains extracted reference-app files, an ARM binary, formatted code, targeted decompiler output, analysis databases, third-party tooling, and a raw process-stat capture. They are intentionally excluded from this public repository. Do not add those files or any account material. The public notes summarize behavior and preserve evidence addresses without publishing the source implementation. The repository's source of truth is the current code and the three linked research notes. Read them before asserting a behavior.
+
+Publication caveat: `main` was replaced with a clean root commit to remove the prior wording from branch history, and old local Git objects were pruned. GitHub still served the displaced commit by direct API lookup after the force push. A branch rewrite cannot guarantee server-side deletion of detached Git objects or caches. If strict server-side erasure is required, the repository owner must seek GitHub's purge process; do not claim the old object has disappeared merely because `main` is clean.
+
+## Build and deployment state
+
+- `tv-app` is a Vite 8 + SolidJS 1.9 + TypeScript project. `npm run typecheck` and `npm run build` are its main local checks.
+- From `tv-app`, run `npm install` when dependencies are absent. For a local UI/service check, start `node service/server.js`, then `npm run dev`. Vite forwards `/api` to the local service on port 8787.
+- For a TV package, build the UI, copy the generated `dist/` contents into `service/www/`, and run `ares-package app service -o .` from `tv-app`. `tv-app/README.md` has the package outline. The app ID is `com.muhib.tvprototype`; its service ID is `com.muhib.tvprototype.service`.
+- The current committed IPK is `tv-app/artifacts/com.muhib.tvprototype_0.1.0_all.ipk`. It is a snapshot of the prototype, not proof that later source changes are installed. Rebuild and inspect package contents before a TV test.
+- The rooted TV has an existing webOS CLI device alias `rootedTV`. Keep connection secrets out of scripts, docs, shell output, and Git. The user said **do not delete anything on the TV**. Use read-only inspection for reference-app study. For our app, use deliberate install/launch operations only when needed. Never remove TV files, packages, accounts, or caches merely to tidy up.
+- The workspace directory name reflects the origin of the local research material. It is not the Bloob app ID and must not be used as a product identifier.
+
+## Current Bloob architecture: exact flow
+
+### Browsing and navigation
+
+- `tv-app/src/App.tsx` owns the top-level flow: `Home` -> `Details` -> `Sources` -> `Player`. It keeps `Home` mounted under detail screens, retaining row focus and scroll position. `open`, `selectedVideo`, `showSources`, and `playback` signals are the current state machine. This is simple but should evolve into a typed navigation coordinator as flows grow.
+- `tv-app/src/keys.ts` translates LG D-pad and Back key codes. It maintains a handler stack so only the top screen handles one key event. This fixed an earlier Back bug where a single press could traverse multiple screens. Preserve this principle in Buna's input router.
+- `tv-app/src/screens/Home.tsx`, `Details.tsx`, `Sources.tsx`, and `Player.tsx` own their screen composition. `Details` loads full metadata, groups episodes by season, puts specials last, and can initiate the currently selected episode. The first-play label is still hard-coded to “Play S1 E1” and should be fixed.
+- `tv-app/src/data/cinemeta.ts` supplies movie/series metadata from Cinemeta, and art URLs from Metahub. It builds six catalog rows in parallel and keeps the bundled test row. Tile art uses small image variants and backdrop art uses medium variants to avoid needlessly decoding very large textures on the TV. External catalog and art availability are dependencies; add caching, error states, and licensing review before product release.
+- The UI remains a provisional design. The user considers the existing source chooser and player controls inadequate. Do a deliberate remote-first design pass, with visual review on the actual TV, instead of polishing the existing implementation by small cosmetic changes.
+
+### Source discovery and resolution
+
+- `tv-app/service/server.js` is a local HTTP service listening on `127.0.0.1:8787` on the TV. The app shell launches the service; it serves the UI and `/api/*` routes. It is also runnable locally with plain Node.
+- `POST /api/sources/search` accepts a `movie` or `series` type plus an IMDb-style title or episode ID. The current provider is hosted Torrentio. The service calls its stream endpoint, keeps valid magnet hashes or HTTP links, deduplicates values, extracts release title, quality, size, peers, and codec heuristically, sorts quality/peers, and caps the list at four per quality and twelve overall. These are presentation heuristics, not a trusted quality/availability score. Source discovery is external; this app does not run a scraper, torrent engine, or Stremio service.
+- `tv-app/src/screens/Sources.tsx` requests account status and sources on mount. It offers a bundled Big Buck Bunny playback test, pairing, discovered releases, manual link/magnet input, file selection, and quality selection. The current release-card list forces users to interpret noisy names. Redesign it around a recommended playable option with clear resolution, codec/HDR/audio, size, language, availability confidence, and an expandable full list. Do not falsely claim metadata the provider did not supply.
+- Pairing routes: `POST /api/pin/start` requests a device PIN; the UI polls `POST /api/pin/check` every five seconds. The AllDebrid API key remains in the local service, not in frontend state or the IPK. `GET /api/account` returns only `paired` and `persistent` booleans.
+- `tv-app/service/account-store.js` saves the key to an app-specific file under `/media/internal/com.muhib.tvprototype/` on TV, using a temporary file then rename and restricted mode. It loads on service startup. Confirm its behavior with one actual PIN pair, app/service restart, and `GET /api/account` before marking persistence solved. Do not read or print the key when verifying.
+- Link routes: `POST /api/link/unlock` can yield a direct URL, delayed state, or quality options. `POST /api/link/quality` selects a quality. `POST /api/link/delayed` polls a delayed result. Magnet routes upload an info hash or magnet, poll readiness, then list video files. `Sources.tsx` tries to choose one likely episode file: rejects sample/trailer/extras, matches season/episode naming, or picks a clearly dominant largest file; otherwise it asks the user. The UI passes one resolved URL to `Player`.
+- A resolved URL is a sensitive bearer-like value. Keep it out of logs, screenshots of developer tools, telemetry, and Git. Validate URLs and avoid sending credentials to arbitrary hosts. Use only media the user is authorized to access.
+
+### Current playback behavior and gaps
+
+- `tv-app/src/screens/Player.tsx` creates one HTML `<video playsinline>` element. On mount it sets the resolved URL, calls `load()` and `play()`. On cleanup it pauses, removes `src`, and calls `load()` to release the decoder path.
+- It samples `video.currentTime` every 500 ms because this TV provided sparse `timeupdate` events. It falls back from invalid `duration` to the last `seekable` endpoint, and tracks the last buffered endpoint. The HUD displays state, title, timeline, transport controls, and audio/subtitle menus.
+- Direction keys preview ±10 seconds; after 550 ms without another direction press, `currentTime` commits to a clamped target in the seekable range. This is not a complete trick-play model. Validate the displayed position, real media clock, seekable range, and post-seek frame on representative direct files and segmented streams. A prior version displayed 0:00 against a full duration while actual playback continued; this is why clock provenance matters.
+- HUD auto-hide is nine seconds during playback, remains visible when paused, and Back first closes a menu or pending seek, then can hide controls, then exit. The exact interaction should be redesigned and tested against remote actions.
+- Audio selection currently uses optional `video.audioTracks`; subtitles use `video.textTracks`. Some TV/container combinations expose neither even when the file has multiple tracks. The menus show truthful empty states. External subtitle acquisition and WebVTT loading are not implemented. Do not fabricate selectable tracks or assume the web video backend can switch them.
+- One resolved source reportedly played with HDR and Atmos on the user's TV. This is a user observation, not a measured codec/output-mode trace. Do not generalize to all containers, formats, or backend choices.
+- The bundled Big Buck Bunny clip is 30 seconds, H.264/AAC at 480p, served with byte-range support. See `tv-app/service/www/media/CREDITS.txt` for its CC BY 3.0 attribution. It validates basic startup, pause, seek, and cleanup; it does not validate high-quality output.
+
+## What Elements of A revealed
+
+The reference app is an independently studied installed artifact. Its shipped code and native binary are local, untracked research inputs. **Static findings** and **observed TV behavior** must remain separate.
+
+### UI and watch-action organization from shipped code
+
+1. A shelf or product widget emits a semantic `Play` or `PlayWithModal` intent with a product/playable node. It does not create the player directly.
+2. The root application resolves content type, selected episode, sign-in/profile/offer gates, playback context, and start position. It pushes a loading page, waits for its service, and lazy-loads the player page.
+3. The player page asks a shared player store to create a playback session. The session owns player selection, state callbacks, clock, buffering, tracks, reporting, and lifecycle.
+4. An HLS route uses a worker and custom `MediaSource`/`SourceBuffer` bridge. A progressive route uses `UriSource` and a native media player. The route is selected by URL/option and may stop a previous backend when switching.
+5. The page draws video through its graphics context and draws its own overlay. The native layer contains `Media::MsePlayer`, `TrackPump`, and `LgEsPlayerPalImpl`, which prepare the LG ES pipeline and submit buffered samples. Native call edges and caveats are recorded in `research/Elements-of-A-system-map.md`.
+6. The player session sends state to the UI, polls position-dependent state at 100 ms, and maintains seek, buffering, track, and post-play state. It also coordinates screen-saver suspension and teardown. The UI distinguishes full, reduced, and deck modes; short seek input previews a target and debounces the actual seek.
+7. On exit, page disposal removes callbacks, ends the session, stops the backend, releases media resources, and may transition to a next-episode or post-play page.
+
+The source app's `Luna.Media`/`Gfx` runtime is bundled with that app. webOS `luna://` services are separate. **Buna must implement its own public-facing runtime contract** and choose supported webOS backends; do not assume the reference app's bundled runtime can be linked or reused.
+
+### Native and track specifics
+
+- `Media::MsePlayer::playSource` stores source/options, changes state, sets up buffers, and attempts play. `TrackPump` reads buffered samples and calls the ES player. `LgEsPlayerPalImpl` creates an LG pipeline, gates startup on buffer state, submits samples with backpressure, applies video geometry, and clears resources on stop. These are focused decompiler conclusions, not proof each function ran in a given episode.
+- Earlier live play/exit comparison found 74 app threads and about 358 MB resident during playback, then 48 threads and about 273 MB after exit. Video/audio source-buffer and queue threads plus selected LG media device descriptors disappeared after exit. This supports explicit session teardown.
+- The HLS worker has audio/subtitle selection messages and a source-buffer shim. The progressive `UriSource` adapter's `setAudioTrack`, `setSubtitleTrack`, and `updateSubtitleTrack` methods are empty in shipped JavaScript; its thumbnail method yields no image. A generic track menu does not prove every source backend can provide track switching or thumbnails.
+- The exact LG virtual method targets beyond identified adapter edges, selected rendition, buffer depth, output mode, decoder configuration, first-frame timing, and dropped frames remain unmeasured. The user requested no protected-content work.
+
+### New paid-episode observation
+
+On 12 October 2026 an episode was visibly playing while SSH sampled the app. Its process had 74 threads and 368–374 MB resident memory across five short samples. Thread names included separate audio/video `SourceBuffer`, queue, app-ES, sink, controller, and decoder workers. A one-minute `/proc` sample during a user-reported ~30-second pause/resume found process CPU tick increments mostly 7–10 per two seconds in the quieter window and 27–84 after the rise near 19:31:03 BST. This correlates with the reported resume and suggests the retained session does substantially less work while paused. The exact key event and internal pause callback were not captured. The video source-buffer and sink thread counters alone were too sparse to identify decoding behavior. Full detail and limits are in `research/live-episode-study.md`.
+
+## Why Buna is required
+
+The existing `Player.tsx` bundles media commands, clock polling, remote input, focus, menus, state labels, and cleanup in one component. This is workable for a test clip but insufficient for multiple media backends and high-quality TV behavior. Buna should be an **app-owned layer** that preserves one consistent session contract while backends differ in seek, track, buffering, and output capabilities. The UI should consume Buna state instead of reading arbitrary media fields directly. The source chooser should hand Buna a typed, resolved source with metadata and expiry, not a bare URL.
+
+Proposed module boundaries; implement incrementally and adapt after TV measurements:
+
+```text
+CatalogProvider -> title/episode models -> PlayIntentRouter -> SourceDiscovery
+  -> SourceRanker -> DebridResolver -> ResolvedSource
+  -> BunaSessionManager -> BackendAdapter (WebVideo first; HLS/native only if justified)
+                    -> Clock + seek controller
+                    -> Track/subtitle controller
+                    -> Buffer and playback state
+                    -> Lifecycle/cleanup
+                    -> Metric events
+  -> PlayerView + TransportBar + TrackMenus + StatusOverlay
+
+RemoteInput -> FocusManager -> active screen command -> BunaSessionManager
+```
+
+Suggested typed contracts:
+
+- `PlayIntent`: content ID/type, episode ID, start position, origin screen, and user action timestamp.
+- `SourceCandidate`: provider, release identity, info hash or link, quality claims, size, codec/audio/HDR claims, peers/availability, language, and provenance. Preserve uncertainty.
+- `ResolvedSource`: playable URL held only in memory, transport type, expected expiry, optional headers, container/codec hints, file identity, and subtitle candidates. Never put it in persistent UI logs.
+- `BackendCapabilities`: seekable ranges, audio track selection, text track selection, external subtitle support, thumbnails, frame-rate matching, HDR/output information, and whether each capability was **tested on this TV**.
+- `PlaybackState`: phase (`idle`, `resolving`, `loading`, `buffering`, `playing`, `paused`, `seeking`, `ended`, `error`), source, current time, duration, buffered/seekable ranges, actual vs preview seek target, tracks, selected tracks, error, and first-frame timestamp.
+- `BunaBackend`: `prepare`, `play`, `pause`, `seek`, `selectAudio`, `selectSubtitle`, `getState`, `subscribe`, `stop`, `dispose`. Unsupported operations should return an explicit capability result.
+
+Keep data flow one way: backend events update the session; session state updates the view. Remote commands go through an input router to the active screen/session. Avoid duplicate timers, global listeners per screen, and UI state that guesses the underlying clock. A seek preview may move the visual thumb immediately, but committed position should follow a backend acknowledgement or fresh media-clock observation. Back must have one owner at a time.
+
+### Backend decision
+
+Start with the current public HTML video path because it has already played a resolved file and reportedly delivered HDR/Atmos. Do not assume that means it meets track, subtitle, seek, trick-play, output matching, or telemetry requirements. Measure those properties on representative content. A segmented/HLS adapter or native LG ES integration is justified only for a concrete, measured gap that supported public APIs cannot close. Keep native investigation focused on ordinary media behavior and do not copy extracted implementation text into the app.
+
+## Immediate work order for the next assistant
+
+1. Read `research/Elements-of-A-system-map.md`, `research/Buna-player-study.md`, and `research/live-episode-study.md`. Inspect current `tv-app/src/screens/Player.tsx`, `Sources.tsx`, `keys.ts`, and the local service. Preserve the distinction between implemented features, user reports, static findings, and TV observations.
+2. Finish the controlled runtime study. SSH `/proc` sampling works. A network-input service and capture service exist, and the TV's second-screen WebSocket port is reachable, but no paired input or screenshot client has been verified. Establish a least-privilege paired client if needed, keeping its bearer key out of Git. A TV prompt may require the user to accept it. Then capture visible control behavior and timestamps for play, pause, repeated seeking, audio/subtitle menus, Back, and exit. Do not claim autonomous control before it works.
+3. Verify the current prototype: fresh package, direct test clip, AllDebrid pair and restart persistence, one authorized resolved source, clock/seek alignment, track exposure, HDR/audio user observation, Back behavior, and decoder cleanup. Record only non-sensitive metrics and screenshots that do not disclose account data.
+4. Define Buna interfaces and extract a session controller from `Player.tsx` while retaining current working playback. Build a clock model with duration and seekable-range provenance, debounced seek preview/commit, backend capability checks, event-driven buffering, and deterministic cleanup. Make the player view a consumer of session state.
+5. Redesign Sources as a short recommendation-first decision: best supported candidate, why it was chosen, expected quality, clear fallback options, and honest progress/error states. Improve release parsing and file/episode matching; do not hide uncertainty or unverified media properties. Keep the hosted indexer behind a provider interface so another indexer can replace it without UI rewrites.
+6. Create an original design system for browsing and playback: focus ring, spacing, typography, motion, image loading, HUD states, menus, and remote interaction rules. Test on the actual TV at viewing distance. Accessibility and response to every remote key matter more than a desktop screenshot.
+7. Measure first frame, seek settle time, pause CPU, sustained memory, network/buffer behavior, and post-exit release for the same test material. Compare backend choices on equal content. Update the research ledger with observation timestamps and limitations.
+
+## Known issues and checks before calling the slice complete
+
+| Area | Current state | Completion evidence |
+| --- | --- | --- |
+| AllDebrid persistence | Save/load code exists; TV restart test pending | Pair once, restart app/service, `GET /api/account` reports `paired: true`, `persistent: true` without re-entering PIN |
+| Source chooser | Indexed cards exist but are noisy and user-disliked | User can identify and start a recommended source without reading raw release jargon; alternate/file/quality decisions remain clear |
+| Seek clock | 500 ms polling and seekable clamping implemented | On real direct and segmented media, displayed time follows playback, preview vs actual target is clear, post-seek video catches up, and end behavior is correct |
+| Audio/subtitles | Public video-element track menus; often no exposed tracks | Menu shows actual available tracks, switching demonstrably changes output, external subtitles work if included as a requirement |
+| Player aesthetic | Provisional overlay | Remote-first design review and observed TV interaction pass |
+| Backend efficiency | User observed smooth high-quality output; limited process snapshots | Measured first-frame, CPU, memory, seek, output mode, and cleanup on repeatable content |
+| Reference runtime study | Strong static call map plus two limited TV observations | Timestamped key/UI/player/media trace without account or stream identifiers |
+
+## Safe working rules
+
+- The TV is rooted, but root access is for narrow inspection and our explicitly requested app deployment. **Do not delete any TV data or packages.** Do not alter the reference app. Do not collect account keys, passwords, full stream URLs, or protected-content details.
+- Do not commit the local extracted executable, bundled code/assets, decompiler output, Ghidra databases, raw process-stat capture, downloaded tooling, or any token-bearing file. Read `.gitignore` and inspect staged content before every push. The IPK currently committed was scanned for the terminology being removed, but rebuilds need the same check.
+- Keep the repository's public terminology consistent: call the studied reference **Elements of A**. Use **Buna** for our original runtime and **Bloob** for the product. Avoid source-app identifiers and executable names in tracked text, paths, generated packages, and commit metadata.
+- For every reverse engineering claim, label it **static evidence**, **live observation**, **user report**, or **design proposal**. Symbols and decompiler output show potential code paths; only a measured TV trace proves a path ran in that session.
+- When testing external sources, use content the user is authorized to watch. Keep resolver and indexer integrations replaceable and respect their terms and rate limits. No reference-app code or assets belong in Bloob.

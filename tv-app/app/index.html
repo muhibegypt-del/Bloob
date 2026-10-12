@@ -1,0 +1,14 @@
+<!doctype html><html><head><meta charset="utf-8"><title>TV Prototype</title></head>
+<body style="background:#060709;color:#fff;font:24px sans-serif;display:grid;place-items:center;height:100vh;margin:0">
+<div id="status">Opening TV Prototype…</div>
+<script>
+var bridge = new PalmServiceBridge();
+bridge.onservicecallback = function (response) {
+  try {
+    var data = JSON.parse(response);
+    if (data.ready) location.replace('http://127.0.0.1:' + data.port + '/');
+    else document.getElementById('status').textContent = 'The local service did not start.';
+  } catch (e) { document.getElementById('status').textContent = 'Could not open the app.'; }
+};
+bridge.call('luna://com.muhib.tvprototype.service/start', '{}');
+</script></body></html>

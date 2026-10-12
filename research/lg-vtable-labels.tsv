@@ -1,0 +1,6 @@
+01208d24	_ZTV15TypeDelegateArgI17LgEsPlayerPalImplMS0_FvRKNS0_10LgEventArgEES1_E
+01208d24	TypeDelegateArg<LgEsPlayerPalImpl,void(LgEsPlayerPalImpl::*)(LgEsPlayerPalImpl::LgEventArg_const&),LgEsPlayerPalImpl::LgEventArg>::vtable
+01208d38	_ZTV23TypeDeferredDelegateArgIN17LgEsPlayerPalImpl10LgEventArgEE
+01208d38	TypeDeferredDelegateArg<LgEsPlayerPalImpl::LgEventArg>::vtable
+01208d4c	_ZTV17LgEsPlayerPalImpl
+01208d4c	LgEsPlayerPalImpl::vtable
