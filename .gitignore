@@ -33,3 +33,6 @@
 **/*credentials*
 **/*.pem
 **/*.key
+
+# Local AllDebrid pairing written by a locally run service.
+/tv-app/service/.data/

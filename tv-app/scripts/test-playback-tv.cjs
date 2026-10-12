@@ -48,7 +48,7 @@ http.get(`http://localhost:${port}/json/list`, response => {
           await key('Enter', 13);
           await key('Enter', 13);
           await wait(3000);
-          console.log(await evaluate('JSON.stringify({title:document.querySelector(".sources-screen h1")?.innerText,searching:document.querySelector(".source-divider")?.innerText,results:document.querySelectorAll(".discovered-list .source-option").length,message:document.querySelector(".source-message")?.innerText})'));
+          console.log(await evaluate('JSON.stringify({title:document.querySelector(".sources-screen h1")?.innerText,recommended:document.querySelector(".source-hero-title")?.innerText,results:document.querySelectorAll(".source-row[data-key^=\\"cand:\\"]").length,banner:document.querySelector(".sources-banner")?.innerText,empty:document.querySelector(".source-empty")?.innerText})'));
           ws.close();
           return setTimeout(() => process.exit(), 100);
         }
@@ -56,7 +56,7 @@ http.get(`http://localhost:${port}/json/list`, response => {
           await send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Backspace', code: 'Backspace', windowsVirtualKeyCode: 8, nativeVirtualKeyCode: 8 });
           await send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Backspace', code: 'Backspace', windowsVirtualKeyCode: 8, nativeVirtualKeyCode: 8 });
           await wait(500);
-          console.log(await evaluate('JSON.stringify({playerVisible:!!document.querySelector("video"),sourcePicker:!!document.querySelector(".sources-screen")})'));
+          console.log(await evaluate('JSON.stringify({playerVisible:!!document.querySelector("video"),sourcePicker:!!document.querySelector(".screen:not(.hidden) .sources-screen"),session:window.__buna&&window.__buna.state()})'));
           ws.close();
           return setTimeout(() => process.exit(), 100);
         }
@@ -68,7 +68,8 @@ http.get(`http://localhost:${port}/json/list`, response => {
           await wait(500);
         }
         await wait(6000);
-        console.log(await evaluate('JSON.stringify((()=>{const v=document.querySelector("video");return {screen:!!v,src:v?.currentSrc,paused:v?.paused,time:v?.currentTime,readyState:v?.readyState,networkState:v?.networkState,errorCode:v?.error?.code,state:document.querySelector(".player-state")?.innerText}})())'));
+        // Buna state and metrics carry no URLs; the raw element fields are for cross-checking the clock.
+        console.log(await evaluate('JSON.stringify((()=>{const v=document.querySelector("video");const s=window.__buna&&window.__buna.state();return {screen:!!v,paused:v?.paused,time:v?.currentTime,readyState:v?.readyState,networkState:v?.networkState,errorCode:v?.error?.code,buna:s&&{phase:s.phase,position:s.position,positionSource:s.positionSource,duration:s.duration,durationSource:s.durationSource,firstFrameMs:s.firstFrameMs,error:s.error},metrics:window.__buna&&window.__buna.metrics()}})())'));
       } catch (error) { console.error(error.message); process.exitCode = 1; }
       ws.close();
       setTimeout(() => process.exit(), 100);

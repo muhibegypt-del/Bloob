@@ -1,12 +1,17 @@
 {
-  "name": "stremio-tv-ui",
+  "name": "bloob-tv",
   "private": true,
-  "version": "0.0.1",
+  "version": "0.2.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:e2e": "vite build && node scripts/e2e-player.mjs",
+    "check": "tsc --noEmit && vitest run && vite build && node scripts/e2e-player.mjs",
+    "stage": "node scripts/stage.mjs",
+    "package": "vite build && node scripts/stage.mjs && ares-package app service -o artifacts"
   },
   "dependencies": {
     "@fontsource-variable/inter": "^5.3.0",
@@ -14,8 +19,10 @@
   },
   "devDependencies": {
     "@webos-tools/cli": "^3.2.6",
+    "playwright-core": "^1.56.1",
     "typescript": "^7.0.2",
     "vite": "^8.3.4",
-    "vite-plugin-solid": "^2.11.14"
+    "vite-plugin-solid": "^2.11.14",
+    "vitest": "^5.0.4"
   }
 }

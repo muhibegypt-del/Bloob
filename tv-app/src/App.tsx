@@ -1,44 +1,52 @@
 import { createSignal, onMount, Show } from 'solid-js';
+import type { PlayIntent, ResolvedSource } from './buna';
 import { cinemeta, demoRow } from './data/cinemeta';
 import type { MetaPreview, Row, Video } from './data/types';
 import { Details } from './screens/Details';
 import { Home } from './screens/Home';
-import { Sources } from './screens/Sources';
 import { Player } from './screens/Player';
+import { Sources } from './screens/Sources';
 
-const source = cinemeta;
+const catalog = cinemeta;
+
+/** Navigation state. Each layer stays mounted beneath the next so focus and scroll survive Back. */
+interface Playback { intent: PlayIntent; source: ResolvedSource }
 
 export function App() {
   const [rows, setRows] = createSignal<Row[]>([demoRow]);
   onMount(() => {
-    source.homeRows().then(setRows).catch((error) => console.warn('Catalog unavailable:', error));
+    catalog.homeRows().then(setRows).catch((error) => console.warn('Catalog unavailable:', error));
   });
-  const [open, setOpen] = createSignal<MetaPreview | null>(null);
-  const [selectedVideo, setSelectedVideo] = createSignal<Video | undefined>();
-  const [showSources, setShowSources] = createSignal(false);
-  const [playback, setPlayback] = createSignal<{ url: string; title: string } | null>(null);
+  const [title, setTitle] = createSignal<MetaPreview | null>(null);
+  const [sourcesFor, setSourcesFor] = createSignal<{ video?: Video } | null>(null);
+  const [playback, setPlayback] = createSignal<Playback | null>(null);
 
-  const closeDetails = () => { setOpen(null); setSelectedVideo(undefined); };
-  const chooseSource = (video?: Video) => { setSelectedVideo(video); setShowSources(true); };
+  const closeDetails = () => { setSourcesFor(null); setTitle(null); };
+  const openSources = (video?: Video) => setSourcesFor({ video });
 
   return (
     <>
-      {/* Home stays mounted underneath Details so its focus and scroll survive. */}
-      <div class="screen" classList={{ hidden: !!open() || !!playback() }}>
-        <Home rows={rows()} active={!open()} onOpen={setOpen} />
+      <div class="screen" classList={{ hidden: !!title() || !!playback() }}>
+        <Home rows={rows()} active={!title()} onOpen={setTitle} />
       </div>
-      <Show when={open() && !showSources() && !playback() ? open() : null} keyed>
+      <Show when={title()} keyed>
         {(item) => (
-          <div class="screen">
-            <Details source={source} item={item} active onBack={closeDetails} onPlay={chooseSource} />
+          <div class="screen" classList={{ hidden: !!sourcesFor() || !!playback() }}>
+            <Details source={catalog} item={item} active={!sourcesFor() && !playback()} onBack={closeDetails} onPlay={openSources} />
           </div>
         )}
       </Show>
-      <Show when={open() && showSources() && !playback() ? open() : null} keyed>
-        {(item) => <Sources item={item} video={selectedVideo()} onBack={() => setShowSources(false)} onPlay={(url, title) => setPlayback({ url, title })} />}
+      <Show when={title() && sourcesFor() ? { item: title()!, video: sourcesFor()!.video } : null} keyed>
+        {(target) => (
+          <div class="screen" classList={{ hidden: !!playback() }}>
+            <Sources item={target.item} video={target.video} active={!playback()}
+              onBack={() => setSourcesFor(null)}
+              onPlay={(intent, source) => setPlayback({ intent, source })} />
+          </div>
+        )}
       </Show>
       <Show when={playback()} keyed>
-        {(session) => <Player url={session.url} title={session.title} onBack={() => setPlayback(null)} />}
+        {(session) => <Player intent={session.intent} source={session.source} onExit={() => setPlayback(null)} />}
       </Show>
     </>
   );

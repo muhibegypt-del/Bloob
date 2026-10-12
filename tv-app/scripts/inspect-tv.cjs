@@ -2,7 +2,14 @@
 const http = require('http');
 
 const port = Number(process.argv[2] || 3600);
-const expression = process.argv[3] === 'probe'
+// Modes: probe | state | media | tracks | buna | account | (default page summary).
+// `buna` returns playback state and timing metrics (no URLs). `account` reports
+// AllDebrid pairing and where it is saved, never the key.
+const expression = process.argv[3] === 'buna'
+  ? 'JSON.stringify({state:window.__buna&&window.__buna.state(),metrics:window.__buna&&window.__buna.metrics()})'
+  : process.argv[3] === 'account'
+  ? '(async()=>JSON.stringify(await (await fetch("/api/account")).json()))()'
+  : process.argv[3] === 'probe'
   ? '(async()=>{const m=await fetch("/media/big-buck-bunny-480p-30sec.mp4",{headers:{Range:"bytes=0-1023"}});const s=await fetch("/api/sources/search",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({type:"movie",id:"tt1254207"})});const j=await s.json();const a=await (await fetch("/api/account")).json();return JSON.stringify({mediaStatus:m.status,mediaRange:m.headers.get("content-range"),searchStatus:s.status,sources:j.sources?.length,paired:a.paired,error:j.error})})()'
   : process.argv[3] === 'state'
   ? 'JSON.stringify({player:!!document.querySelector("video"),sources:document.querySelector(".sources-screen h1")?.innerText,details:!!document.querySelector(".details-body"),focus:document.querySelector(".focused")?.innerText?.slice(0,100),hud:document.querySelector(".player-hud")?.innerText,video:(()=>{const v=document.querySelector("video");return v&&{time:v.currentTime,paused:v.paused,ready:v.readyState}})()})'

@@ -1,17 +1,19 @@
-// Standalone webOS service: serves the TV UI and handles AllDebrid pairing/resolution.
-// No Stremio service or torrent engine is required for this prototype.
+// Bloob's local webOS service: serves the TV UI and handles source discovery,
+// AllDebrid pairing, and link resolution. Runs on the TV or locally with Node.
+// Keep this file compatible with the TV's older Node runtime (no `?.` / `??`).
 const http = require('http');
 const https = require('https');
 const fs = require('fs');
 const path = require('path');
 const accountStore = require('./account-store');
+const { parseStreams } = require('./release');
 
 const PORT = Number(process.env.TV_APP_PORT || 8787);
-const UI_DIR = path.join(__dirname, 'www');
+const UI_DIR = path.resolve(process.env.TV_APP_UI_DIR || path.join(__dirname, 'www'));
 const API = 'api.alldebrid.com';
 const SOURCE_HOST = 'torrentio.strem.fun';
+const PROVIDER = 'Torrentio';
 let apiKey = process.env.ALLDEBRID_API_KEY || '';
-let accountSaved = false;
 let pendingPin = null;
 let ready = false;
 const pendingStarts = [];
@@ -26,40 +28,53 @@ function reply(res, status, value) {
   res.end(body);
 }
 
+class HttpError extends Error {
+  constructor(status, message) { super(message); this.status = status; }
+}
+
 function readBody(req) {
   return new Promise((resolve, reject) => {
     let body = '';
     req.on('data', chunk => {
       body += chunk;
       if (body.length > 16384) {
-        reject(new Error('Request is too large'));
+        reject(new HttpError(413, 'Request is too large'));
         req.destroy();
       }
     });
     req.on('end', () => {
       try { resolve(body ? JSON.parse(body) : {}); }
-      catch (_) { reject(new Error('Invalid JSON')); }
+      catch (_) { reject(new HttpError(400, 'Invalid JSON')); }
     });
     req.on('error', reject);
   });
 }
 
+// Only this app may call the API. A web page elsewhere on the TV could otherwise
+// send "simple" cross-site POSTs (CSRF) or reach the service by DNS rebinding.
+function trustedRequest(req) {
+  const host = String(req.headers.host || '').replace(/:\d+$/, '');
+  if (host !== '127.0.0.1' && host !== 'localhost') return false;
+  if (req.method === 'POST' && !/^application\/json\b/i.test(String(req.headers['content-type'] || ''))) return false;
+  return true;
+}
+
+// AllDebrid rejects revoked or invalid keys with these codes.
+const AUTH_ERRORS = /^AUTH_(BAD_APIKEY|BLOCKED|USER_BANNED|MISSING_APIKEY)/;
+
 function alldebrid(endpoint, fields, authenticated = true) {
   return new Promise((resolve, reject) => {
-    if (authenticated && !apiKey) return reject(new Error('Pair AllDebrid first'));
+    if (authenticated && !apiKey) return reject(new HttpError(401, 'Connect AllDebrid first'));
     const data = fields ? new URLSearchParams(fields).toString() : '';
     const request = https.request({
       hostname: API,
       path: endpoint,
       method: fields ? 'POST' : 'GET',
       timeout: 20000,
-      headers: {
-        ...(authenticated ? { Authorization: `Bearer ${apiKey}` } : {}),
-        ...(fields ? {
-          'Content-Type': 'application/x-www-form-urlencoded',
-          'Content-Length': Buffer.byteLength(data),
-        } : {}),
-      },
+      headers: Object.assign(
+        authenticated ? { Authorization: `Bearer ${apiKey}` } : {},
+        fields ? { 'Content-Type': 'application/x-www-form-urlencoded', 'Content-Length': Buffer.byteLength(data) } : {},
+      ),
     }, response => {
       let text = '';
       response.on('data', chunk => { text += chunk; });
@@ -68,10 +83,16 @@ function alldebrid(endpoint, fields, authenticated = true) {
           const result = JSON.parse(text);
           if (result.status !== 'success') {
             const apiError = result.error || {};
+            if (authenticated && AUTH_ERRORS.test(String(apiError.code || ''))) {
+              // The key was revoked: forget it so the UI asks to pair again.
+              apiKey = '';
+              accountStore.clear().catch(() => {});
+              return reject(new HttpError(401, 'AllDebrid no longer accepts this TV. Connect it again.'));
+            }
             return reject(new Error(apiError.message || apiError.code || 'AllDebrid request failed'));
           }
           resolve(result.data);
-        } catch (error) { reject(error); }
+        } catch (error) { reject(new Error('AllDebrid returned an unreadable response')); }
       });
     });
     request.on('timeout', () => request.destroy(new Error('AllDebrid timed out')));
@@ -85,11 +106,13 @@ function isHttpUrl(value) {
   catch (_) { return false; }
 }
 
-function videoFiles(nodes, result = []) {
+const VIDEO_FILE = /\.(mp4|mkv|m4v|mov|webm|ts|m2ts|avi)$/i;
+
+function videoFiles(nodes, result = [], folder = '') {
   for (const node of nodes || []) {
-    if (node.e) videoFiles(node.e, result);
-    else if (node.l && /\.(mp4|mkv|m4v|mov|webm|ts|avi)$/i.test(node.n || '')) {
-      result.push({ name: node.n, size: node.s || 0, link: node.l });
+    if (node.e) videoFiles(node.e, result, folder ? `${folder}/${node.n}` : node.n);
+    else if (node.l && VIDEO_FILE.test(node.n || '')) {
+      result.push({ name: node.n, path: folder ? `${folder}/${node.n}` : node.n, size: node.s || 0, link: node.l });
     }
   }
   return result.sort((a, b) => b.size - a.size);
@@ -99,9 +122,9 @@ function discover(type, id) {
   return new Promise((resolve, reject) => {
     const request = https.get({
       hostname: SOURCE_HOST,
-      path: `/stream/${type}/${id}.json`,
+      path: `/stream/${type}/${encodeURIComponent(id).replace(/%3A/g, ':')}.json`,
       timeout: 15000,
-      headers: { Accept: 'application/json' },
+      headers: { Accept: 'application/json', 'User-Agent': 'Bloob/0.2 (webOS)' },
     }, response => {
       if (response.statusCode !== 200) {
         response.resume();
@@ -113,49 +136,25 @@ function discover(type, id) {
         if (body.length > 5000000) request.destroy(new Error('Source list is too large'));
       });
       response.on('end', () => {
-        try {
-          const seen = new Set();
-          const streams = JSON.parse(body).streams || [];
-          const sources = streams.flatMap(stream => {
-            const hash = String(stream.infoHash || '').toLowerCase();
-            const url = String(stream.url || '');
-            const kind = /^[a-f0-9]{40}$/.test(hash) ? 'magnet' : isHttpUrl(url) ? 'link' : '';
-            const value = kind === 'magnet' ? hash : url;
-            if (!kind || seen.has(value)) return [];
-            seen.add(value);
-            const raw = String(stream.title || stream.name || 'Source');
-            const release = raw.split('\n')[0].replace(/\s+/g, ' ').trim().slice(0, 120);
-            const quality = /\b(2160p|4k|1080p|720p|480p)\b/i.exec(raw + ' ' + (stream.name || ''));
-            const size = /💾\s*([\d.]+\s*[TGMK]B)/i.exec(raw);
-            const peers = /👤\s*([\d,]+)/.exec(raw);
-            const codec = /\b(x265|hevc|h\.?265|x264|h\.?264|av1)\b/i.exec(raw);
-            const qualityLabel = quality ? (/^(2160p|4k)$/i.test(quality[1]) ? '4K' : quality[1].toLowerCase()) : '';
-            return [{
-              kind, value, release: release || 'Unnamed release',
-              quality: qualityLabel,
-              size: size ? size[1].replace(/\s+/g, ' ') : '',
-              peers: peers ? Number(peers[1].replace(/,/g, '')) : null,
-              codec: codec ? codec[1].toUpperCase() : '',
-              provider: 'Torrentio',
-            }];
-          });
-          const rank = { '4K': 0, '1080p': 1, '720p': 2, '480p': 3 };
-          sources.sort((a, b) => {
-            const qualityOrder = (rank[a.quality] === undefined ? 4 : rank[a.quality]) - (rank[b.quality] === undefined ? 4 : rank[b.quality]);
-            return qualityOrder || (b.peers || 0) - (a.peers || 0);
-          });
-          const counts = {};
-          resolve(sources.filter(source => {
-            const group = source.quality || 'OTHER';
-            counts[group] = (counts[group] || 0) + 1;
-            return counts[group] <= 4;
-          }).slice(0, 12));
-        } catch (error) { reject(error); }
+        try { resolve(parseStreams(JSON.parse(body).streams, PROVIDER)); }
+        catch (_) { reject(new Error('Source indexer returned an unreadable response')); }
       });
     });
     request.on('timeout', () => request.destroy(new Error('Source search timed out')));
     request.on('error', reject);
   });
+}
+
+function accountStatus() {
+  const storage = accountStore.getStatus();
+  return {
+    paired: !!apiKey,
+    persistent: !!storage.location,
+    storage: storage.location,
+    durable: storage.durable,
+    // Which locations were tried and why they failed; contains no key material.
+    attempts: storage.attempts,
+  };
 }
 
 async function handleApi(req, res, pathname) {
@@ -166,10 +165,11 @@ async function handleApi(req, res, pathname) {
     if (!['movie', 'series'].includes(type) || !/^tt\d+(?::\d+:\d+)?$/.test(id)) {
       return reply(res, 400, { error: 'Invalid title or episode ID' });
     }
-    return reply(res, 200, { provider: 'Torrentio', sources: await discover(type, id) });
+    if (type === 'series' && !/:\d+:\d+$/.test(id)) return reply(res, 400, { error: 'Choose an episode first' });
+    return reply(res, 200, { provider: PROVIDER, sources: await discover(type, id) });
   }
   if (pathname === '/api/account' && req.method === 'GET') {
-    return reply(res, 200, { paired: !!apiKey, persistent: accountSaved });
+    return reply(res, 200, accountStatus());
   }
   if (pathname === '/api/pin/start' && req.method === 'POST') {
     const data = await alldebrid('/v4.1/pin/get', null, false);
@@ -182,15 +182,10 @@ async function handleApi(req, res, pathname) {
     if (data.activated && data.apikey) {
       apiKey = data.apikey;
       pendingPin = null;
-      try {
-        await accountStore.save(apiKey);
-        accountSaved = true;
-      } catch (error) {
-        accountSaved = false;
-        console.error('Could not save AllDebrid pairing:', error.message);
-      }
+      const saved = await accountStore.save(apiKey);
+      if (!saved.location) console.error('Could not save AllDebrid pairing:', JSON.stringify(saved.attempts));
     }
-    return reply(res, 200, { paired: !!apiKey, persistent: accountSaved, expiresIn: data.expires_in });
+    return reply(res, 200, Object.assign(accountStatus(), { expiresIn: data.expires_in }));
   }
   if (pathname === '/api/link/unlock' && req.method === 'POST') {
     if (!isHttpUrl(input.link)) return reply(res, 400, { error: 'Enter an HTTP or HTTPS link' });
@@ -202,12 +197,13 @@ async function handleApi(req, res, pathname) {
       id: data.id || null,
       streams: data.streams || [],
       filename: data.filename || '',
+      filesize: data.filesize || 0,
     });
   }
   if (pathname === '/api/link/quality' && req.method === 'POST') {
     if (!input.id || !input.stream) return reply(res, 400, { error: 'Choose a quality' });
     const data = await alldebrid('/v4/link/streaming', { id: String(input.id), stream: String(input.stream) });
-    return reply(res, 200, { state: data.delayed ? 'waiting' : 'ready', url: data.link || null, delayed: data.delayed || null });
+    return reply(res, 200, { state: data.delayed ? 'waiting' : 'ready', url: data.link || null, delayed: data.delayed || null, filename: data.filename || '' });
   }
   if (pathname === '/api/link/delayed' && req.method === 'POST') {
     if (!input.id) return reply(res, 400, { error: 'Missing delayed link ID' });
@@ -221,15 +217,23 @@ async function handleApi(req, res, pathname) {
     }
     const data = await alldebrid('/v4/magnet/upload', { 'magnets[]': value });
     const magnet = data.magnets && data.magnets[0];
-    if (magnet && magnet.error) throw new Error(magnet.error.message || magnet.error.code);
+    if (!magnet) throw new Error('AllDebrid did not accept the magnet');
+    if (magnet.error) throw new Error(magnet.error.message || magnet.error.code);
     return reply(res, 200, { id: magnet.id, ready: !!magnet.ready, name: magnet.name });
   }
   if (pathname === '/api/magnet/status' && req.method === 'POST') {
     if (!/^\d+$/.test(String(input.id || ''))) return reply(res, 400, { error: 'Missing magnet ID' });
     const data = await alldebrid('/v4.1/magnet/status', { id: String(input.id) });
-    const magnet = data.magnets && data.magnets[0];
+    const magnet = data.magnets && (Array.isArray(data.magnets) ? data.magnets[0] : data.magnets);
     if (!magnet) return reply(res, 404, { error: 'Magnet not found' });
-    return reply(res, 200, { ready: magnet.statusCode === 4, status: magnet.status, downloaded: magnet.downloaded || 0, size: magnet.size || 0 });
+    return reply(res, 200, {
+      ready: magnet.statusCode === 4,
+      failed: magnet.statusCode >= 5,
+      status: magnet.status,
+      downloaded: magnet.downloaded || 0,
+      size: magnet.size || 0,
+      speed: magnet.downloadSpeed || 0,
+    });
   }
   if (pathname === '/api/magnet/files' && req.method === 'POST') {
     if (!/^\d+$/.test(String(input.id || ''))) return reply(res, 400, { error: 'Missing magnet ID' });
@@ -248,9 +252,15 @@ function serveUi(req, res, pathname) {
     if (error && pathname.startsWith('/media/')) return reply(res, 404, { error: 'Media file not found' });
     const target = error || !stat.isFile() ? path.join(UI_DIR, 'index.html') : file;
     if (path.extname(target) === '.mp4') {
-      const range = /^bytes=(\d+)-(\d*)$/.exec(req.headers.range || '');
-      const start = range ? Number(range[1]) : 0;
-      const end = range && range[2] ? Math.min(Number(range[2]), stat.size - 1) : stat.size - 1;
+      const range = /^bytes=(\d*)-(\d*)$/.exec(req.headers.range || '');
+      let start = 0;
+      let end = stat.size - 1;
+      if (range && range[1]) {
+        start = Number(range[1]);
+        if (range[2]) end = Math.min(Number(range[2]), stat.size - 1);
+      } else if (range && range[2]) {
+        start = Math.max(0, stat.size - Number(range[2])); // suffix range: last N bytes
+      }
       if (start > end || start >= stat.size) {
         res.writeHead(416, { 'Content-Range': `bytes */${stat.size}` });
         return res.end();
@@ -272,20 +282,20 @@ function serveUi(req, res, pathname) {
 }
 
 const accountReady = accountStore.load().then(saved => {
-  if (saved) {
-    if (!apiKey) apiKey = saved;
-    accountSaved = true;
-  }
+  if (saved && !apiKey) apiKey = saved;
 }).catch(error => console.error('Could not load AllDebrid pairing:', error.message));
 
-http.createServer((req, res) => {
+const server = http.createServer((req, res) => {
   const pathname = new URL(req.url, `http://127.0.0.1:${PORT}`).pathname;
   if (pathname.startsWith('/api/')) {
-    handleApi(req, res, pathname).catch(error => reply(res, 502, { error: error.message || 'Service error' }));
+    if (!trustedRequest(req)) return reply(res, 403, { error: 'Forbidden' });
+    handleApi(req, res, pathname).catch(error => reply(res, error.status || 502, { error: error.message || 'Service error' }));
   } else if (req.method === 'GET' || req.method === 'HEAD') {
     serveUi(req, res, pathname);
   } else reply(res, 405, { error: 'Method not allowed' });
-}).listen(PORT, '127.0.0.1', async () => {
+});
+
+server.listen(PORT, '127.0.0.1', async () => {
   await accountReady;
   ready = true;
   pendingStarts.splice(0).forEach(message => message.respond({ ready: true, port: PORT }));
@@ -304,3 +314,5 @@ try {
 } catch (_) {
   // Allows running the same server locally with plain Node.js.
 }
+
+module.exports = { server, trustedRequest };
