@@ -4,6 +4,7 @@ An LG webOS TV playback prototype and a research notebook for an independent pla
 
 - [TV app source and build instructions](tv-app/README.md)
 - [Native runtime reconstruction target](docs/Buna-native-runtime-target.md)
+- [Verified 32-bit ARM build and load probe](native-host/README.md)
 - [QML experiment and its failed TV acceptance](native-app/README.md)
 - [Complete project handoff for the next assistant](CLAUDE.md)
 - [Observed Elements of A system map](research/Elements-of-A-system-map.md)

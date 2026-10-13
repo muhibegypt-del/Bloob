@@ -27,9 +27,11 @@ manifest alone does not create the native host, renderer or media adapter.
 1. **Host:** a webOS `type: native` executable for this TV's 32-bit ARM userland.
    It initializes platform display/input/media connections, an application
    controller, graphics resources and one script/event thread if scripting is
-   retained. It owns orderly teardown. The current Windows workspace has no
-   ARM compiler; obtain a toolchain and a matching TV sysroot before claiming a
-   build. Do not package the reference executable or its libraries.
+   retained. It owns orderly teardown. A local Zig cross compiler now produces
+   a matching ARM EABI executable and a simple probe ran on the TV; see
+   `native-host/README.md`. A matching platform API/sysroot contract is still
+   needed for graphics and media. Do not package the reference executable or
+   its libraries.
 2. **Event bridge:** receive remote keys, visibility, resume and close events;
    timestamp and queue them. Deliver each event once to the active page. The
    controller turns a focused card action into a typed `OpenDetails`, `Play`,
@@ -80,7 +82,7 @@ product acceptance result. The REA server identified the local reference ELF
 as ARM, but its configured Windows deep-analysis providers were unavailable;
 the existing Ghidra notes remain the basis for the cited native calls.
 
-We do not yet have a verified Bloob native binary, a matching build sysroot,
+We have only a verified ARM load probe, not a Bloob native UI host or a matching platform API/sysroot,
 the precise LG media interface contract for this TV, a timestamped reference
 input-to-frame trace, or a resolved-title playback pass in a native host.
 Those are implementation work, not evidence that the goal is impossible.

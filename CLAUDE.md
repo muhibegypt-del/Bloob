@@ -1,5 +1,9 @@
 # Bloob and Buna: complete project handoff
 
+## ARM toolchain proof (13 October 2026)
+
+The TV's 32-bit userland and reference executable both use ARM EABI v5 soft-float (`e_flags=0x05000200`) with `/lib/ld-linux.so.3`; the TV reports glibc 2.35. An official Zig 0.15.2 compiler was downloaded and SHA-256 checked into the ignored `research/tools/` area. `zig cc -target arm-linux-gnueabi.2.35` produced `native-host/build/buna-abi-probe`, whose ELF header matches the reference on these fields. It ran from `/tmp` on the TV and exited 0 after printing its marker. This solves the compiler/loader question only; it is not a UI or player. See `native-host/README.md`. The owner need not install anything or provide additional credentials. Do not remove TV files, including this probe.
+
 ## QML experiment failed owner acceptance (13 October 2026)
 
 The owner reported that the installed `com.muhib.bloob.native` v0.2.2 UI and video do not work in normal use. Earlier brief confirmations of a moving Big Buck Bunny clip and the source-screen screenshot were too narrow to call it working. Do not present this package as a successful native Bloob. The older working `com.muhib.tvprototype` app was relaunched to the foreground; no TV files or packages were deleted. The user's requested path is an original app-owned native runtime shaped by the reference architecture, not further QML polish. Read `docs/Buna-native-runtime-target.md` before new implementation.

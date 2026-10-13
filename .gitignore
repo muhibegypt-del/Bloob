@@ -33,6 +33,7 @@
 /tv-app/artifacts/com.muhib.bloob.native_*.ipk
 !/tv-app/artifacts/com.muhib.bloob.native_0.2.2_all.ipk
 /native-app/artifacts/
+/native-host/build/
 
 # Account material and local development settings.
 **/.env
