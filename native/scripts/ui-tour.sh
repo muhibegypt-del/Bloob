@@ -56,13 +56,14 @@ run task 0 \
   "wait:800" 'media:{"seekDone":{}}' \
   "key:down" "key:right" "key:ok" "wait:500" "snap:16-player-audio" \
   "key:down" "key:ok" 'media:{"trackSelected":{"type":"audio","index":1}}' "wait:300" "snap:17-player-audio-changed" \
-  "key:back" "wait:6000" "window:focus-lost" "wait:400" "snap:17a-player-under-quick-menu" "window:focus-gained" \
+  "key:back" "wait:2000" 'media:{"currentTime":{"currentTime":786000}}' "wait:2000" 'media:{"currentTime":{"currentTime":788000}}' \
+  "wait:2000" 'media:{"currentTime":{"currentTime":790000}}' "window:focus-lost" 'media:{"currentTime":{"currentTime":790400}}'  "wait:400" "snap:17a-player-under-quick-menu" "window:focus-gained" \
   'media:{"unloadCompleted":{}}' "wait:900" "snap:17b-player-reconnecting" \
   'media:{"loadCompleted":{}}' "media:$SRC" "media:$VI" 'media:{"playing":{}}' "wait:300" \
   "window:hidden" 'media:{"unloadCompleted":{}}' "wait:300" "window:shown" "wait:300" \
   'media:{"loadCompleted":{}}' "media:$SRC" "media:$VI" 'media:{"playing":{}}' "wait:300" \
   'media:{"endOfStream":{}}' "wait:600" "snap:18-player-up-next" \
-  "key:back" "key:back" "key:back" "key:back" "wait:1500" "snap:19-back-to-details" \
+  "key:back" "key:back" "key:back" "wait:1500" "snap:19-back-to-details" \
   "key:back" "wait:1500" "snap:20-back-to-home" \
   "key:up" "key:up" "key:up" "key:up" "wait:400" "snap:21-tabs" \
   "key:left" "key:left" "key:down" "key:right" "key:right" "key:right" "key:ok" "key:down" "key:down" "key:down" "key:ok" \

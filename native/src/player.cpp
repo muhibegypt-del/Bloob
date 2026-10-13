@@ -629,7 +629,10 @@ class PlayerScreen : public Screen {
   void draw_up_next() {
     Ctx &c = ctx();
     const NextEpisode &n = *req_.next;
-    c.gfx.gradient_v(0, H - 520, W, 520, rgba(0x000000), 0, 230);
+    // Bright end credits must not wash out the text: a corner scrim, not a dimmed frame.
+    c.gfx.gradient_v(0, H - 680, W, 260, rgba(0x000000), 0, 150);
+    c.gfx.fill_rect(0, H - 420, W, 420, rgba(0x000000, 150));
+    c.gfx.gradient_v(0, H - 420, W, 420, rgba(0x000000), 0, 90);
     long long elapsed = c.now - up_next_at_;
     long long left = std::max(0LL, (kUpNextMs - elapsed + 999) / 1000);
     int x = margin, y = H - 380;

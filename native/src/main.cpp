@@ -590,6 +590,13 @@ class App {
     SDL_Surface *surface = SDL_CreateRGBSurface(0, W, H, 32, 0x00FF0000, 0x0000FF00, 0x000000FF, 0xFF000000);
     if (surface) {
       SDL_RenderReadPixels(c.renderer, nullptr, SDL_PIXELFORMAT_ARGB8888, surface->pixels, surface->pitch);
+      // A frame with nothing over the video is fully transparent, and BMP readers
+      // take an all-zero alpha channel to mean "no alpha" (opaque black). One
+      // barely-visible pixel keeps the channel meaningful.
+      Uint32 *px = static_cast<Uint32 *>(surface->pixels);
+      bool any_alpha = false;
+      for (int i = 0; i < W * H && !any_alpha; i++) any_alpha = (px[i] >> 24) != 0;
+      if (!any_alpha) px[0] |= 0x01000000u;
       std::string path = snapshot_dir_ + "/" + name + ".bmp";
       SDL_SaveBMP(surface, path.c_str());
       SDL_FreeSurface(surface);
