@@ -13,6 +13,10 @@ Build **Bloob**, a distinct webOS application with:
 
 The current prototype is a vertical slice, not the finished product. The user has seen a high-quality resolved stream play with HDR and Atmos on this TV, but criticized the old player overlay and source chooser and had to re-pair AllDebrid at every start. Version 0.2.0 (12 October 2026) answers all three: Buna now owns playback (`tv-app/src/buna/`), the source screen is recommendation-first, and pairing storage tries several locations, verifies each write, and reports where the key went. All of it is covered by unit tests and a key-driven end-to-end run in desktop Chromium. **None of it has been verified on the TV yet**; see "TV verification" in `tv-app/README.md`.
 
+## Native track (Buna N1, 13 October 2026)
+
+The owner chose native. `native/` is a C++ webOS app (`com.muhib.bloob`, "Bloob Native") built with the community webOS NDK (openlgtv buildroot-nc4, the toolchain Moonlight TV uses). It uses the TV's SDL2 for the window and remote, its own renderer (stb_truetype text, 1920×1080 offscreen canvas), and LG uMediaServer over luna (`com.webos.media`) for playback, in an exported hardware video window under the UI (`SDL_webOSCreateExportedWindow`). Playback state lives in a native Buna session that follows the same rules as the web Buna. `native/scripts/build.sh` runs the host tests, cross-builds, checks the ABI (needs only GLIBC_2.4, no GLIBCXX) and packages `native/artifacts/com.muhib.bloob_<v>_arm.ipk`. `native/scripts/ui-snapshots.sh` drives a desktop build with scripted keys and simulated media events and saves screenshots. **It has not run on the TV yet.** See `native/README.md` for the first-run checklist and the N2/N3 plan. Elements of A is now UI inspiration only. Technical references are the open-source Moonlight TV and Kodi webOS code, read but not copied. The web app (`tv-app/`) remains installed and working.
+
 ## Repository and local-only material
 
 | Path | Purpose |

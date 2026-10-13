@@ -1,0 +1,12 @@
+{
+  "id": "com.muhib.bloob",
+  "version": "0.3.0",
+  "vendor": "Muhib",
+  "type": "native",
+  "main": "bin/bloob",
+  "title": "Bloob Native",
+  "icon": "icon.png",
+  "iconColor": "#07080a",
+  "bgColor": "#07080a",
+  "supportTouchMode": "full"
+}

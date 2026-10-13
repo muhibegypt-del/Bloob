@@ -2,6 +2,8 @@
 
 An LG webOS TV playback prototype and a research notebook for an independent player runtime called Buna.
 
+- [Native app (Buna N1): build, install, first-run checklist](native/README.md)
+- [Native install package (0.3.0)](native/artifacts/com.muhib.bloob_0.3.0_arm.ipk)
 - [TV app source and build instructions](tv-app/README.md)
 - [Complete project handoff for the next assistant](CLAUDE.md)
 - [Observed Elements of A system map](research/Elements-of-A-system-map.md)
