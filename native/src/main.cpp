@@ -1,83 +1,37 @@
-// Bloob native host (Buna N1): SDL window and remote input, original UI drawn
-// by our renderer, video through the TV's media service in a hardware plane
-// beneath the UI, and a native Buna session owning playback state.
+// Bloob native (Buna N2): SDL window and remote input, our own renderer and
+// screens, the bundled local service for catalogue/sources/AllDebrid, and LG's
+// media pipeline in a hardware plane beneath the UI for playback.
 #include <SDL.h>
+#include <fcntl.h>
+#include <signal.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
+#include <deque>
 #include <string>
 #include <vector>
 
-#include "gfx.h"
+#include "http.h"
 #include "json.h"
 #include "keys.h"
 #include "log.h"
 #include "luna.h"
-#include "media.h"
-#include "platform.h"
-#include "session.h"
+#include "screens.h"
+#include "ui.h"
 
 namespace {
 
-constexpr int W = 1920;
-constexpr int H = 1080;
-constexpr long long kHudTimeoutMs = 6000;
-
-const Color kBg = rgba(0x07080a);
-const Color kText = rgba(0xf2f1ee);
-const Color kText2 = rgba(0xb4b8bf);
-const Color kText3 = rgba(0x7d828b);
-const Color kPanel = rgba(0x15171b);
-const Color kAccent = rgba(0xf2b84b);
-const Color kWhite = rgba(0xffffff);
-const Color kInk = rgba(0x0b0d12);
-
-std::string clock_text(long long ms) {
-  if (ms < 0) return "--:--";
-  long long s = ms / 1000;
-  char buf[32];
-  if (s >= 3600) std::snprintf(buf, sizeof buf, "%lld:%02lld:%02lld", s / 3600, (s / 60) % 60, s % 60);
-  else std::snprintf(buf, sizeof buf, "%lld:%02lld", s / 60, s % 60);
-  return buf;
-}
-
-std::string delta_text(long long ms) {
-  long long s = (ms < 0 ? -ms : ms) / 1000;
-  return std::string(ms < 0 ? "\xE2\x88\x92" : "+") + (s < 60 ? std::to_string(s) + "s" : clock_text(s * 1000));
-}
-
-std::string language_name(const std::string &code) {
-  static const std::pair<const char *, const char *> names[] = {
-      {"en", "English"}, {"eng", "English"}, {"fr", "French"}, {"fre", "French"}, {"fra", "French"},
-      {"de", "German"}, {"ger", "German"}, {"deu", "German"}, {"es", "Spanish"}, {"spa", "Spanish"},
-      {"it", "Italian"}, {"ita", "Italian"}, {"pt", "Portuguese"}, {"por", "Portuguese"}, {"ru", "Russian"},
-      {"rus", "Russian"}, {"ja", "Japanese"}, {"jpn", "Japanese"}, {"ko", "Korean"}, {"kor", "Korean"},
-      {"zh", "Chinese"}, {"chi", "Chinese"}, {"zho", "Chinese"}, {"ar", "Arabic"}, {"ara", "Arabic"},
-      {"hi", "Hindi"}, {"hin", "Hindi"}, {"nl", "Dutch"}, {"dut", "Dutch"}, {"pl", "Polish"}, {"pol", "Polish"},
-      {"tr", "Turkish"}, {"tur", "Turkish"}, {"sv", "Swedish"}, {"swe", "Swedish"}};
-  for (auto &n : names) if (code == n.first) return n.second;
-  return code.empty() ? "Unknown language" : code;
-}
-
-std::string audio_label(const MediaTrack &t) {
-  std::string codec = t.codec;
-  for (auto &c : codec) c = static_cast<char>(toupper(static_cast<unsigned char>(c)));
-  std::string ch = t.channels >= 8 ? "7.1" : t.channels == 6 ? "5.1" : t.channels == 2 ? "Stereo" : t.channels ? std::to_string(t.channels) + " ch" : "";
-  std::string out = language_name(t.language);
-  if (!codec.empty()) out += " \xC2\xB7 " + codec;
-  if (!ch.empty()) out += " " + ch;
-  return out;
-}
-
-enum class Screen { Home, Diagnostics, Player };
-enum class Zone { Timeline, Controls };
-enum class Menu { None, Audio, Subtitles };
+constexpr int RAIL_W = 132;
+constexpr long long kServiceBusWaitMs = 8000;
+constexpr long long kServiceTimeoutMs = 30000;
 
 struct LaunchParams {
-  std::string uri;
-  std::string title = "Launch link";
-  std::string load_type = "media";
+  std::string uri, title = "Launch link", load_type = "media";
   bool autoplay = false;
 };
 
@@ -96,68 +50,20 @@ LaunchParams parse_launch(int argc, char **argv) {
   return params;
 }
 
-class UmsPort : public PlayerPort {
- public:
-  explicit UmsPort(UmsPlayer &player) : player_(player) {}
-  void play() override { player_.play(); }
-  void pause() override { player_.pause(); }
-  void seek(long long ms) override { player_.seek(ms); }
-  void select_track(const std::string &type, int index) override { player_.select_track(type, index); }
-  void set_subtitles(bool enabled) override { player_.set_subtitles(enabled); }
-
- private:
-  UmsPlayer &player_;
+struct RailItem {
+  const char *label;
+  Icon icon;
 };
+const RailItem kRail[] = {{"Home", Icon::Home}, {"Search", Icon::Search}, {"Films", Icon::Film}, {"Series", Icon::Tv},
+                          {"Settings", Icon::Settings}};
+constexpr int kRailCount = 5;
 
-struct App {
-  SDL_Window *window = nullptr;
-  SDL_Renderer *renderer = nullptr;
-  Gfx gfx;
-  Font regular, semibold, bold;
-  WebOS webos;
-  std::string dir, id;
-  LaunchParams launch;
-  Uint32 wake_event = 0;
-  bool running = true;
-  bool dirty = true;
-
-  Screen screen = Screen::Home;
-  int home_focus = 0;
-  std::string tv_model = "…";
-  std::string last_key = "Press any remote key";
-
-  // Player
-  UmsPlayer ums;
-  UmsPort port{ums};
-  Session session;
-  std::string window_id;
-  std::string title;
-  std::string uri;
-  std::string load_type = "media";
-  bool hud = true;
-  long long hud_until = 0;
-  Zone zone = Zone::Timeline;
-  int control = 1;
-  Menu menu = Menu::None;
-  int menu_index = 0;
-  int error_focus = 0;
-  long long last_render_second = -1;
-
-  // Scripted runs (BLOOB_SCRIPT), used by the desktop UI test build:
-  // steps separated by '|': key:<name>, wait:<ms>, media:<event json>, snap:<name>, quit.
-  struct Step { std::string kind, arg; };
-  std::vector<Step> script;
-  size_t script_pos = 0;
-  long long script_at = 0;
-  std::string snapshot_dir;
-
-  long long now() const { return static_cast<long long>(SDL_GetTicks()); }
-
-  // ---------------------------------------------------------------- lifecycle
-
+class App {
+ public:
   bool init(int argc, char **argv) {
-    dir = app_directory();
-    id = app_id();
+    Ctx &c = ctx();
+    c.dir = app_directory();
+    c.app_id = app_id();
     SDL_SetHint("SDL_WEBOS_ACCESS_POLICY_KEYS_BACK", "true");
     SDL_SetHint("SDL_WEBOS_ACCESS_POLICY_KEYS_EXIT", "true");
     SDL_SetHint("SDL_WEBOS_CURSOR_SLEEP_TIME", "5000");
@@ -166,285 +72,382 @@ struct App {
       logf("app", "SDL_Init failed: %s", SDL_GetError());
       return false;
     }
-    webos.resolve();
+    c.webos.resolve();
     SDL_DisplayMode mode{};
     SDL_GetCurrentDisplayMode(0, &mode);
     int ww = mode.w > 0 ? mode.w : W, wh = mode.h > 0 ? mode.h : H;
     if (const char *forced = std::getenv("BLOOB_WINDOW")) std::sscanf(forced, "%dx%d", &ww, &wh);  // desktop tests
-    window = SDL_CreateWindow("Bloob", 0, 0, ww, wh, SDL_WINDOW_FULLSCREEN | SDL_WINDOW_SHOWN);
-    if (!window) {
+    c.window = SDL_CreateWindow("Bloob", 0, 0, ww, wh, SDL_WINDOW_FULLSCREEN | SDL_WINDOW_SHOWN);
+    if (!c.window) {
       logf("app", "SDL_CreateWindow failed: %s", SDL_GetError());
       return false;
     }
-    renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
-    if (!renderer) renderer = SDL_CreateRenderer(window, -1, 0);
-    if (!renderer) {
+    c.renderer = SDL_CreateRenderer(c.window, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
+    if (!c.renderer) c.renderer = SDL_CreateRenderer(c.window, -1, 0);
+    if (!c.renderer) {
       logf("app", "SDL_CreateRenderer failed: %s", SDL_GetError());
       return false;
     }
     SDL_RendererInfo info{};
-    SDL_GetRendererInfo(renderer, &info);
-    logf("app", "video=%s renderer=%s window=%dx%d display=%dx%d@%d missing=[%s]", SDL_GetCurrentVideoDriver(),
-         info.name, ww, wh, mode.w, mode.h, mode.refresh_rate, webos.missing().c_str());
-    gfx.init(renderer, W, H);
-    std::string fonts = dir + "/assets/fonts/";
-    regular.load(renderer, fonts + "Inter-Regular.ttf");
-    semibold.load(renderer, fonts + "Inter-SemiBold.ttf");
-    bold.load(renderer, fonts + "Inter-Bold.ttf");
+    SDL_GetRendererInfo(c.renderer, &info);
+    logf("app", "video=%s renderer=%s window=%dx%d display=%dx%d@%d missing=[%s]", SDL_GetCurrentVideoDriver(), info.name, ww,
+         wh, mode.w, mode.h, mode.refresh_rate, c.webos.missing().c_str());
+    c.gfx.init(c.renderer, W, H);
+    std::string fonts = c.dir + "/assets/fonts/";
+    c.fonts.regular.load(c.renderer, fonts + "Manrope-Regular.ttf");
+    c.fonts.semibold.load(c.renderer, fonts + "Manrope-SemiBold.ttf");
+    c.fonts.bold.load(c.renderer, fonts + "Manrope-Bold.ttf");
+    c.fonts.heavy.load(c.renderer, fonts + "Manrope-ExtraBold.ttf");
+    c.icons.init(c.renderer);
 
-    wake_event = SDL_RegisterEvents(1);
-    Uint32 wake = wake_event;
-    Luna::instance().start([wake] {
+    wake_event_ = SDL_RegisterEvents(1);
+    Uint32 wake = wake_event_;
+    auto push_wake = [wake] {
       SDL_Event e{};
       e.type = wake;
       SDL_PushEvent(&e);
-    });
+    };
+    c.api_tasks.start(2, push_wake);
+    c.image_tasks.start(3, push_wake);
+    c.api.init(&c.api_tasks);
+    c.images.init(c.renderer, &c.image_tasks, &c.api);
+    Luna::instance().start(push_wake);
+
+    c.push = [this](std::unique_ptr<Screen> s) { ops_.push_back({Op::Push, std::move(s)}); };
+    c.pop = [this] { ops_.push_back({Op::Pop, nullptr}); };
+    c.replace = [this](std::unique_ptr<Screen> s) { ops_.push_back({Op::Replace, std::move(s)}); };
+    c.toast = [this](const std::string &text) {
+      toast_ = text;
+      toast_until_ = ctx().now + 3500;
+    };
+    c.quit = [this] { running_ = false; };
+    c.refresh_home = [] {};
+
     Luna::instance().call("luna://com.webos.service.tv.systemproperty/getSystemInfo",
-                          "{\"keys\":[\"modelName\",\"firmwareVersion\",\"sdkVersion\"]}", [this](const std::string &reply) {
+                          "{\"keys\":[\"modelName\",\"firmwareVersion\",\"sdkVersion\"]}", [](const std::string &reply) {
                             Json j = Json::parse(reply);
+                            Ctx &cx = ctx();
                             if (j["returnValue"].as_bool()) {
-                              tv_model = j["modelName"].as_string("?") + " \xC2\xB7 webOS " + j["sdkVersion"].as_string("?") +
-                                         " \xC2\xB7 firmware " + j["firmwareVersion"].as_string("?");
+                              cx.tv_model = j["modelName"].as_string("?") + " \xC2\xB7 webOS " + j["sdkVersion"].as_string("?");
                             } else {
-                              tv_model = "System info unavailable: " + j["errorText"].as_string(reply);
+                              cx.tv_model = "System info unavailable";
                             }
-                            logf("app", "system info: %s", tv_model.c_str());
-                            dirty = true;
+                            logf("app", "system info: %s", cx.tv_model.c_str());
                           });
+    start_service();
+
+    roots_.resize(kRailCount);
+    root_ = 0;
+    roots_[0] = make_browse(Browse::Home);
 
     load_script();
-    launch = parse_launch(argc, argv);
-    if (launch.autoplay && !launch.uri.empty()) open_player(launch.uri, launch.title, launch.load_type);
+    LaunchParams launch = parse_launch(argc, argv);
+    if (!launch.uri.empty() && launch.autoplay) {
+      PlayRequest req;
+      req.item.name = launch.title;
+      req.video_id = "launch";
+      ops_.push_back({Op::Push, make_player(req, launch.uri, "", launch.load_type)});
+    }
+    c.now = static_cast<long long>(SDL_GetTicks());
     return true;
   }
 
+  void start_service() {
+    Ctx &c = ctx();
+    service_started_at_ = static_cast<long long>(SDL_GetTicks());
+    std::string uri = "luna://" + c.app_id + ".service/start";
+    logf("app", "starting service %s.service", c.app_id.c_str());
+    Luna::instance().call(uri, "{}", [this](const std::string &reply) {
+      Ctx &cx = ctx();
+      Json j = Json::parse(reply);
+      if (j["ready"].as_bool() && j["port"].as_int() > 0) {
+        cx.api.set_port(static_cast<int>(j["port"].as_int()));
+        logf("app", "service ready on port %d (version %s)", cx.api.port(), j["version"].as_string("?").c_str());
+        cx.api.get("/api/settings", [](const ApiResult &r) {
+          if (!r.ok()) return;
+          Ctx &x = ctx();
+          x.language = r.json["language"].as_string("English");
+          x.recent_searches.clear();
+          for (size_t i = 0; i < r.json["recentSearches"].size(); i++) x.recent_searches.push_back(r.json["recentSearches"][i].as_string());
+        }, nullptr);
+        cx.api.get("/api/account", [](const ApiResult &r) {
+          if (r.ok()) ctx().paired = r.json["paired"].as_bool();
+        }, nullptr);
+      } else if (!j["returnValue"].as_bool(true) || j.has("errorText")) {
+        logf("app", "service start over the bus failed: %s", reply.c_str());
+        start_service_fallback();
+      }
+    });
+  }
+
+  // If the system bus will not start the service for us, run it with the TV's
+  // own Node directly, as a child of the app, and stop it when the app exits.
+  void start_service_fallback() {
+    Ctx &c = ctx();
+    if (fallback_tried_ || c.api.ready()) return;
+    fallback_tried_ = true;
+    std::string script = c.dir + "/../../services/" + c.app_id + ".service/server.js";
+    const char *nodes[] = {std::getenv("BLOOB_NODE"), "/usr/bin/node", "/usr/bin/nodejs", "/usr/local/bin/node"};
+    const char *node = nullptr;
+    for (auto *n : nodes) if (n && access(n, X_OK) == 0) { node = n; break; }
+    struct stat st{};
+    if (!node || stat(script.c_str(), &st) != 0) {
+      logf("app", "service fallback unavailable (node=%s, script %s)", node ? node : "none", stat(script.c_str(), &st) == 0 ? "found" : "missing");
+      if (c.service_error.empty()) c.service_error = "Bloob's background service could not start.";
+      return;
+    }
+    logf("app", "starting service directly with %s", node);
+    // Everything the child needs is prepared before fork(): after it, only
+    // async-signal-safe calls (other threads may hold locks).
+    std::vector<std::string> env_strings;
+    for (char **e = environ; *e; e++)
+      if (std::strncmp(*e, "TV_APP_PORT=", 12) != 0) env_strings.push_back(*e);
+    env_strings.push_back("TV_APP_PORT=8790");
+    std::vector<char *> envp;
+    for (auto &e : env_strings) envp.push_back(const_cast<char *>(e.c_str()));
+    envp.push_back(nullptr);
+    char *args[] = {const_cast<char *>(node), const_cast<char *>(script.c_str()), nullptr};
+    pid_t pid = fork();
+    if (pid == 0) {
+      setsid();
+      int log = open("/tmp/bloob-service.log", O_WRONLY | O_CREAT | O_TRUNC, 0600);
+      if (log >= 0) {
+        dup2(log, 1);
+        dup2(log, 2);
+      }
+      execve(node, args, envp.data());
+      _exit(127);
+    }
+    if (pid < 0) {
+      c.service_error = "Bloob's background service could not start.";
+      return;
+    }
+    fallback_pid_ = pid;
+    // Wait for it to answer.
+    c.api_tasks.run([]() -> std::function<void()> {
+      for (int i = 0; i < 50; i++) {
+        HttpResponse res = http_request("GET", 8790, "/api/health", "", 1000);
+        if (res.status == 200) {
+          return [] {
+            ctx().api.set_port(8790);
+            ctx().service_error.clear();
+            logf("app", "service ready on port 8790 (started directly)");
+            ctx().api.get("/api/account", [](const ApiResult &r) { if (r.ok()) ctx().paired = r.json["paired"].as_bool(); }, nullptr);
+          };
+        }
+        usleep(300000);
+      }
+      return [] {
+        ctx().service_error = "Bloob's background service did not start. Close Bloob and open it again.";
+        logf("app", "direct service start timed out");
+      };
+    });
+  }
+
   void shutdown() {
-    close_player();
+    Ctx &c = ctx();
+    for (auto it = stack_.rbegin(); it != stack_.rend(); ++it) (*it)->suspend();
+    stack_.clear();
+    roots_.clear();
+    ops_.clear();
+    // Let the last progress save reach the service.
+    for (int i = 0; i < 75 && c.api_tasks.pending(); i++) SDL_Delay(20);
+    // Stop the bundled service so nothing keeps running after Bloob closes.
+    if (fallback_pid_ > 0) kill(fallback_pid_, SIGTERM);
+    else if (c.api.ready()) Luna::instance().call("luna://" + c.app_id + ".service/stop", "{}", nullptr);
+    SDL_Delay(50);
+    Luna::instance().pump();
+    c.api_tasks.stop();
+    c.image_tasks.stop();
     Luna::instance().stop();
-    gfx.shutdown();
-    if (renderer) SDL_DestroyRenderer(renderer);
-    if (window) SDL_DestroyWindow(window);
+    c.images.shutdown();
+    c.icons.shutdown();
+    c.gfx.shutdown();
+    if (c.renderer) SDL_DestroyRenderer(c.renderer);
+    if (c.window) SDL_DestroyWindow(c.window);
     SDL_Quit();
   }
 
-  std::string test_clip_uri() const { return "file://" + dir + "/assets/media/big-buck-bunny-480p-30sec.mp4"; }
+  // ---------------------------------------------------------------- navigation
 
-  // ---------------------------------------------------------------- player
-
-  void open_player(const std::string &media_uri, const std::string &media_title, const std::string &type) {
-    close_player();
-    uri = media_uri;
-    title = media_title;
-    load_type = type;
-    screen = Screen::Player;
-    menu = Menu::None;
-    zone = Zone::Timeline;
-    control = 1;
-    error_focus = 0;
-    show_hud();
-    session.open(&port, now());
-    if (webos.create_exported_window) {
-      const char *created = webos.create_exported_window(0);
-      window_id = created ? created : "";
-    }
-    logf("player", "exported video window: %s", window_id.empty() ? "(none)" : window_id.c_str());
-    place_video(0, 0);
-    ums.load(uri, id, window_id, load_type, [this](const MediaEvent &event) {
-      long long t = now();
-      bool had_frame = session.first_frame_ms() >= 0;
-      auto pending = session.pending_ms();
-      long long seek_started = session.seek_started_ms();
-      session.on_event(event, ums.info(), t);
-      if (!had_frame && session.first_frame_ms() >= 0) logf("player", "first frame after %lld ms", session.first_frame_ms());
-      if (pending && !session.pending_ms()) {
-        logf("player", "seek to %lld ms landed at %lld ms after %lld ms", *pending, session.position_ms(t),
-             t - seek_started);
-      }
-      if (event.kind == MediaEvent::VideoInfo || event.kind == MediaEvent::SourceInfo) {
-        place_video(ums.info().width, ums.info().height);
-      }
-      if (event.kind == MediaEvent::Loaded) place_video(ums.info().width, ums.info().height);
-      dirty = true;
-    });
-    dirty = true;
+  Screen *top() {
+    if (!stack_.empty()) return stack_.back().get();
+    return roots_[static_cast<size_t>(root_)].get();
   }
 
-  void place_video(int video_w, int video_h) {
-    if (window_id.empty() || !webos.set_exported_window) return;
-    int dw = W, dh = H;
-    SDL_GetWindowSize(window, &dw, &dh);
-    SDL_Rect src{0, 0, video_w > 0 ? video_w : dw, video_h > 0 ? video_h : dh};
-    SDL_Rect dst{0, 0, dw, dh};
-    webos.set_exported_window(window_id.c_str(), &src, &dst);
-  }
-
-  void close_player() {
-    if (screen != Screen::Player && window_id.empty()) return;
-    ums.unload();
-    session.close();
-    if (!window_id.empty() && webos.destroy_exported_window) webos.destroy_exported_window(window_id.c_str());
-    window_id.clear();
-    menu = Menu::None;
-    if (screen == Screen::Player) screen = Screen::Home;
-    dirty = true;
-  }
-
-  void show_hud() {
-    hud = true;
-    hud_until = now() + kHudTimeoutMs;
-  }
-
-  bool hud_pinned() const {
-    Phase p = session.phase();
-    return menu != Menu::None || p == Phase::Paused || p == Phase::Ended || p == Phase::Loading || p == Phase::Error ||
-           session.preview_ms().has_value() || session.pending_ms().has_value();
-  }
-
-  struct Control { const char *label; };
-  static constexpr int kControls = 5;  // back10, toggle, fwd10, audio, subtitles
-
-  void run_control(int index) {
+  void ensure_root(int index) {
+    if (roots_[static_cast<size_t>(index)]) return;
     switch (index) {
-      case 0: session.nudge(-1, now()); break;
-      case 1: session.toggle(); break;
-      case 2: session.nudge(1, now()); break;
-      case 3: menu = Menu::Audio; menu_index = selected_index(Menu::Audio); break;
-      case 4: menu = Menu::Subtitles; menu_index = selected_index(Menu::Subtitles); break;
+      case 0: roots_[0] = make_browse(Browse::Home); break;
+      case 1: roots_[1] = make_search(); break;
+      case 2: roots_[2] = make_browse(Browse::Movies); break;
+      case 3: roots_[3] = make_browse(Browse::Series); break;
+      case 4: roots_[4] = make_settings(); break;
     }
-    show_hud();
   }
 
-  int selected_index(Menu which) const {
-    const MediaInfo &info = ums.info();
-    if (which == Menu::Audio) {
-      for (size_t i = 0; i < info.audio.size(); i++) if (info.audio[i].selected) return static_cast<int>(i);
-      return 0;
-    }
-    return session.subtitle_index() + 1;  // row 0 = Off
-  }
-
-  int menu_rows() const {
-    const MediaInfo &info = ums.info();
-    return menu == Menu::Audio ? static_cast<int>(info.audio.size()) : static_cast<int>(info.text.size()) + 1;
-  }
-
-  void player_key(Key key, bool repeat) {
-    long long t = now();
-    if (session.phase() == Phase::Error) {
-      if (key == Key::Left || key == Key::Right) error_focus = 1 - error_focus;
-      if (key == Key::Ok) {
-        if (error_focus == 0) open_player(uri, title, load_type);
-        else close_player();
+  void apply_ops() {
+    while (!ops_.empty()) {
+      Op op = std::move(ops_.front());
+      ops_.pop_front();
+      Screen *before = top();
+      switch (op.kind) {
+        case Op::Push:
+          before->hidden();
+          stack_.push_back(std::move(op.screen));
+          logf("nav", "push %s", stack_.back()->name());
+          break;
+        case Op::Pop:
+          if (stack_.empty()) break;
+          logf("nav", "pop %s", stack_.back()->name());
+          stack_.pop_back();
+          top()->shown();
+          break;
+        case Op::Replace:
+          if (!stack_.empty()) {
+            logf("nav", "replace %s with %s", stack_.back()->name(), op.screen->name());
+            stack_.back() = std::move(op.screen);
+          } else {
+            stack_.push_back(std::move(op.screen));
+          }
+          break;
       }
-      if (key == Key::Back || key == Key::Stop) close_player();
-      return;
+      dirty_ = true;
     }
-    if (menu != Menu::None) {
-      int rows = menu_rows();
-      if (key == Key::Up) menu_index = std::max(0, menu_index - 1);
-      if (key == Key::Down) menu_index = std::min(std::max(0, rows - 1), menu_index + 1);
-      if (key == Key::Ok && rows > 0) {
-        if (menu == Menu::Audio) session.select_audio(menu_index);
-        else session.select_text(menu_index - 1);
-        menu = Menu::None;
-      }
-      if (key == Key::Back || key == Key::Left) menu = Menu::None;
-      show_hud();
-      return;
-    }
-    switch (key) {
-      case Key::Play: session.play(); show_hud(); return;
-      case Key::Pause: session.pause(); show_hud(); return;
-      case Key::PlayPause: session.toggle(); show_hud(); return;
-      case Key::Forward: session.nudge(1, t); show_hud(); return;
-      case Key::Rewind: session.nudge(-1, t); show_hud(); return;
-      case Key::Stop: close_player(); return;
-      default: break;
-    }
-    if (key == Key::Back) {
-      if (session.cancel_preview()) { show_hud(); return; }
-      if (hud && session.phase() == Phase::Playing) { hud = false; return; }
-      close_player();
-      return;
-    }
-    if (!hud) {
-      if (key == Key::Left || key == Key::Right) session.nudge(key == Key::Right ? 1 : -1, t);
-      if (key == Key::Ok && !repeat) { session.toggle(); zone = Zone::Controls; control = 1; }
-      if (key == Key::Down) { zone = Zone::Controls; control = 1; }
-      if (key == Key::Up) zone = Zone::Timeline;
-      show_hud();
-      return;
-    }
-    show_hud();
-    if (zone == Zone::Timeline) {
-      if (key == Key::Left || key == Key::Right) session.nudge(key == Key::Right ? 1 : -1, t);
-      if (key == Key::Ok && !repeat) { if (!session.commit_preview(t)) session.toggle(); }
-      if (key == Key::Down) { zone = Zone::Controls; control = 1; }
-      return;
-    }
-    if (key == Key::Up) zone = Zone::Timeline;
-    if (key == Key::Left) control = std::max(0, control - 1);
-    if (key == Key::Right) control = std::min(kControls - 1, control + 1);
-    if (key == Key::Ok && !repeat) run_control(control);
+  }
+
+  void select_root(int index) {
+    if (index == root_) return;
+    roots_[static_cast<size_t>(root_)]->hidden();
+    ensure_root(index);
+    root_ = index;
+    roots_[static_cast<size_t>(root_)]->set_rail_focus(rail_focus_);
+    roots_[static_cast<size_t>(root_)]->shown();
+  }
+
+  void set_rail_focus(bool focus) {
+    rail_focus_ = focus;
+    rail_index_ = root_;
+    roots_[static_cast<size_t>(root_)]->set_rail_focus(focus);
   }
 
   // ---------------------------------------------------------------- input
 
   void on_key(const SDL_KeyboardEvent &event) {
+    Ctx &c = ctx();
     Key key = key_from_event(event);
     char buf[160];
     std::snprintf(buf, sizeof buf, "%s  \xC2\xB7  scancode %d  \xC2\xB7  keycode %d", key_name(key),
                   static_cast<int>(event.keysym.scancode), static_cast<int>(event.keysym.sym));
-    last_key = buf;
-    if (key == Key::None) logf("input", "unmapped key: scancode=%d sym=%d", event.keysym.scancode, event.keysym.sym);
-    dirty = true;
-    if (key == Key::Exit) { running = false; return; }
-    bool repeat = event.repeat != 0;
-
-    switch (screen) {
-      case Screen::Home: {
-        int cards = launch.uri.empty() ? 2 : 3;
-        if (key == Key::Left) home_focus = std::max(0, home_focus - 1);
-        if (key == Key::Right) home_focus = std::min(cards - 1, home_focus + 1);
-        if (key == Key::Back) running = false;
-        if (key == Key::Ok && !repeat) {
-          int action = launch.uri.empty() && home_focus >= 1 ? home_focus + 1 : home_focus;
-          if (action == 0) open_player(test_clip_uri(), "Big Buck Bunny", "media");
-          if (action == 1) open_player(launch.uri, launch.title, launch.load_type);
-          if (action == 2) screen = Screen::Diagnostics;
-        }
-        break;
-      }
-      case Screen::Diagnostics:
-        if (key == Key::Back) screen = Screen::Home;
-        break;
-      case Screen::Player:
-        player_key(key, repeat);
-        break;
+    c.last_key = buf;
+    if (key == Key::None) {
+      logf("input", "unmapped key: scancode=%d sym=%d", event.keysym.scancode, event.keysym.sym);
+      return;
     }
+    dirty_ = true;
+    if (key == Key::Exit) {
+      running_ = false;
+      return;
+    }
+    bool repeat = event.repeat != 0;
+    if (!stack_.empty()) {
+      stack_.back()->key(key, repeat);
+      return;
+    }
+    Screen *root = roots_[static_cast<size_t>(root_)].get();
+    if (rail_focus_) {
+      switch (key) {
+        case Key::Up:
+          if (rail_index_ > 0) select_root(--rail_index_);
+          break;
+        case Key::Down:
+          if (rail_index_ + 1 < kRailCount) select_root(++rail_index_);
+          break;
+        case Key::Right:
+        case Key::Ok:
+          set_rail_focus(false);
+          break;
+        case Key::Back:
+          if (root_ != 0) {
+            select_root(0);
+            rail_index_ = 0;
+          } else {
+            running_ = false;
+          }
+          break;
+        default:
+          break;
+      }
+      return;
+    }
+    if (!root->key(key, repeat) && (key == Key::Left || key == Key::Back)) set_rail_focus(true);
   }
 
   void on_event(const SDL_Event &e) {
-    if (e.type == SDL_QUIT) running = false;
+    if (e.type == SDL_QUIT) running_ = false;
     else if (e.type == SDL_KEYDOWN) on_key(e.key);
     else if (e.type == SDL_WINDOWEVENT) {
       if (e.window.event == SDL_WINDOWEVENT_FOCUS_LOST || e.window.event == SDL_WINDOWEVENT_HIDDEN) {
-        // App moved to the background: pause so we resume where we left off.
-        if (screen == Screen::Player && session.intent_play()) session.pause();
+        // Moved to the background (Home button, input switch): pause and save.
+        top()->suspend();
         logf("app", "window hidden/focus lost");
       }
-      dirty = true;
+      dirty_ = true;
     } else if (e.type == SDL_APP_WILLENTERBACKGROUND) {
-      if (screen == Screen::Player && session.intent_play()) session.pause();
+      top()->suspend();
     }
+  }
+
+  // ---------------------------------------------------------------- drawing
+
+  void draw_rail() {
+    Ctx &c = ctx();
+    rail_open_.to(rail_focus_ ? 1.0f : 0.0f);
+    float o = rail_open_.value;
+    int w = RAIL_W + static_cast<int>(188 * o);
+    c.gfx.fill_rect(0, 0, w, H, with_alpha(rgba(0x07080a), static_cast<int>(140 + 100 * o)));
+    if (o > 0.01f) c.gfx.gradient_h(w, 0, 160, H, rgba(0x07080a), static_cast<Uint8>(200 * o), 0);
+    c.gfx.fill_round(40, 56, 52, 52, 16, theme::accent);
+    draw_text_center(c.fonts.heavy, "b", 66, 61, 30, theme::ink);
+    for (int i = 0; i < kRailCount; i++) {
+      int y = i == kRailCount - 1 ? H - 128 : 168 + i * 82;
+      bool active = i == root_;
+      bool focused = rail_focus_ && i == rail_index_;
+      int bw = 64 + static_cast<int>(172 * o);
+      if (focused) c.gfx.fill_round(34, y, bw, 64, 20, theme::white);
+      else if (active) c.gfx.fill_round(34, y, bw, 64, 20, with_alpha(theme::white, 30));
+      Color fg = focused ? theme::ink : active ? theme::white : rgba(0x8d929b);
+      c.icons.draw(kRail[i].icon, 51, y + 17, 30, fg);
+      if (o > 0.05f) c.fonts.bold.draw(kRail[i].label, 100, y + 18, 24, with_alpha(fg, static_cast<int>(255 * o)));
+    }
+  }
+
+  void render() {
+    Ctx &c = ctx();
+    c.images.begin_frame(c.now);
+    c.gfx.begin_frame();
+    Screen *screen = top();
+    screen->draw();
+    if (stack_.empty()) draw_rail();
+    if (!toast_.empty() && c.now < toast_until_) {
+      int w = c.fonts.semibold.measure(toast_, 24) + 64;
+      c.gfx.fill_round(W / 2 - w / 2, H - 140, w, 64, 32, with_alpha(theme::panel2, 240));
+      draw_text_center(c.fonts.semibold, toast_, W / 2, H - 123, 24, theme::text);
+      c.redraw_at(toast_until_);
+    }
+    c.gfx.end_frame();
+    if (c.images.end_frame()) c.animating = true;
+    SDL_RenderPresent(c.renderer);
+    dirty_ = false;
   }
 
   // ---------------------------------------------------------------- scripted runs
 
+  // BLOOB_SCRIPT: steps separated by '|': key:<name>, wait:<ms>, media:<event json>, pump, snap:<name>, quit.
   void load_script() {
     const char *spec = std::getenv("BLOOB_SCRIPT");
     const char *dir_env = std::getenv("BLOOB_SNAPSHOT_DIR");
-    snapshot_dir = dir_env ? dir_env : ".";
+    snapshot_dir_ = dir_env ? dir_env : ".";
     if (!spec) return;
     std::string all = spec;
     size_t start = 0;
@@ -452,18 +455,18 @@ struct App {
       size_t end = all.find('|', start);
       std::string step = all.substr(start, end == std::string::npos ? std::string::npos : end - start);
       size_t colon = step.find(':');
-      if (!step.empty()) script.push_back({step.substr(0, colon), colon == std::string::npos ? "" : step.substr(colon + 1)});
+      if (!step.empty()) script_.push_back({step.substr(0, colon), colon == std::string::npos ? "" : step.substr(colon + 1)});
       if (end == std::string::npos) break;
       start = end + 1;
     }
-    logf("script", "%zu steps", script.size());
+    logf("script", "%zu steps", script_.size());
   }
 
   void press(const std::string &name) {
     static const std::pair<const char *, int> codes[] = {
         {"up", SDL_SCANCODE_UP}, {"down", SDL_SCANCODE_DOWN}, {"left", SDL_SCANCODE_LEFT}, {"right", SDL_SCANCODE_RIGHT},
         {"ok", SDL_SCANCODE_RETURN}, {"back", kScancodeWebosBack}, {"play", SDL_SCANCODE_AUDIOPLAY},
-        {"pause", SDL_SCANCODE_PAUSE}};
+        {"pause", SDL_SCANCODE_PAUSE}, {"red", kScancodeWebosRed}};
     SDL_KeyboardEvent key{};
     key.type = SDL_KEYDOWN;
     for (auto &c : codes) if (name == c.first) key.keysym.scancode = static_cast<SDL_Scancode>(c.second);
@@ -471,318 +474,122 @@ struct App {
   }
 
   void snapshot(const std::string &name) {
+    Ctx &c = ctx();
     render();
-    int w = 0, h = 0;
-    SDL_GetRendererOutputSize(renderer, &w, &h);
-    if (gfx.canvas()) {  // capture the 1920×1080 frame itself
-      SDL_SetRenderTarget(renderer, gfx.canvas());
-      w = W;
-      h = H;
+    if (!c.gfx.canvas()) return;
+    SDL_SetRenderTarget(c.renderer, c.gfx.canvas());
+    SDL_Surface *surface = SDL_CreateRGBSurface(0, W, H, 32, 0x00FF0000, 0x0000FF00, 0x000000FF, 0xFF000000);
+    if (surface) {
+      SDL_RenderReadPixels(c.renderer, nullptr, SDL_PIXELFORMAT_ARGB8888, surface->pixels, surface->pitch);
+      std::string path = snapshot_dir_ + "/" + name + ".bmp";
+      SDL_SaveBMP(surface, path.c_str());
+      SDL_FreeSurface(surface);
+      logf("script", "snapshot %s", path.c_str());
     }
-    SDL_Surface *surface = SDL_CreateRGBSurface(0, w, h, 32, 0x00FF0000, 0x0000FF00, 0x000000FF, 0xFF000000);
-    if (!surface) return;
-    SDL_RenderReadPixels(renderer, nullptr, SDL_PIXELFORMAT_ARGB8888, surface->pixels, surface->pitch);
-    SDL_SetRenderTarget(renderer, nullptr);
-    std::string path = snapshot_dir + "/" + name + ".bmp";
-    SDL_SaveBMP(surface, path.c_str());
-    SDL_FreeSurface(surface);
-    logf("script", "snapshot %s", path.c_str());
+    SDL_SetRenderTarget(c.renderer, nullptr);
   }
 
   void run_script(long long t) {
-    while (script_pos < script.size() && t >= script_at) {
-      const Step &step = script[script_pos++];
-      if (step.kind == "wait") { script_at = t + std::atoll(step.arg.c_str()); return; }
+    while (script_pos_ < script_.size() && t >= script_at_) {
+      const Step &step = script_[script_pos_++];
+      if (step.kind == "wait") {
+        script_at_ = t + std::atoll(step.arg.c_str());
+        return;
+      }
       if (step.kind == "key") press(step.arg);
       else if (step.kind == "media") Luna::instance().inject(step.arg);
       else if (step.kind == "pump") Luna::instance().pump();
       else if (step.kind == "snap") snapshot(step.arg);
-      else if (step.kind == "quit") running = false;
-      dirty = true;
+      else if (step.kind == "quit") running_ = false;
+      apply_ops();
+      dirty_ = true;
     }
-  }
-
-  // ---------------------------------------------------------------- drawing
-
-  void text(Font &font, const std::string &s, int x, int y, int size, Color color) { font.draw(s, x, y, size, color); }
-  void text_right(Font &font, const std::string &s, int right, int y, int size, Color color) {
-    font.draw(s, right - font.measure(s, size), y, size, color);
-  }
-  void text_center(Font &font, const std::string &s, int cx, int y, int size, Color color) {
-    font.draw(s, cx - font.measure(s, size) / 2, y, size, color);
-  }
-
-  void draw_home() {
-    gfx.clear(kBg);
-    gfx.fill_round(96, 72, 56, 56, 16, kAccent);
-    text_center(bold, "b", 124, 78, 34, kInk);
-    text(bold, "bloob", 172, 76, 40, kText);
-    text(semibold, "NATIVE PREVIEW \xC2\xB7 BUNA N1", 96, 250, 20, kText3);
-    text(bold, "Native playback, our own UI.", 96, 290, 76, kText);
-    text(regular, "Video plays through the TV's media pipeline in a hardware plane under this interface.", 96, 400, 28, kText2);
-
-    struct Card { std::string title, detail; };
-    std::vector<Card> cards = {{"Play test clip", "Big Buck Bunny \xC2\xB7 bundled \xC2\xB7 30 seconds"}};
-    if (!launch.uri.empty()) cards.push_back({"Play launch link", launch.title});
-    cards.push_back({"Diagnostics", "Display, services and a remote key tester"});
-    int x = 96;
-    for (size_t i = 0; i < cards.size(); i++) {
-      bool focused = static_cast<int>(i) == home_focus;
-      int w = 520, h = 220, y = 540;
-      if (focused) { x -= 8; y -= 8; w += 16; h += 16; }
-      gfx.fill_round(x, y, w, h, 28, focused ? kWhite : kPanel);
-      Color fg = focused ? kInk : kText;
-      Color fg2 = focused ? rgba(0x3a3f47) : kText2;
-      if (i == 0) gfx.triangle_right(x + 44, y + 52, 36, fg);
-      text(bold, cards[i].title, x + 44, y + (i == 0 ? 104 : 60), 36, fg);
-      text(regular, cards[i].detail, x + 44, y + (i == 0 ? 154 : 112), 22, fg2);
-      if (focused) { x += 8; }
-      x += 560;
-    }
-    text(regular, tv_model, 96, 960, 22, kText3);
-    text(regular, "\xE2\x86\x90 \xE2\x86\x92 choose  \xC2\xB7  OK open  \xC2\xB7  Back exit", 96, 1000, 22, kText3);
-  }
-
-  void draw_diagnostics() {
-    gfx.clear(kBg);
-    text(bold, "Diagnostics", 96, 72, 56, kText);
-    SDL_DisplayMode mode{};
-    SDL_GetCurrentDisplayMode(0, &mode);
-    SDL_RendererInfo info{};
-    SDL_GetRendererInfo(renderer, &info);
-    int pw = 0, ph = 0, refresh = 0;
-    if (webos.get_panel_resolution) webos.get_panel_resolution(&pw, &ph);
-    if (webos.get_refresh_rate) webos.get_refresh_rate(&refresh);
-    int ww = 0, wh = 0;
-    SDL_GetWindowSize(window, &ww, &wh);
-    std::string missing = webos.missing();
-    std::vector<std::pair<std::string, std::string>> rows = {
-        {"TV", tv_model},
-        {"SDL video driver", SDL_GetCurrentVideoDriver() ? SDL_GetCurrentVideoDriver() : "?"},
-        {"Renderer", std::string(info.name ? info.name : "?") + ((info.flags & SDL_RENDERER_ACCELERATED) ? " (accelerated)" : " (software)")},
-        {"Window / display", std::to_string(ww) + "\xC3\x97" + std::to_string(wh) + " / " + std::to_string(mode.w) + "\xC3\x97" +
-                                 std::to_string(mode.h) + " @ " + std::to_string(mode.refresh_rate) + " Hz"},
-        {"Panel", pw ? std::to_string(pw) + "\xC3\x97" + std::to_string(ph) + " @ " + std::to_string(refresh) + " Hz" : "unknown"},
-        {"LG SDL extensions", missing.empty() ? "all present" : "missing: " + missing},
-        {"App", id + "  \xC2\xB7  " + dir},
-        {"Log file", "/tmp/bloob-native.log"},
-        {"Last key", last_key},
-    };
-    int y = 180;
-    for (auto &row : rows) {
-      text(regular, row.first, 96, y, 24, kText3);
-      text(semibold, row.second, 520, y, 24, kText);
-      y += 46;
-    }
-    text(semibold, "Recent log", 96, y + 20, 24, kText2);
-    y += 64;
-    for (auto &line : log_tail(9)) {
-      text(regular, line.substr(0, 150), 96, y, 18, kText3);
-      y += 28;
-    }
-    text(regular, "Press any remote key to see its code  \xC2\xB7  Back returns", 96, 1020, 22, kText3);
-  }
-
-  void draw_player() {
-    long long t = now();
-    Phase phase = session.phase();
-    // Transparent: the hardware video plane under the window shows through.
-    gfx.clear({0, 0, 0, 0});
-
-    if (phase == Phase::Loading && !session.started()) {
-      gfx.fill_rect(0, 0, W, H, kBg);
-      text_center(bold, title, W / 2, 440, 56, kText);
-      text_center(regular, "Starting\xE2\x80\xA6", W / 2, 530, 26, kText2);
-      return;
-    }
-
-    if (phase == Phase::Error) {
-      gfx.fill_rect(0, 0, W, H, rgba(0x000000, 220));
-      text_center(bold, "Playback stopped", W / 2, 380, 52, kText);
-      text_center(regular, session.error(), W / 2, 470, 26, kText2);
-      const char *labels[2] = {"Try again", "Back"};
-      int x = W / 2 - 230;
-      for (int i = 0; i < 2; i++) {
-        bool f = error_focus == i;
-        gfx.fill_round(x, 560, 220, 72, 36, f ? kWhite : rgba(0xffffff, 36));
-        text_center(semibold, labels[i], x + 110, 580, 26, f ? kInk : kText);
-        x += 240;
-      }
-      return;
-    }
-
-    bool show = hud || hud_pinned();
-    if (!show) {
-      if (phase == Phase::Buffering) draw_chip("Buffering\xE2\x80\xA6", W / 2 - 90, H / 2 - 30);
-      return;
-    }
-
-    // Top: title and wall clock. Bottom: status, timeline, controls.
-    gfx.fill_rect(0, 0, W, 180, rgba(0x000000, 120));
-    gfx.fill_rect(0, H - 330, W, 330, rgba(0x000000, 150));
-    text(bold, title, 96, 56, 38, kText);
-    const MediaInfo &info = ums.info();
-    std::string stream;
-    if (!info.container.empty()) {
-      std::string container = info.container;
-      for (auto &c : container) c = static_cast<char>(toupper(static_cast<unsigned char>(c)));
-      stream = container;
-    }
-    if (!info.video_codec.empty()) {
-      char buf[96];
-      char fps[16];
-      std::snprintf(fps, sizeof fps, "%.3f", info.frame_rate);
-      std::string f = fps;
-      while (!f.empty() && f.back() == '0') f.pop_back();
-      if (!f.empty() && f.back() == '.') f.pop_back();
-      std::snprintf(buf, sizeof buf, " \xC2\xB7 %s %d\xC3\x97%d %s fps", info.video_codec.c_str(), info.width, info.height, f.c_str());
-      stream += buf;
-    }
-    if (!info.hdr.empty() && info.hdr != "none" && info.hdr != "NONE") stream += " \xC2\xB7 " + info.hdr;
-    for (auto &a : info.audio) if (a.selected) stream += " \xC2\xB7 " + audio_label(a);
-    if (!stream.empty()) text(regular, stream, 96, 108, 22, kText2);
-
-    long long display = session.display_ms(t);
-    long long duration = session.duration_ms();
-    long long position = session.position_ms(t);
-    std::string status = phase == Phase::Seeking ? "Seeking\xE2\x80\xA6" : phase == Phase::Buffering ? "Buffering\xE2\x80\xA6"
-                         : phase == Phase::Ended ? "Finished" : phase == Phase::Paused ? "Paused" : "";
-    if (!status.empty()) draw_chip(status, 96, H - 300);
-
-    int tx = 96, tw = W - 192, ty = H - 218;
-    bool timeline_focus = zone == Zone::Timeline;
-    int th = timeline_focus ? 8 : 6;
-    gfx.fill_round(tx, ty - th / 2, tw, th, th / 2, rgba(0xffffff, 60));
-    double frac = duration > 0 ? std::min(1.0, std::max(0.0, static_cast<double>(display) / duration)) : 0;
-    gfx.fill_round(tx, ty - th / 2, static_cast<int>(tw * frac), th, th / 2, kWhite);
-    if (timeline_focus || session.preview_ms() || session.pending_ms()) {
-      gfx.fill_circle(tx + static_cast<int>(tw * frac), ty, 12, kWhite);
-    }
-    if (session.preview_ms() || session.pending_ms()) {
-      std::string label = clock_text(display) + "   " + delta_text(display - session.seek_origin_ms(position));
-      int lw = bold.measure(label, 28) + 40;
-      int lx = std::max(tx, std::min(tx + tw - lw, tx + static_cast<int>(tw * frac) - lw / 2));
-      gfx.fill_round(lx, ty - 92, lw, 60, 14, kWhite);
-      text(bold, label, lx + 20, ty - 82, 28, kInk);
-    }
-    text(regular, clock_text(display), tx, ty + 22, 24, kText2);
-    text_right(regular, duration > 0 ? "\xE2\x88\x92" + clock_text(std::max(0LL, duration - display)) : "--:--", tx + tw, ty + 22, 24, kText2);
-
-    // Controls row.
-    const char *names[kControls] = {"Back 10s", "Play/Pause", "Forward 10s", "Audio", "Subtitles"};
-    int cx = 96;
-    for (int i = 0; i < kControls; i++) {
-      bool f = zone == Zone::Controls && control == i;
-      int size = i == 1 ? 84 : 72;
-      int x = i >= 3 ? W - 96 - (kControls - i) * 92 + (92 - size) : cx;
-      int y = H - 140 + (84 - size) / 2;
-      gfx.fill_circle(x + size / 2, y + size / 2, size / 2, f ? kWhite : rgba(0xffffff, 40));
-      Color fg = f ? kInk : kText;
-      if (i == 1) {
-        if (session.intent_play() && phase != Phase::Ended) gfx.bars(x + 28, y + 26, 30, fg);
-        else gfx.triangle_right(x + 32, y + 24, 36, fg);
-      } else if (i == 0 || i == 2) {
-        text_center(bold, i == 0 ? "\xE2\x88\x92" "10" : "+10", x + size / 2, y + 22, 22, fg);
-      } else {
-        text_center(bold, i == 3 ? "A" : "CC", x + size / 2, y + 20, 26, fg);
-      }
-      if (f) text_center(semibold, names[i], x + size / 2, y + size + 10, 20, kText);
-      if (i < 3) cx = x + size + 20;
-    }
-
-    if (menu != Menu::None) draw_menu();
-  }
-
-  void draw_chip(const std::string &label, int x, int y) {
-    int w = semibold.measure(label, 22) + 36;
-    gfx.fill_round(x, y, w, 48, 24, rgba(0xffffff, 44));
-    text(semibold, label, x + 18, y + 11, 22, kText);
-  }
-
-  void draw_menu() {
-    const MediaInfo &info = ums.info();
-    int x = W - 96 - 600, y = 200, w = 600;
-    int rows = menu_rows();
-    int h = 120 + std::max(1, rows) * 64 + 60;
-    gfx.fill_round(x, y, w, h, 26, rgba(0x121418, 245));
-    text(bold, menu == Menu::Audio ? "Audio" : "Subtitles", x + 36, y + 32, 32, kText);
-    int ry = y + 100;
-    if (rows == 0) {
-      text(regular, "This video reports no audio tracks.", x + 36, ry, 22, kText2);
-    }
-    for (int i = 0; i < rows; i++) {
-      bool f = i == menu_index;
-      std::string label;
-      bool selected = false;
-      if (menu == Menu::Audio) {
-        label = audio_label(info.audio[static_cast<size_t>(i)]);
-        selected = info.audio[static_cast<size_t>(i)].selected;
-      } else if (i == 0) {
-        label = "Off";
-        selected = session.subtitle_index() < 0;
-      } else {
-        const MediaTrack &tr = info.text[static_cast<size_t>(i - 1)];
-        label = language_name(tr.language) + (tr.codec.empty() ? "" : " \xC2\xB7 " + tr.codec);
-        selected = session.subtitle_index() == i - 1;
-      }
-      if (f) gfx.fill_round(x + 16, ry - 12, w - 32, 56, 14, kWhite);
-      text(regular, label, x + 36, ry, 24, f ? kInk : kText);
-      if (selected) text_right(bold, "\xE2\x9C\x93", x + w - 36, ry, 24, f ? kInk : kText);
-      ry += 64;
-    }
-    text(regular, "Back to close", x + 36, y + h - 48, 18, kText3);
-  }
-
-  void render() {
-    gfx.begin_frame();
-    switch (screen) {
-      case Screen::Home: draw_home(); break;
-      case Screen::Diagnostics: draw_diagnostics(); break;
-      case Screen::Player: draw_player(); break;
-    }
-    gfx.end_frame();
-    SDL_RenderPresent(renderer);
-    dirty = false;
   }
 
   // ---------------------------------------------------------------- loop
 
-  int wait_timeout() const {
-    if (script_pos < script.size()) return 10;
-    if (screen != Screen::Player) return 1000;
-    // Redraw often enough for a moving clock only when it is on screen.
-    if (session.preview_ms()) return 50;
-    bool show = hud || hud_pinned();
-    return show ? 250 : 1000;
-  }
-
   void loop() {
-    while (running) {
+    Ctx &c = ctx();
+    long long last = static_cast<long long>(SDL_GetTicks());
+    while (running_) {
+      long long now = static_cast<long long>(SDL_GetTicks());
+      int timeout;
+      if (c.animating || dirty_ || !ops_.empty()) timeout = 0;
+      else if (script_pos_ < script_.size()) timeout = 10;
+      else if (c.next_redraw) timeout = static_cast<int>(std::max(0LL, std::min(1000LL, c.next_redraw - now)));
+      else timeout = 1000;
       SDL_Event e;
-      if (SDL_WaitEventTimeout(&e, wait_timeout())) {
-        if (e.type != wake_event) on_event(e);
-        while (SDL_PollEvent(&e)) if (e.type != wake_event) on_event(e);
+      if (SDL_WaitEventTimeout(&e, timeout)) {
+        if (e.type == wake_event_) dirty_ = true;
+        else on_event(e);
+        while (SDL_PollEvent(&e)) {
+          if (e.type == wake_event_) dirty_ = true;
+          else on_event(e);
+        }
       }
       Luna::instance().pump();
-      long long t = now();
-      if (!script.empty()) run_script(t);
-      if (screen == Screen::Player) {
-        if (session.tick(t)) dirty = true;
-        if (hud && t > hud_until && !hud_pinned()) { hud = false; dirty = true; }
-        bool show = hud || hud_pinned();
-        long long second = session.display_ms(t) / 250;
-        if (show && second != last_render_second) { last_render_second = second; dirty = true; }
+      c.api_tasks.pump();
+      c.image_tasks.pump();
+      now = static_cast<long long>(SDL_GetTicks());
+      c.dt = std::min(0.1, (now - last) / 1000.0);
+      last = now;
+      c.now = now;
+      if (!script_.empty()) run_script(now);
+      apply_ops();
+      if (!c.api.ready() && !fallback_tried_ && now - service_started_at_ > kServiceBusWaitMs) {
+        logf("app", "no reply from the service over the bus");
+        start_service_fallback();
       }
-      if (dirty) render();
+      if (!c.api.ready() && c.service_error.empty() && now - service_started_at_ > kServiceTimeoutMs) {
+        c.service_error = "Bloob's background service did not start. Close Bloob and open it again.";
+        logf("app", "service start timed out");
+      }
+      bool was_animating = c.animating;
+      bool redraw_due = c.next_redraw && now >= c.next_redraw;
+      c.animating = false;
+      c.next_redraw = 0;
+      top()->update(c.dt);
+      if (stack_.empty() && rail_open_.step(c.dt)) c.animating = true;
+      apply_ops();
+      if (dirty_ || was_animating || c.animating || redraw_due) render();
     }
   }
+
+ private:
+  struct Step {
+    std::string kind, arg;
+  };
+  struct Op {
+    enum Kind { Push, Pop, Replace } kind;
+    std::unique_ptr<Screen> screen;
+  };
+
+  Uint32 wake_event_ = 0;
+  bool running_ = true;
+  bool dirty_ = true;
+  std::vector<std::unique_ptr<Screen>> roots_;
+  std::vector<std::unique_ptr<Screen>> stack_;
+  std::deque<Op> ops_;
+  int root_ = 0;
+  bool rail_focus_ = false;
+  int rail_index_ = 0;
+  Anim rail_open_;
+  std::string toast_;
+  long long toast_until_ = 0;
+  long long service_started_at_ = 0;
+  bool fallback_tried_ = false;
+  pid_t fallback_pid_ = -1;
+  std::vector<Step> script_;
+  size_t script_pos_ = 0;
+  long long script_at_ = 0;
+  std::string snapshot_dir_;
 };
 
 }  // namespace
 
 int main(int argc, char **argv) {
   log_init("/tmp/bloob-native.log");
-  logf("app", "Bloob native host starting");
+  logf("app", "Bloob native starting");
   App app;
   if (!app.init(argc, argv)) {
     logf("app", "startup failed");

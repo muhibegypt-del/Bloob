@@ -7,7 +7,9 @@ const path = require('path');
 // installed, so the store tries several locations in order of durability,
 // verifies each write by reading it back, and reports what happened. The key
 // itself is never logged or returned.
-const APP_ID = 'com.muhib.tvprototype';
+const config = require('./config');
+
+const APP_ID = config.appId;
 const FILE = 'account.json';
 
 function defaultLocations() {
@@ -20,6 +22,10 @@ function defaultLocations() {
   list.push({ id: 'app-data', dir: path.join('/media/internal', APP_ID), durable: true });
   const home = os.homedir();
   if (home && home !== '/') list.push({ id: 'home', dir: path.join(home, '.bloob'), durable: true });
+  // Another Bloob app's pairing (the web app's, for the native app): read, never written.
+  (config.sharedAppIds || []).forEach(id => {
+    list.push({ id: `shared:${id}`, dir: path.join('/media/internal', id), durable: true, readOnly: true });
+  });
   // Inside the installed service: survives restarts, may be replaced by a reinstall.
   list.push({ id: 'service', dir: path.join(__dirname, '.data'), durable: false });
   // Survives app/service restarts until the TV reboots.
@@ -77,6 +83,7 @@ function createStore(getLocations) {
   async function save(apiKey) {
     const attempts = [];
     for (const location of getLocations()) {
+      if (location.readOnly) continue;
       try {
         await writeVerified(location, { apiKey });
         status = { location: location.id, durable: location.durable, attempts };
@@ -92,6 +99,7 @@ function createStore(getLocations) {
   /** Stop a rejected key from being reloaded. Overwrites rather than deletes. */
   async function clear() {
     for (const location of getLocations()) {
+      if (location.readOnly) continue;
       try {
         await fs.access(path.join(location.dir, FILE));
         await writeVerified(location, {});
@@ -103,4 +111,45 @@ function createStore(getLocations) {
   return { load, save, clear, getStatus, locations: getLocations };
 }
 
-module.exports = Object.assign(createStore(defaultLocations), { createStore, defaultLocations });
+/**
+ * A JSON document kept in the first writable location (watch progress and
+ * similar app data). Reads the first copy found; writes are verified.
+ */
+function createFileStore(fileName, getLocations) {
+  let where = null;
+  async function read() {
+    for (const location of getLocations()) {
+      try {
+        const value = JSON.parse(await fs.readFile(path.join(location.dir, fileName), 'utf8'));
+        if (!location.readOnly) where = location;
+        return value;
+      } catch (_) { /* not here */ }
+    }
+    return null;
+  }
+  async function write(value) {
+    const list = getLocations().filter(l => !l.readOnly);
+    const ordered = where ? [where].concat(list.filter(l => l.id !== where.id)) : list;
+    for (const location of ordered) {
+      try {
+        await writeVerifiedFile(location, fileName, value);
+        where = location;
+        return location.id;
+      } catch (_) { /* try the next */ }
+    }
+    return null;
+  }
+  return { read, write };
+}
+
+async function writeVerifiedFile(location, fileName, value) {
+  await fs.mkdir(location.dir, { recursive: true, mode: 0o700 });
+  const file = path.join(location.dir, fileName);
+  const temporary = `${file}.${process.pid}.tmp`;
+  const text = JSON.stringify(value);
+  await fs.writeFile(temporary, text, { mode: 0o600 });
+  await fs.rename(temporary, file);
+  if (await fs.readFile(file, 'utf8') !== text) throw Object.assign(new Error('Read-back mismatch'), { code: 'EVERIFY' });
+}
+
+module.exports = Object.assign(createStore(defaultLocations), { createStore, createFileStore, defaultLocations });

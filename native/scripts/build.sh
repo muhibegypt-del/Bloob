@@ -19,7 +19,11 @@ if readelf -V build-webos/pkg/bin/bloob | grep -q GLIBCXX; then
   echo "error: binary depends on the NDK's libstdc++" >&2; exit 1
 fi
 
+# The app's own copy of the Bloob service (catalogue, sources, AllDebrid, artwork).
+VERSION=$(node -p "require('./package/appinfo.json').version")
+node scripts/stage-service.mjs build-webos/service "$VERSION"
+
 ARES=${ARES_PACKAGE:-../tv-app/node_modules/.bin/ares-package}
 mkdir -p artifacts
-"$ARES" build-webos/pkg -o artifacts
+"$ARES" build-webos/pkg build-webos/service -o artifacts
 ls -la artifacts

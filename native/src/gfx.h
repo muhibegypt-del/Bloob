@@ -35,9 +35,11 @@ class Font {
   struct Atlas {
     SDL_Texture *texture = nullptr;
     std::map<unsigned, Glyph> glyphs;
+    std::map<unsigned long long, float> kerning;  // pair -> pixels, filled on first use
     float ascent = 0, line = 0, scale = 0;
   };
   Atlas *atlas(int size);
+  float kern(Atlas *atlas, unsigned prev, unsigned cp);
 
   SDL_Renderer *renderer_ = nullptr;
   std::vector<unsigned char> data_;
@@ -65,12 +67,23 @@ class Gfx {
   void fill_circle(int cx, int cy, int radius, Color color);
   void triangle_right(int x, int y, int size, Color color);
   void bars(int x, int y, int size, Color color);
+  // Colour with alpha running from a0 to a1, left→right or top→bottom.
+  void gradient_h(int x, int y, int w, int h, Color color, Uint8 a0, Uint8 a1);
+  void gradient_v(int x, int y, int w, int h, Color color, Uint8 a0, Uint8 a1);
+  // Draw a texture at (x, y), scaled to w×h when given.
+  void texture(SDL_Texture *texture, int x, int y, int w, int h, Uint8 alpha = 255);
+  void clip(int x, int y, int w, int h);
+  void unclip();
 
  private:
   SDL_Renderer *renderer_ = nullptr;
   SDL_Texture *circle_ = nullptr;    // anti-aliased disc used for corners
   SDL_Texture *triangle_ = nullptr;  // anti-aliased play glyph
+  SDL_Texture *ramp_h_ = nullptr;    // 256×1 alpha ramp
+  SDL_Texture *ramp_v_ = nullptr;    // 1×256 alpha ramp
   SDL_Texture *canvas_ = nullptr;
+  std::map<std::pair<int, int>, SDL_Texture *> rings_;  // (radius, width) -> anti-aliased annulus
+  SDL_Texture *ring(int radius, int width);
   int w_ = 1920, h_ = 1080;
   static constexpr int kCircle = 256;
 };

@@ -13,9 +13,24 @@ Build **Bloob**, a distinct webOS application with:
 
 The current prototype is a vertical slice, not the finished product. The user has seen a high-quality resolved stream play with HDR and Atmos on this TV, but criticized the old player overlay and source chooser and had to re-pair AllDebrid at every start. Version 0.2.0 (12 October 2026) answers all three: Buna now owns playback (`tv-app/src/buna/`), the source screen is recommendation-first, and pairing storage tries several locations, verifies each write, and reports where the key went. All of it is covered by unit tests and a key-driven end-to-end run in desktop Chromium. **None of it has been verified on the TV yet**; see "TV verification" in `tv-app/README.md`.
 
-## Native track (Buna N1, 13 October 2026)
+## Native track (Buna N2, 13 October 2026)
 
-The owner chose native. `native/` is a C++ webOS app (`com.muhib.bloob`, "Bloob Native") built with the community webOS NDK (openlgtv buildroot-nc4, the toolchain Moonlight TV uses). It uses the TV's SDL2 for the window and remote, its own renderer (stb_truetype text, 1920×1080 offscreen canvas), and LG uMediaServer over luna (`com.webos.media`) for playback, in an exported hardware video window under the UI (`SDL_webOSCreateExportedWindow`). Playback state lives in a native Buna session that follows the same rules as the web Buna. `native/scripts/build.sh` runs the host tests, cross-builds, checks the ABI (needs only GLIBC_2.4, no GLIBCXX) and packages `native/artifacts/com.muhib.bloob_<v>_arm.ipk`. `native/scripts/ui-snapshots.sh` drives a desktop build with scripted keys and simulated media events and saves screenshots. **It has not run on the TV yet.** See `native/README.md` for the first-run checklist and the N2/N3 plan. Elements of A is now UI inspiration only. Technical references are the open-source Moonlight TV and Kodi webOS code, read but not copied. The web app (`tv-app/`) remains installed and working.
+The owner chose native. `native/` is a C++ webOS app (`com.muhib.bloob`, "Bloob Native") built with the community webOS NDK (openlgtv buildroot-nc4, the toolchain Moonlight TV uses).
+
+- **What it contains:** the whole app, not a test host. That is Home/Films/Series rows with a focus-following backdrop, search with an on-screen keyboard, details with seasons, episodes and resume, *Choose how to watch* (recommended card, options table, AllDebrid PIN pairing, resolve progress), the player with real track menus and up next, and settings.
+- **Rendering and playback:** the TV's SDL2 provides the window and remote. Bloob draws with its own renderer (Manrope via stb_truetype, artwork via stb_image scaled on worker threads, 1920×1080 offscreen canvas). Playback goes through LG uMediaServer over luna (`com.webos.media`) in an exported hardware video window under the UI.
+- **Service:** the app bundles its own copy of the Bloob service (`tv-app/service`, staged as `com.muhib.bloob.service` on port 8790). The app talks to it over plain localhost HTTP. The service now also serves the catalogue, search, artwork proxy, ranked sources, AllDebrid resolve jobs, watch progress and settings. If the bus will not start the service, the app runs it directly with the TV's Node and stops it on exit.
+- **Build and test scripts:**
+  - `native/scripts/build.sh`: tests, cross-build, ABI guard (GLIBC_2.4 only, no GLIBCXX), service staging, IPK.
+  - `native/scripts/ui-tour.sh`: drives the whole app on the desktop against the real service, with fixture sources.
+  - `native/scripts/ui-snapshots.sh`: covers player states.
+
+**TV status:**
+
+- **0.3.x verified on the TV:** OLED55G26LA, webOS 9.2.2. Window, remote, luna, uMediaServer load and the exported video window worked, and the test clip played.
+- **0.4.0 not yet run on the TV:** the catalogue, the service and AllDebrid have only run on the desktop.
+
+See `native/README.md`. Elements of A is UI inspiration only. Technical references are the open-source Moonlight TV and Kodi webOS code, read but not copied. The web app (`tv-app/`) remains installed and working.
 
 ## Repository and local-only material
 

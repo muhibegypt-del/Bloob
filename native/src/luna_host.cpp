@@ -3,6 +3,8 @@
 // injected by the test script through Luna::inject().
 #include "luna.h"
 
+#include <cstdlib>
+
 #include "log.h"
 
 struct Luna::Call {
@@ -35,7 +37,13 @@ int Luna::call(const std::string &uri, const std::string &payload, Callback call
     reply = "{\"returnValue\":true,\"modelName\":\"Host preview\",\"sdkVersion\":\"7.3.0\",\"firmwareVersion\":\"0.0.0\"}";
   else if (uri.find("com.webos.media/load") != std::string::npos)
     reply = "{\"returnValue\":true,\"mediaId\":\"_host_media\"}";
-  else if (subscribe)
+  else if (uri.find(".service/start") != std::string::npos && std::getenv("BLOOB_HOST_SERVICE_FAIL"))
+    reply = "{\"returnValue\":false,\"errorCode\":-1,\"errorText\":\"Denied (host test)\"}";
+  else if (uri.find(".service/start") != std::string::npos) {
+    // The desktop test runs the real Node service itself, on this port.
+    const char *port = std::getenv("BLOOB_SERVICE_PORT");
+    reply = std::string("{\"returnValue\":true,\"ready\":true,\"version\":\"host\",\"port\":") + (port ? port : "8790") + "}";
+  } else if (subscribe)
     reply = "{\"returnValue\":true,\"subscribed\":true}";
   int id;
   {

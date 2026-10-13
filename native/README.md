@@ -1,22 +1,41 @@
-# Bloob native (Buna N1)
+# Bloob native (Buna N2)
 
-A native webOS app (`com.muhib.bloob`, "Bloob Native") written in C++ against the community webOS NDK. It replaces the browser with our own host. Bloob controls the window, remote input, drawing and the playback session. Video goes through the TV's own media pipeline in a hardware plane under our UI.
+A native webOS app (`com.muhib.bloob`, "Bloob Native") written in C++ against the community webOS NDK. It is the whole app: catalogue, search, details with seasons and episodes, source choice, AllDebrid pairing and resolution, and playback through the TV's own media pipeline. It draws its own UI (design direction "A · Cinema") and owns playback with the native Buna session.
 
 It installs alongside the web app (`com.muhib.tvprototype`) and does not replace it.
 
-## What N1 contains
+## How it fits together
 
-| Part | File | How |
+```
+bloob (C++)                                   com.muhib.bloob.service (Node, bundled)
+  SDL window + remote  ──────────────┐          catalogue/search/details   ← Cinemeta
+  screens + renderer (Manrope)       │ HTTP     artwork proxy + cache       ← metahub / TMDB images
+  native Buna session ──┐            ├────────► sources + ranking           ← Torrentio
+                        │            │ 127.0.0.1 AllDebrid pairing + resolve jobs
+  luna (libhelpers) ────┤            │ :8790    watch progress, settings
+                        ▼            │
+  com.webos.media (uMediaServer) → hardware video plane under the UI
+```
+
+The service is the same code as the web app's (`tv-app/service`), staged as the app's own JS service with its own ID and port (`scripts/stage-service.mjs`). It reads the web app's saved AllDebrid pairing if there is one, and keeps its own copy. The app starts the service over the system bus. If the bus refuses, it runs the service directly with the TV's Node as a child process. The app stops the service when it exits.
+
+| Part | Files | What it does |
 | --- | --- | --- |
-| Window, remote | `src/main.cpp`, `src/keys.h` | SDL2 as shipped on the TV (LG's webOS SDL). Back/Exit are claimed with `SDL_WEBOS_ACCESS_POLICY_KEYS_*` hints; LG scancodes 482 (Back), 505 (Exit), 486–489 (colour keys) |
-| Drawing | `src/gfx.cpp` | Own renderer. Inter text from stb_truetype glyph atlases, anti-aliased rounded shapes, every frame drawn at 1920×1080 to an offscreen canvas and scaled once. Redraws only on input, media events or a visible moving clock (no busy loop) |
-| Video under UI | `src/main.cpp` (`open_player`, `place_video`) | `SDL_webOSCreateExportedWindow` → window ID passed to the media pipeline; UI pixels left transparent where video shows |
-| Media | `src/media.cpp` | LG uMediaServer over the system bus (`luna://com.webos.media/load|subscribe|play|pause|seek|selectTrack|setSubtitleEnable|unload`). Real track lists, codec, resolution, frame rate, HDR type from `sourceInfo`/`videoInfo` |
-| System bus | `src/luna.cpp` | LG `libhelpers` (`HLunaServiceCall`), replies marshalled to the UI thread |
-| Session (native Buna) | `src/session.cpp` | Same rules as the web Buna: clock interpolated between media reports (max 2 s ahead), seek preview with 10/30/60/120 s acceleration, one seek 600 ms after the last press, committed position only after `seekDone` or a settled report, stall watchdog, startup timeout, error state, end/replay |
-| Diagnostics | Home → Diagnostics | TV model/firmware, SDL driver/renderer, display and panel modes, LG SDL extensions present, last remote key with scancode, recent log lines |
+| Shell | `main.cpp` | Window, remote, navigation rail (Home, Search, Films, Series, Settings), screen stack, service start-up, idle-friendly frame loop (draws only when something changes or animates) |
+| Screens | `browse.cpp`, `search.cpp`, `details.cpp`, `sources.cpp`, `player.cpp`, `settings.cpp`, `pairing.cpp` | Home/Films/Series with a backdrop that follows focus; search with an on-screen keyboard; details with resume and episode logic; sources (recommended card, table, pairing, resolve progress, file/quality questions); player; settings and diagnostics |
+| Toolkit | `ui.*`, `common.*`, `gfx.*`, `icons.*` | Theme, text layout (wrap, ellipsis, kerning), eased animations, buttons/chips/focus rings, gradients, anti-aliased shapes and line icons |
+| Artwork | `images.*` | Fetched through the service, decoded and scaled on worker threads to the exact size drawn, rounded corners and title shading baked in, faded in, least-recently-drawn textures released over a 192 MB budget |
+| Plumbing | `http.*`, `tasks.*`, `api.*`, `model.*`, `json.*` | Localhost HTTP client, worker pools whose results land on the UI thread, typed service API, data model |
+| Playback | `media.*`, `session.*`, `luna.*` | uMediaServer over luna (`load`, `subscribe`, `play`, `pause`, `seek`, `selectTrack`, `setSubtitleEnable`, `unload`); native Buna session (clock, seek preview/commit, stall watchdog, errors) |
 
-Compatibility, verified on the built binary: 32-bit ARM EABI5 soft-float (`e_flags 0x5000200`, the same as the TV's own executables). It needs only `GLIBC_2.4`, no `GLIBCXX`, since the C++ runtime is linked statically. It uses only SDL 2.0.0-era functions plus the LG extensions, and those are resolved at runtime. Its libraries are `libSDL2-2.0.so.0`, `libglib-2.0.so.0`, `libhelpers.so.2` and libc.
+### Behaviour worth knowing
+
+- **Play** on a title goes to *Choose how to watch*, with the recommended source focused. It always names exactly what it plays: "Resume S2 · E4", "Play S1 · E8" (next episode), or "Play".
+- **Pairing**: if AllDebrid is not connected, pressing Play shows a PIN and continues to that source once paired. Settings can reconnect at any time.
+- **Progress** is saved every 15 s while playing, on pause and on exit. Home's *Continue watching* resumes unfinished titles and offers the next episode for finished ones. Playback resumes automatically (a *Start over* button appears).
+- **Up next**: when an episode ends, the next one starts after a 10 s countdown (Back to stay).
+- **Back**: player → closes menus, hides controls, then exits to where you came from. Rows → back to the top, then the rail. Rail → Home, then exits Bloob.
+- **Audio and subtitles** list the file's real tracks from the TV's media pipeline.
 
 ## Build
 
@@ -25,44 +44,49 @@ Compatibility, verified on the built binary: 32-bit ARM EABI5 soft-float (`e_fla
 curl -L -o /tmp/sdk.tgz https://github.com/openlgtv/buildroot-nc4/releases/download/webos-a38c582/arm-webos-linux-gnueabi_sdk-buildroot-x86_64.tar.gz
 tar xzf /tmp/sdk.tgz -C /opt && /opt/arm-webos-linux-gnueabi_sdk-buildroot/relocate-sdk.sh
 
-native/scripts/build.sh          # host unit tests → cross build → ABI guard → artifacts/com.muhib.bloob_<v>_arm.ipk
-native/scripts/ui-snapshots.sh   # desktop build, scripted remote + simulated media events → 1920×1080 screenshots
+native/scripts/build.sh          # unit tests → cross build → ABI guard → service staging → artifacts/com.muhib.bloob_<v>_arm.ipk
+native/scripts/ui-tour.sh        # desktop tour of the whole app: real service + live catalogue, fixture sources, scripted remote
+native/scripts/ui-snapshots.sh   # desktop player states with simulated TV media events
 ```
 
-`ares-package` comes from the web app's dev dependencies (`tv-app/node_modules`). The desktop build (`bloob_host`) runs the same UI and session code against a stand-in bus (`src/luna_host.cpp`). It drives scripted key presses and injects media events through `BLOOB_SCRIPT`. The real binary cannot run under qemu here, because qemu-user cannot run the NDK's glibc 2.12 dynamic loader. Static ARM binaries do run.
+Desktop runs use `bloob_host`: the same code with a stand-in system bus (`src/luna_host.cpp`) and SDL's dummy video driver. `tests/fixtures/dev-service.js` fakes the indexer and AllDebrid for the tour (`BLOOB_DEV_FIXTURES`), because neither is reachable from build machines. It is never packaged. `ares-package` comes from the web app's dev dependencies.
+
+The built binary needs only `GLIBC_2.4` and no `GLIBCXX`, because the C++ runtime is linked statically. It uses SDL 2.0.0-era functions plus the LG extensions, which are resolved at runtime. It is 32-bit ARM EABI5 soft-float, the same as the TV's own executables.
 
 ## Install and test on the TV (Windows `cmd`)
 
 ```bat
-ares-install -d rootedTV com.muhib.bloob_0.3.0_arm.ipk
+cd /d %USERPROFILE%\Downloads
+ares-install -d rootedTV com.muhib.bloob_0.4.0_arm.ipk
 ares-launch -d rootedTV com.muhib.bloob
-```
-
-The log lives at `/tmp/bloob-native.log` on the TV. `ares-shell` refuses to run under the CLI's `tv` profile, so read the log over the root SSH you already have (Windows ships `ssh`):
-
-```bat
 ssh root@192.168.1.26 "cat /tmp/bloob-native.log"
 ```
 
-To play any URL directly (for example a resolved link), with no catalogue yet:
+`ares-shell` does not work under the CLI's `tv` profile, so read the log over SSH. The log records hosts only, never full links or account keys. If the service was started directly (the fallback), its own output is in `/tmp/bloob-service.log`.
+
+A direct link can still be played without the catalogue:
 
 ```bat
 ares-launch -d rootedTV com.muhib.bloob -p "{\"uri\":\"https://...\",\"title\":\"Test\",\"autoplay\":true}"
 ```
 
-The log never contains full URLs: it records scheme and host only. The first TV run answers, in this order:
-1. Does the window appear and does the remote reach it? (Diagnostics shows the last key and its code.)
-2. Does the system bus work from a native app? (The home screen shows the TV model, otherwise an error.)
-3. Does `com.webos.media/load` accept our payload, and does video appear under the UI? (Log: `load …`, `loaded mediaId=…`, `first event keys: …`, `sourceInfo …`.)
-4. Do the Audio and Subtitles menus list the file's real tracks, and does selecting one change what you hear and see?
+## Verified on the TV
 
-If video does not show, the log says which step failed. Options to try are a different pipeline type (`"loadType":"sim"` in the launch parameters) or a different window placement.
+- **0.3.x (13 October 2026), OLED55G26LA, webOS 9.2.2:** window, remote, luna (`getSystemInfo`), uMediaServer `load` with the exported video window, and the bundled clip playing.
+- **Not yet verified:**
+  - **0.4.0:** the bundled service starting on the TV, and artwork and catalogue loading there.
+  - **AllDebrid on the native app:** pairing and resolving.
+  - **Real films:** seeking, and audio and subtitle switching, on real content.
 
-## Next milestones
+## Next
 
-- **N2:** catalogue, search, sources and AllDebrid. Reuse the existing service (`tv-app/service`) over `http://127.0.0.1:8787`, with artwork decoded by stb_image and cached. Port the Concept A design.
-- **N3:** a Starfish ES backend, if N1 shows the URI pipeline's limits. This means demuxing ourselves and feeding LG's decoder (the approach Kodi's webOS port uses), to get Dolby Vision profile conversion, audio fallback and buffering control.
+- Measure first frame, seek landing and memory on the TV with real content. The log already records them.
+- **N3** (only if measurements show the need): a Starfish ES backend that demuxes and feeds LG's decoder, as Kodi's webOS port does. It would add Dolby Vision profile conversion, audio fallback and buffering control.
 
 ## References (read, not copied)
 
-Moonlight TV (GPL-3.0) for the NDK, SDL hints, packaging and the exported video window. Kodi's webOS port (GPL-2.0+) for the media pipeline options, TV capability queries and screensaver handling. The webosbrew documentation for remote scancodes. No code from these projects is included. stb_truetype and stb_image are public domain (MIT alternative). Inter is under the SIL Open Font License (`third_party/fonts/Inter-LICENSE.txt`).
+- **Moonlight TV (GPL-3.0):** the NDK, SDL hints, packaging and the exported video window.
+- **Kodi's webOS port (GPL-2.0+):** media pipeline options and TV capability queries.
+- **webosbrew documentation:** remote scancodes.
+
+No code from these projects is included. stb_truetype and stb_image are public domain (MIT alternative). Manrope is under the SIL Open Font License (`third_party/fonts/Manrope-LICENSE.txt`).

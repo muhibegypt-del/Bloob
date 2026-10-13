@@ -5,10 +5,17 @@ const http = require('http');
 const https = require('https');
 const fs = require('fs');
 const path = require('path');
+const config = require('./config');
 const accountStore = require('./account-store');
 const { parseStreams } = require('./release');
+const catalog = require('./catalog');
+const images = require('./images');
+const progress = require('./progress');
+const { rank } = require('./rank');
+const { createResolver } = require('./resolve');
 
-const PORT = Number(process.env.TV_APP_PORT || 8787);
+const PORT = config.port;
+const VERSION = require('./package.json').version;
 const UI_DIR = path.resolve(process.env.TV_APP_UI_DIR || path.join(__dirname, 'www'));
 const API = 'api.alldebrid.com';
 const SOURCE_HOST = 'torrentio.strem.fun';
@@ -63,6 +70,7 @@ function trustedRequest(req) {
 const AUTH_ERRORS = /^AUTH_(BAD_APIKEY|BLOCKED|USER_BANNED|MISSING_APIKEY)/;
 
 function alldebrid(endpoint, fields, authenticated = true) {
+  if (devFixtures) return devFixtures.alldebrid(endpoint, fields, authenticated);
   return new Promise((resolve, reject) => {
     if (authenticated && !apiKey) return reject(new HttpError(401, 'Connect AllDebrid first'));
     const data = fields ? new URLSearchParams(fields).toString() : '';
@@ -99,6 +107,45 @@ function alldebrid(endpoint, fields, authenticated = true) {
     request.on('error', reject);
     request.end(data);
   });
+}
+
+// Desktop UI tests point this at a module that fakes the indexer and AllDebrid
+// (the real ones are unreachable from build machines). Never set on the TV.
+const devFixtures = process.env.BLOOB_DEV_FIXTURES ? require(path.resolve(process.env.BLOOB_DEV_FIXTURES)) : null;
+if (devFixtures) {
+  if (!process.env.BLOOB_DEV_UNPAIRED) apiKey = 'fixture';
+  console.log('Using development fixtures');
+}
+
+const resolver = createResolver((endpoint, fields) => alldebrid(endpoint, fields));
+
+// Candidates from recent searches, so the app can ask to resolve one by ID
+// without sending the magnet or link back.
+const knownCandidates = new Map();
+const discoveries = new Map();
+const DISCOVERY_TTL = 10 * 60 * 1000;
+
+function remember(candidates) {
+  candidates.forEach(c => {
+    knownCandidates.delete(c.id);
+    knownCandidates.set(c.id, c);
+  });
+  while (knownCandidates.size > 3000) knownCandidates.delete(knownCandidates.keys().next().value);
+}
+
+async function discoverCached(type, id) {
+  const key = `${type}:${id}`;
+  const hit = discoveries.get(key);
+  if (hit && Date.now() - hit.at < DISCOVERY_TTL) return hit.candidates;
+  const candidates = devFixtures ? parseStreams(await devFixtures.streams(type, id), PROVIDER) : await discover(type, id);
+  discoveries.set(key, { at: Date.now(), candidates });
+  if (discoveries.size > 50) discoveries.delete(discoveries.keys().next().value);
+  remember(candidates);
+  return candidates;
+}
+
+function withArt(entry) {
+  return Object.assign({}, entry, { tile: catalog.art.tile(entry.id), backdrop: catalog.art.backdrop(entry.id), logo: catalog.art.logo(entry.id) });
 }
 
 function isHttpUrl(value) {
@@ -157,8 +204,77 @@ function accountStatus() {
   };
 }
 
-async function handleApi(req, res, pathname) {
+function validVideoId(type, id) {
+  if (type === 'movie') return /^tt\d+$/.test(id);
+  if (type === 'series') return /^tt\d+:\d+:\d+$/.test(id);
+  return false;
+}
+
+async function handleApi(req, res, url) {
+  const pathname = url.pathname;
+  const query = url.searchParams;
   const input = req.method === 'POST' ? await readBody(req) : {};
+  if (req.method === 'GET') {
+    if (pathname === '/api/health') return reply(res, 200, { ok: true, version: VERSION, app: config.appId, paired: !!apiKey });
+    if (pathname === '/api/home') {
+      const result = await catalog.home();
+      const resume = await progress.continueWatching().catch(() => []);
+      return reply(res, 200, { rows: result.rows, continue: resume.map(withArt) });
+    }
+    if (pathname === '/api/browse') return reply(res, 200, await catalog.browse(query.get('type')));
+    if (pathname === '/api/search') return reply(res, 200, await catalog.search(query.get('q')));
+    if (pathname === '/api/meta') {
+      const meta = await catalog.meta(query.get('type'), query.get('id'));
+      return reply(res, 200, { meta, progress: await progress.forTitle(meta.id).catch(() => ({})) });
+    }
+    if (pathname === '/api/image') {
+      const image = await images.fetchImage(String(query.get('u') || ''));
+      res.writeHead(200, { 'Content-Type': image.type, 'Content-Length': image.body.length, 'Cache-Control': 'public, max-age=86400' });
+      return res.end(image.body);
+    }
+    if (pathname === '/api/resolve/status') {
+      const job = resolver.status(query.get('id'));
+      return job ? reply(res, 200, job) : reply(res, 404, { error: 'This request has expired. Choose the source again.' });
+    }
+    if (pathname === '/api/progress') return reply(res, 200, { items: (await progress.continueWatching()).map(withArt) });
+    if (pathname === '/api/settings') return reply(res, 200, await progress.getSettings());
+  }
+  if (pathname === '/api/settings' && req.method === 'POST') return reply(res, 200, await progress.saveSettings(input));
+  if (pathname === '/api/sources/ranked' && req.method === 'POST') {
+    const type = input.type;
+    const id = String(input.videoId || '');
+    if (!validVideoId(type, id)) return reply(res, 400, { error: 'Invalid title or episode ID' });
+    const candidates = await discoverCached(type, id);
+    return reply(res, 200, Object.assign({ provider: PROVIDER }, rank(candidates, { language: input.language || 'English' })));
+  }
+  if (pathname === '/api/resolve/start' && req.method === 'POST') {
+    let source = null;
+    if (input.candidate) {
+      const candidate = knownCandidates.get(String(input.candidate));
+      if (!candidate) return reply(res, 404, { error: 'This source list has expired. Search again.' });
+      source = { kind: candidate.kind, value: candidate.value, fileName: candidate.fileName };
+    } else if (isHttpUrl(input.link)) {
+      source = { kind: 'link', value: String(input.link) };
+    } else if (/^magnet:\?xt=urn:btih:/i.test(String(input.magnet || '')) || /^[a-f0-9]{40}$/i.test(String(input.magnet || ''))) {
+      source = { kind: 'magnet', value: String(input.magnet).trim() };
+    } else {
+      return reply(res, 400, { error: 'Choose a source, or enter a link or magnet' });
+    }
+    if (!apiKey) return reply(res, 401, { error: 'Connect AllDebrid first' });
+    const hint = { fileName: source.fileName };
+    if (Number.isInteger(input.season) && Number.isInteger(input.episode)) { hint.season = input.season; hint.episode = input.episode; }
+    return reply(res, 200, resolver.start(source, hint));
+  }
+  if (pathname === '/api/resolve/choose' && req.method === 'POST') {
+    const job = resolver.choose(input.id, input);
+    return job ? reply(res, 200, job) : reply(res, 404, { error: 'This request has expired. Choose the source again.' });
+  }
+  if (pathname === '/api/resolve/cancel' && req.method === 'POST') {
+    return reply(res, 200, { cancelled: resolver.cancel(input.id) });
+  }
+  if (pathname === '/api/progress' && req.method === 'POST') {
+    return reply(res, 200, await progress.save(input));
+  }
   if (pathname === '/api/sources/search' && req.method === 'POST') {
     const type = input.type;
     const id = String(input.videoId || input.id || '');
@@ -283,13 +399,16 @@ function serveUi(req, res, pathname) {
 
 const accountReady = accountStore.load().then(saved => {
   if (saved && !apiKey) apiKey = saved;
+  // Found another Bloob app's pairing: keep our own copy too.
+  if (saved && String(accountStore.getStatus().location || '').indexOf('shared:') === 0) return accountStore.save(saved);
 }).catch(error => console.error('Could not load AllDebrid pairing:', error.message));
 
 const server = http.createServer((req, res) => {
-  const pathname = new URL(req.url, `http://127.0.0.1:${PORT}`).pathname;
+  const url = new URL(req.url, `http://127.0.0.1:${PORT}`);
+  const pathname = url.pathname;
   if (pathname.startsWith('/api/')) {
     if (!trustedRequest(req)) return reply(res, 403, { error: 'Forbidden' });
-    handleApi(req, res, pathname).catch(error => reply(res, error.status || 502, { error: error.message || 'Service error' }));
+    handleApi(req, res, url).catch(error => reply(res, error.status || 502, { error: error.message || 'Service error' }));
   } else if (req.method === 'GET' || req.method === 'HEAD') {
     serveUi(req, res, pathname);
   } else reply(res, 405, { error: 'Method not allowed' });
@@ -298,18 +417,23 @@ const server = http.createServer((req, res) => {
 server.listen(PORT, '127.0.0.1', async () => {
   await accountReady;
   ready = true;
-  pendingStarts.splice(0).forEach(message => message.respond({ ready: true, port: PORT }));
+  pendingStarts.splice(0).forEach(message => message.respond({ ready: true, port: PORT, version: VERSION }));
 });
 
 try {
   process.env.NODE_PATH = (process.env.NODE_PATH || '') + ':/usr/lib/node_modules:/usr/lib/nodejs';
   require('module').Module._initPaths();
   const Service = require('webos-service');
-  const service = new Service('com.muhib.tvprototype.service');
+  const service = new Service(config.serviceId);
   service.activityManager.create('keepAlive', () => {});
   service.register('start', message => {
-    if (ready) message.respond({ ready: true, port: PORT });
+    if (ready) message.respond({ ready: true, port: PORT, version: VERSION });
     else pendingStarts.push(message);
+  });
+  // The native app stops its service when it exits, so nothing idles in the background.
+  service.register('stop', message => {
+    message.respond({ stopping: true });
+    setTimeout(() => process.exit(0), 300);
   });
 } catch (_) {
   // Allows running the same server locally with plain Node.js.
