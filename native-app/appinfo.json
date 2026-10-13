@@ -1,0 +1,13 @@
+{
+  "id": "com.muhib.bloob.native",
+  "version": "0.2.2",
+  "vendor": "Muhib",
+  "type": "qml",
+  "main": "main.qml",
+  "title": "Bloob Native Preview",
+  "icon": "icon.png",
+  "resolution": "1920x1080",
+  "iconColor": "#101827",
+  "supportTouchMode": "none",
+  "requiredACG": []
+}

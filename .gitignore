@@ -26,6 +26,13 @@
 /tv-app/com.muhib.tvprototype_0.1.0_all.ipk
 /tv-app/artifacts/player-ui.png
 /tv-app/artifacts/com.muhib.tvprototype_0.2.3_all.ipk
+/tv-app/artifacts/com.muhib.bloob.native_0.1.0_pre-acg.ipk
+/tv-app/artifacts/bloob-native-preview.png
+/tv-app/artifacts/bloob-native-v011.png
+/tv-app/artifacts/bloob-native-*.png
+/tv-app/artifacts/com.muhib.bloob.native_*.ipk
+!/tv-app/artifacts/com.muhib.bloob.native_0.2.2_all.ipk
+/native-app/artifacts/
 
 # Account material and local development settings.
 **/.env
