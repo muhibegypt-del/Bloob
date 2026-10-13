@@ -1,17 +1,27 @@
-# Buna native UI preview
+# QML experiment: failed TV acceptance
 
-This is Bloob's first original native UI path. It uses the TV's Qt Quick/QML
+# Status: do not use as the native Bloob baseline
+
+On 13 October 2026 the owner reported that this build's UI and video did not
+work in normal use. A short test clip had played briefly during development,
+but that did not validate the navigation-to-playback path. The earlier
+description of this package as a working native preview was inaccurate. The
+older `com.muhib.tvprototype` app was brought back to the TV foreground without
+removing this package or its data. See `../docs/Buna-native-runtime-target.md`
+for the replacement architecture.
+
+This experiment uses the TV's Qt Quick/QML
 runner, not the web engine. `BunaNavigation.js` owns remote focus and page state;
 `main.qml` renders that state. It is installed under a separate app ID so the
 working web Bloob package remains available.
 
-The current preview covers launch, remote navigation, native artwork surfaces,
+Its code attempts launch, remote navigation, native artwork surfaces,
 a details page, live Cinemeta catalog rows, source search and resolution through
 the existing local Bloob service, and a native Qt Multimedia playback path. A
 small fixed catalog remains as a fallback. The native UI keeps media URLs only
 in memory; the local service retains the paired account key.
 
-This is still a preview. Episode selection currently starts the first regular
+This is an incomplete experiment. Episode selection currently starts the first regular
 episode, and the existing web app's local service must be running. Playback of
 resolved formats, track selection, settings, and production lifecycle behavior
 need further integration and TV validation.

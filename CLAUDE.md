@@ -1,6 +1,8 @@
 # Bloob and Buna: complete project handoff
 
-## Native preview on the TV (13 October 2026)
+## QML experiment failed owner acceptance (13 October 2026)
+
+The owner reported that the installed `com.muhib.bloob.native` v0.2.2 UI and video do not work in normal use. Earlier brief confirmations of a moving Big Buck Bunny clip and the source-screen screenshot were too narrow to call it working. Do not present this package as a successful native Bloob. The older working `com.muhib.tvprototype` app was relaunched to the foreground; no TV files or packages were deleted. The user's requested path is an original app-owned native runtime shaped by the reference architecture, not further QML polish. Read `docs/Buna-native-runtime-target.md` before new implementation.
 
 `native-app/` is a separate original QML app, `com.muhib.bloob.native` v0.2.2. It uses the TV's `/usr/bin/qml-runner`, `WebOSWindow` (Eos.Window 0.1), Qt Quick, and Qt Multimedia, not the browser renderer. `main.qml` owns screens and the media object; `BunaNavigation.js` is the remote focus/page reducer; `BunaCatalog.js` loads Cinemeta shelves and the first regular episode of a series; `SourcesPage.qml` and `BunaSources.js` search, rank, pair, and resolve through the existing local Bloob service. This is an original native route, not a port of the reference runtime's code. No reference executable, script, or asset is in this package.
 
@@ -8,7 +10,7 @@ The TV at `192.168.1.26` has v0.2.2 installed. Do not delete anything on that TV
 
 **Observed on the TV:** normal launch renders a live Cinemeta home screen with artwork. Direct launch with `-p bunaSources=true` opens the native source screen; it loaded candidates for Toy Story and reported the existing AllDebrid pairing as connected. Direct launch with `-p bunaDemo=true` plays the range-enabled 30-second Big Buck Bunny clip through Qt Multimedia. The owner confirmed moving video and audio after making `WebOSWindow.color` transparent and hiding opaque QML backgrounds on the player page. A prior opaque surface gave sound and time progression with a black picture, despite Qt reporting `hasVideo=true`; treat the transparent underlay as required on this TV. The bundled clip's built-in infinite loop flickered between playing and paused, so the app now uses a controlled restart after end of media. The compositor screenshot cannot show the separate video plane; the owner's visible-TV report confirms it.
 
-**Still unverified or incomplete:** full resolution-to-playback of an AllDebrid title in the QML path, remote source-choice selection, hardware/format behavior across streams, subtitle and audio-track menus, episode browsing beyond first regular episode, lifecycle/resume, and service independence. The native app currently relies on the working web app's local service on `127.0.0.1:8787`; do not remove or replace that service until a new service package is proven. Keep URLs in memory and out of traces. `native-app/README.md` has install and diagnostic launch commands. The native QML app is a working native UI/video preview, not a completed replacement for the web app or a custom ARM runtime.
+**Incomplete and not accepted:** full resolution-to-playback of an AllDebrid title in the QML path, reliable navigation, hardware/format behavior across streams, subtitle and audio-track menus, episode browsing beyond first regular episode, lifecycle/resume, and service independence. The QML app relies on the working web app's local service on `127.0.0.1:8787`; do not remove or replace that service. Keep URLs in memory and out of traces. `native-app/README.md` records this experiment. A new app-owned native host must be built separately.
 
 ## Current branch work (13 October 2026)
 
