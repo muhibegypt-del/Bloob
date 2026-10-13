@@ -36,7 +36,12 @@ native/scripts/ui-snapshots.sh   # desktop build, scripted remote + simulated me
 ```bat
 ares-install -d rootedTV com.muhib.bloob_0.3.0_arm.ipk
 ares-launch -d rootedTV com.muhib.bloob
-ares-shell -d rootedTV -r "cat /tmp/bloob-native.log"
+```
+
+The log lives at `/tmp/bloob-native.log` on the TV. `ares-shell` refuses to run under the CLI's `tv` profile, so read the log over the root SSH you already have (Windows ships `ssh`):
+
+```bat
+ssh root@192.168.1.26 "cat /tmp/bloob-native.log"
 ```
 
 To play any URL directly (for example a resolved link), with no catalogue yet:
