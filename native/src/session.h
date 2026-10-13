@@ -54,6 +54,7 @@ class Session {
   // Position the current seek gesture started from (for the "+30s" label).
   long long seek_origin_ms(long long fallback) const { return (preview_ || pending_) ? seek_origin_ : fallback; }
   long long first_frame_ms() const { return first_frame_ms_; }
+  long long seek_started_ms() const { return seek_started_; }
   const std::string &error() const { return error_; }
   int subtitle_index() const { return subtitle_index_; }
 

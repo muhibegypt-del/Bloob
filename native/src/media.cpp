@@ -51,6 +51,7 @@ void UmsPlayer::command(const char *method, const std::string &extra) {
   if (media_id_.empty()) return;
   std::string payload = "{\"mediaId\":" + Json::quote(media_id_) + extra + "}";
   std::string name = method;
+  logf("media", "-> %s%s", method, extra.c_str());
   Luna::instance().call(std::string(kService) + method, payload, [name](const std::string &reply) {
     Json json = Json::parse(reply);
     if (!json["returnValue"].as_bool(true)) logf("media", "%s failed: %s", name.c_str(), reply.c_str());
@@ -71,12 +72,14 @@ void UmsPlayer::set_subtitles(bool enabled) {
 
 void UmsPlayer::unload() {
   generation_++;
-  if (subscription_) Luna::instance().cancel(subscription_);
-  subscription_ = 0;
+  // Unload before dropping the subscription: uMediaServer releases a pipeline
+  // whose subscriber disconnects, and a later unload then fails (seen on the TV).
   if (!media_id_.empty()) {
     logf("media", "unload mediaId=%s", media_id_.c_str());
     command("unload");
   }
+  if (subscription_) Luna::instance().cancel(subscription_);
+  subscription_ = 0;
   media_id_.clear();
   listener_ = nullptr;
 }
@@ -104,6 +107,19 @@ void UmsPlayer::on_event(const std::string &payload) {
     for (auto &item : json.items()) keys += item.first + " ";
     logf("media", "first event keys: %s", keys.c_str());
     logged_keys_ = true;
+  }
+  // State events are rare; log them so a TV run shows play/pause/seek/track
+  // acknowledgements with timestamps. Clock and buffer reports are skipped.
+  {
+    std::string keys;
+    for (auto &item : json.items()) {
+      const std::string &k = item.first;
+      if (k == "currentTime" || k == "bufferRange" || k == "sourceInfo" || k == "videoInfo" || k == "returnValue" ||
+          k == "subscription" || k == "mediaId")
+        continue;
+      keys += k + " ";
+    }
+    if (!keys.empty()) logf("media", "<- %s", keys.c_str());
   }
 
   if (json.has("currentTime")) {

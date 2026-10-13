@@ -250,7 +250,16 @@ struct App {
     logf("player", "exported video window: %s", window_id.empty() ? "(none)" : window_id.c_str());
     place_video(0, 0);
     ums.load(uri, id, window_id, load_type, [this](const MediaEvent &event) {
-      session.on_event(event, ums.info(), now());
+      long long t = now();
+      bool had_frame = session.first_frame_ms() >= 0;
+      auto pending = session.pending_ms();
+      long long seek_started = session.seek_started_ms();
+      session.on_event(event, ums.info(), t);
+      if (!had_frame && session.first_frame_ms() >= 0) logf("player", "first frame after %lld ms", session.first_frame_ms());
+      if (pending && !session.pending_ms()) {
+        logf("player", "seek to %lld ms landed at %lld ms after %lld ms", *pending, session.position_ms(t),
+             t - seek_started);
+      }
       if (event.kind == MediaEvent::VideoInfo || event.kind == MediaEvent::SourceInfo) {
         place_video(ums.info().width, ums.info().height);
       }
