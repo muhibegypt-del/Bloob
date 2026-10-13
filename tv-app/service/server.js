@@ -6,13 +6,12 @@ const https = require('https');
 const fs = require('fs');
 const path = require('path');
 const accountStore = require('./account-store');
-const { parseStreams } = require('./release');
+const { createTorrentioProvider } = require('./source-provider');
 
 const PORT = Number(process.env.TV_APP_PORT || 8787);
 const UI_DIR = path.resolve(process.env.TV_APP_UI_DIR || path.join(__dirname, 'www'));
 const API = 'api.alldebrid.com';
-const SOURCE_HOST = 'torrentio.strem.fun';
-const PROVIDER = 'Torrentio';
+const sourceProvider = createTorrentioProvider();
 let apiKey = process.env.ALLDEBRID_API_KEY || '';
 let pendingPin = null;
 let ready = false;
@@ -118,33 +117,6 @@ function videoFiles(nodes, result = [], folder = '') {
   return result.sort((a, b) => b.size - a.size);
 }
 
-function discover(type, id) {
-  return new Promise((resolve, reject) => {
-    const request = https.get({
-      hostname: SOURCE_HOST,
-      path: `/stream/${type}/${encodeURIComponent(id).replace(/%3A/g, ':')}.json`,
-      timeout: 15000,
-      headers: { Accept: 'application/json', 'User-Agent': 'Bloob/0.2 (webOS)' },
-    }, response => {
-      if (response.statusCode !== 200) {
-        response.resume();
-        return reject(new Error(`Source indexer returned ${response.statusCode}`));
-      }
-      let body = '';
-      response.on('data', chunk => {
-        body += chunk;
-        if (body.length > 5000000) request.destroy(new Error('Source list is too large'));
-      });
-      response.on('end', () => {
-        try { resolve(parseStreams(JSON.parse(body).streams, PROVIDER)); }
-        catch (_) { reject(new Error('Source indexer returned an unreadable response')); }
-      });
-    });
-    request.on('timeout', () => request.destroy(new Error('Source search timed out')));
-    request.on('error', reject);
-  });
-}
-
 function accountStatus() {
   const storage = accountStore.getStatus();
   return {
@@ -166,7 +138,7 @@ async function handleApi(req, res, pathname) {
       return reply(res, 400, { error: 'Invalid title or episode ID' });
     }
     if (type === 'series' && !/:\d+:\d+$/.test(id)) return reply(res, 400, { error: 'Choose an episode first' });
-    return reply(res, 200, { provider: PROVIDER, sources: await discover(type, id) });
+    return reply(res, 200, { provider: sourceProvider.name, sources: await sourceProvider.search(type, id) });
   }
   if (pathname === '/api/account' && req.method === 'GET') {
     return reply(res, 200, accountStatus());

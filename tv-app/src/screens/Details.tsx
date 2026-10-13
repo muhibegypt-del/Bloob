@@ -3,13 +3,12 @@ import { Backdrop } from '../components/Backdrop';
 import { Img } from '../components/Img';
 import { MetaInfo } from '../components/MetaInfo';
 import { Row } from '../components/Row';
-import { FilmIcon, PlayIcon, PlusIcon } from '../components/icons';
+import { PlayIcon } from '../components/icons';
 import { art } from '../data/cinemeta';
 import type { ContentSource, MetaPreview, Video } from '../data/types';
 import { useKeys } from '../keys';
 
 type Zone = 'buttons' | 'seasons' | 'episodes';
-const BUTTONS = 3;
 
 export function Details(props: {
   source: ContentSource;
@@ -20,7 +19,6 @@ export function Details(props: {
 }) {
   const [meta] = createResource(() => props.item, (item) => props.source.meta(item.type, item.id));
   const [zone, setZone] = createSignal<Zone>('buttons');
-  const [button, setButton] = createSignal(0);
   const [seasonIdx, setSeasonIdx] = createSignal(0);
   const [episode, setEpisode] = createSignal(0);
 
@@ -52,13 +50,11 @@ export function Details(props: {
     if (!props.active) return;
     if (key === 'back') return props.onBack();
     if (key === 'enter') {
-      if (zone() === 'buttons' && button() === 0) return play(isSeries() ? episodes()[0] : undefined);
+      if (zone() === 'buttons') return play(isSeries() ? episodes()[0] : undefined);
       if (zone() === 'episodes') return play(episodes()[episode()]);
     }
     switch (zone()) {
       case 'buttons':
-        if (key === 'left') setButton(Math.max(0, button() - 1));
-        if (key === 'right') setButton(Math.min(BUTTONS - 1, button() + 1));
         if (key === 'down' && isSeries()) setZone('seasons');
         break;
       case 'seasons':
@@ -91,14 +87,8 @@ export function Details(props: {
         <div class="details-info" style={{ bottom: isSeries() ? '420px' : '150px' }}>
           <MetaInfo item={meta() ?? props.item} lines={isSeries() ? 2 : 4} />
           <div class="details-buttons">
-            <div class="btn" classList={{ focused: zone() === 'buttons' && button() === 0 }} onClick={() => play(isSeries() ? episodes()[0] : undefined)}>
+            <div class="btn" classList={{ focused: zone() === 'buttons' }} onClick={() => play(isSeries() ? episodes()[0] : undefined)}>
               <PlayIcon /> {playLabel()}
-            </div>
-            <div class="btn" classList={{ focused: zone() === 'buttons' && button() === 1 }}>
-              <FilmIcon /> Trailer
-            </div>
-            <div class="btn btn-icon" classList={{ focused: zone() === 'buttons' && button() === 2 }}>
-              <PlusIcon />
             </div>
           </div>
           <Show when={!isSeries() && credits().length}>

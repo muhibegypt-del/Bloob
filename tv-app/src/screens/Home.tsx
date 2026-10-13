@@ -9,7 +9,7 @@ import { art } from '../data/cinemeta';
 import type { MetaPreview, Row as RowData } from '../data/types';
 import { useKeys } from '../keys';
 
-const TABS = ['Home', 'Movies', 'TV Shows', 'Library', 'Search'];
+const TABS = ['Home', 'Movies', 'TV Shows'];
 const HERO_COUNT = 6;
 const HERO_INTERVAL_MS = 9000;
 const ROWS_TOP = 820; // .rows top
@@ -23,46 +23,63 @@ export function Home(props: {
   active: boolean;
   onOpen: (item: MetaPreview) => void;
 }) {
-  const hero = createMemo(() => (props.rows[0]?.items ?? []).slice(0, HERO_COUNT));
   const [s, set] = createStore({
     zone: 'hero' as Zone,
     nav: 0,
+    section: 0,
     hero: 0,
     heroSwap: false,
     row: 0,
     cols: [] as number[],
   });
 
+  const visibleRows = createMemo(() => {
+    const type = s.section === 1 ? 'movie' : s.section === 2 ? 'series' : null;
+    return type ? props.rows.filter(row => row.id !== 'demo').map(row => ({ ...row, items: row.items.filter(item => item.type === type) })).filter(row => row.items.length) : props.rows;
+  });
+  const hero = createMemo(() => (visibleRows()[0]?.items ?? []).slice(0, HERO_COUNT));
+
   const col = (r: number) => s.cols[r] ?? 0;
-  const focusedItem = () => props.rows[s.row]?.items[col(s.row)];
+  const focusedItem = () => visibleRows()[s.row]?.items[col(s.row)];
+  let swapTimer: number | undefined;
 
   const showHero = (i: number) => {
     const n = hero().length;
     if (!n) return;
+    window.clearTimeout(swapTimer);
     set('heroSwap', true);
-    setTimeout(() => set({ hero: (i + n) % n, heroSwap: false }), 220);
+    swapTimer = window.setTimeout(() => set({ hero: (i + n) % n, heroSwap: false }), 220);
+  };
+
+  const activateSection = (index: number) => {
+    window.clearTimeout(swapTimer);
+    set({ nav: index, section: index, hero: 0, row: 0, cols: [], heroSwap: false, zone: 'hero' });
   };
 
   // Warm the cache for the next hero slide so rotation never waits on network.
   createEffect(() => {
+    if (!props.active) return;
     const next = hero()[(s.hero + 1) % Math.max(1, hero().length)];
     if (next) new Image().src = art.backdrop(next.id);
   });
 
-  // Rotate the hero while it has focus, like the tvOS top shelf.
-  const rotation = setInterval(() => {
-    if (props.active && s.zone === 'hero') showHero(s.hero + 1);
-  }, HERO_INTERVAL_MS);
-  onCleanup(() => clearInterval(rotation));
+  // A hidden screen has no active rotation timer.
+  createEffect(() => {
+    if (!props.active || s.zone !== 'hero' || hero().length < 2) return;
+    const rotation = window.setInterval(() => showHero(s.hero + 1), HERO_INTERVAL_MS);
+    onCleanup(() => window.clearInterval(rotation));
+  });
+  onCleanup(() => window.clearTimeout(swapTimer));
 
   useKeys((key) => {
     if (!props.active) return;
-    const rows = props.rows;
+    const rows = visibleRows();
     switch (s.zone) {
       case 'nav':
         if (key === 'left') set('nav', Math.max(0, s.nav - 1));
         if (key === 'right') set('nav', Math.min(TABS.length - 1, s.nav + 1));
         if (key === 'down') set('zone', 'hero');
+        if (key === 'enter') activateSection(s.nav);
         break;
       case 'hero':
         if (key === 'left') showHero(s.hero - 1);
@@ -96,17 +113,21 @@ export function Home(props: {
       <nav class="nav" classList={{ away: s.zone === 'rows' }}>
         <For each={TABS}>
           {(tab, i) => (
-            <div
+            <button
               class="nav-tab"
-              classList={{ current: i() === 0, focused: s.zone === 'nav' && i() === s.nav }}
+              classList={{ current: i() === s.section, focused: s.zone === 'nav' && i() === s.nav }}
+              onClick={() => activateSection(i())}
             >
               {tab}
-            </div>
+            </button>
           )}
         </For>
       </nav>
 
       <div class="home-scroll" style={{ transform: `translate3d(0, ${scrollY()}px, 0)` }}>
+        <Show when={s.section !== 0 && !visibleRows().length}>
+          <div class="section-empty">{s.section === 1 ? 'Movies' : 'TV shows'} are unavailable right now. Try Home while the catalog reconnects.</div>
+        </Show>
         <div class="hero" classList={{ away: s.zone === 'rows' }}>
           <Show when={hero()[s.hero]}>
             {(item) => (
@@ -126,7 +147,7 @@ export function Home(props: {
         </div>
 
         <div class="rows">
-          <For each={props.rows}>
+          <For each={visibleRows()}>
             {(row, r) => (
               <Row
                 title={row.title}
