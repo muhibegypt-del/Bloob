@@ -1,6 +1,6 @@
 # Bloob native 1.1 (Buna N2)
 
-A native webOS app (`com.muhib.bloob`, "Bloob Native") written in C++ against the community webOS NDK. It is the whole app: catalogue, search, details with seasons and episodes, source choice, AllDebrid pairing and resolution, and playback through the TV's own media pipeline. It draws its own UI and owns playback with the native Buna session. The visual system, with screen layouts and states, is in [`DESIGN.md`](DESIGN.md). The TV test script, including the hand-the-remote-over acceptance task, is in [`TV-TEST.md`](TV-TEST.md).
+A native webOS app (`com.muhib.bloob`, "Bloob Native") written in C++ against the community webOS NDK. It is the whole app: catalogue, search, details with seasons and episodes, source choice, AllDebrid pairing and resolution, and playback through the TV's own media pipeline. It draws its own UI and owns playback with the native Buna session. The map of every layer of the app, with its current state, gaps and next increments, is in [`APP-MAP.md`](APP-MAP.md). The visual system, with screen layouts and states, is in [`DESIGN.md`](DESIGN.md). The TV test script, including the hand-the-remote-over acceptance task, is in [`TV-TEST.md`](TV-TEST.md).
 
 It installs alongside the web app (`com.muhib.tvprototype`) and does not replace it.
 

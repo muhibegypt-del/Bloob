@@ -1,0 +1,724 @@
+# Bloob app map
+
+Bloob, split into its actual layers. For each layer this file records what the layer does, which files it lives in, what works and how we know, what is missing, and the next small changes. Work one layer at a time. Cite the increment ID (for example **9.2**) in the commit. When a change lands or is tested on the TV, update the layer's state here.
+
+Snapshot: **1.1.0**, 13 October 2026, branch `claude/sleepy-ptolemy-o87vgv`.
+
+## How to read the state
+
+| Mark | Meaning |
+| --- | --- |
+| **TV ✓** | We saw it work on the OLED55G26LA (webOS 9.2.2). |
+| **TV (user)** | The owner reported it from the TV. It has not been measured. |
+| **Desktop** | It works in the desktop build: the scripted tour, unit tests or renders. |
+| **Untested** | It is built but has never run anywhere that proves it works. |
+| **Missing** | Not built. |
+
+**Version history on the TV:**
+- **0.3:** proved the window, remote, luna, uMediaServer and test-clip path.
+- **0.4:** the owner reported that the app worked, with jaggies, some bugs, and playback dying after the LG quick menu.
+- **1.1:** answers that report. It has **not yet run on the TV**, so almost everything 1.1 changed is *Desktop* at best.
+
+## The layers at a glance
+
+```
+ EXPERIENCE   1 UX ─ 2 UI ─ 3 Home ─ 4 Search ─ 5 Details ─ 6 Sources ─ 7 Player screen ─ 8 Settings
+                 │ what the viewer sees and does
+ ENGINE       10 App shell ─ 11 Remote input ─ 12 Rendering ─ 13 Artwork ─ 14 Data & bus ─ 9 Player engine (Buna)
+                 │ C++ in native/src, one process on the TV
+ SERVICE      15 Service core ─ 16 Catalogue ─ 17 Sources & ranking ─ 18 AllDebrid ─ 19 Progress & settings
+                 │ Node, tv-app/service, bundled as com.muhib.bloob.service on 127.0.0.1:8790
+ FOUNDATION   20 Platform & packaging ─ 21 Testing & tooling ─ 22 Observability ─ 23 External services ─ 24 Web app (legacy)
+```
+
+| # | Layer | Overall state | Most important open item |
+| --- | --- | --- | --- |
+| 1 | UX: journeys and remote rules | Desktop | Nobody has done the acceptance task on the TV yet |
+| 2 | UI: visual system | Desktop | Legibility and contrast at viewing distance on OLED |
+| 3 | Home and browse | Desktop; TV (user) for 0.4 | Rows are a fixed list; no "see all" |
+| 4 | Search | Desktop | No voice input |
+| 5 | Details, seasons, episodes | Desktop | Season pills past the screen edge are cut off |
+| 6 | Sources and pairing | Desktop | Whether a source is cached on AllDebrid is unknown until resolving |
+| 7 | Player screen | Desktop | No thumbnails; tracks only as the TV reports them |
+| 8 | Settings and diagnostics | Desktop | Only one preference |
+| 9 | Player engine (Buna N2) | TV ✓ test clip; real files Untested | Preferred audio not applied; tracks not restored after a reconnect |
+| 10 | App shell and lifecycle | TV (user) for 0.4; 1.1 lifecycle Desktop | The quick-menu fix needs a TV check |
+| 11 | Remote input | TV ✓ D-pad and Back | Magic Remote pointer ignored |
+| 12 | Rendering engine | TV ✓ for 0.3/0.4; 1.1 smoothing Desktop | Only Latin-1 characters can be drawn |
+| 13 | Artwork pipeline | TV (user); Desktop | Memory headroom on the TV unmeasured |
+| 14 | Data, workers and system bus | TV ✓ luna; Desktop for the rest | Model parsing has no tests |
+| 15 | Service core and security | TV (user) for 0.4 | Bus start versus fallback start unmeasured |
+| 16 | Catalogue | TV (user); Desktop | One source (Cinemeta); licensing review needed |
+| 17 | Sources and ranking | Desktop (fixtures) | One indexer; weights untuned on real results |
+| 18 | AllDebrid pairing and resolving | Web app TV (user); native Untested | Pairing must survive a restart on the TV |
+| 19 | Progress and settings store | Desktop | One profile; files never pruned |
+| 20 | Platform and packaging | TV ✓ | No `requiredACG` in appinfo (works today; may be required later) |
+| 21 | Testing and tooling | Desktop | The tour takes pictures but checks nothing; no CI |
+| 22 | Observability | TV ✓ log over SSH; Desktop for the rest | No metrics, memory or frame-time sampling |
+| 23 | External services | — | Every one is a third party we do not control |
+| 24 | Web app (legacy, `tv-app/src`) | TV (user) 0.2 | Decide whether to freeze it |
+
+---
+
+## Experience
+
+### 1. UX: journeys and remote rules
+
+**Job:** how a viewer gets from opening Bloob to watching, and back, with only the remote. It covers focus, Back and what each key means everywhere.
+
+**Lives in:**
+- The rules: `native/DESIGN.md` (Remote rules).
+- The code: `native/src/main.cpp` (tabs, Back, exit), and the `key()` of each screen.
+- The test: `TV-TEST.md` §1.
+
+**State:**
+
+| Item | Evidence |
+| --- | --- |
+| Pick, understand, start, change track, return: the acceptance task | Desktop (`ui-tour.sh`) |
+| Back has one owner per screen. Exiting needs a second Back press, with a toast. | Desktop |
+| Up from any screen reaches the tabs; Down returns to the content | Desktop |
+| Returning restores focus, scroll and backdrop (screens stay alive under the next) | Desktop |
+| After an episode ends, details offers the next one, with the last marked watched | Desktop |
+| Done by a real person, at the sofa | Missing |
+
+**Gaps:**
+- No watchlist ("My list").
+- No way to remove an item from Continue watching, or to mark something watched by hand.
+- Colour and number keys do nothing.
+- No first-run explanation.
+
+**Next:**
+- **1.1** Run `TV-TEST.md` §1 with someone who has not seen Bloob. Turn every hesitation into an increment on the right layer.
+- **1.2** Remove from Continue watching: a long press or a colour key on the card, with a confirmation toast.
+- **1.3** My list: an Add button on details and a row on Home. Needs **19.3**.
+
+### 2. UI: visual system
+
+**Job:** how everything looks: tokens, type, focus, motion, states and components.
+
+**Lives in:** `native/DESIGN.md` (the spec), `src/theme.h` (tokens), and `src/ui.h`/`ui.cpp` (type scale and components: button, card, pill, focus frame, panel, badge, progress, spinner, hint, missing-art).
+
+**State:**
+
+| Item | Evidence |
+| --- | --- |
+| Tokens: colour, spacing, radii, card sizes, motion rates | Desktop |
+| Inter type scale (10 styles, floor 19 px) | Desktop |
+| Focus: lift ×1.08, ring, white button | Desktop |
+| Designed states: skeleton, missing art, errors, reconnecting | Desktop |
+| Seen at viewing distance | Missing |
+
+**Gaps:**
+- The settings icon reads as a sun.
+- The 50% tertiary text may be too faint on OLED.
+- Motion rates are tuned for 60 fps desktop, not measured on the TV.
+- No high-contrast or larger-text option.
+
+**Next:**
+- **2.1** TV legibility pass (`TV-TEST.md` §2). Adjust `secondary`/`tertiary` alpha and the type floor from what is seen.
+- **2.2** Redraw the settings gear and check every icon at 32 px on the TV.
+- **2.3** Larger-text setting: scale the type table by 1.15. Layouts already wrap and ellipsise.
+
+### 3. Home and browse
+
+**Job:** the first screen, plus the Films and Series tabs.
+
+**Lives in:** `src/browse.cpp`. The data comes from **16** (`/api/home`, `/api/browse`) and **19** (`/api/progress`).
+
+**State:**
+
+| Item | Evidence |
+| --- | --- |
+| Hero: up to 6 featured titles (continue items first, then popular titles with a logo). Pages with Left/Right; advances after 9 s idle. | Desktop |
+| 10 shelves on Home (popular, highest rated, 6 genres), up to 24 items each | Desktop; TV (user) for 0.4 |
+| The backdrop follows focus after 250 ms; rows above the focused one fade | Desktop |
+| Continue watching: resume, or the next episode | Desktop |
+| Skeleton while loading; error with Try again | Desktop |
+
+**Gaps:**
+- Shelves are a fixed list in `catalog.js`.
+- No "see all" or genre pages.
+- No personalisation.
+- Films and Series show the same row style as Home.
+
+**Next:**
+- **3.1** "See all" at the end of a shelf, opening a grid page.
+- **3.2** Genre page from the Films and Series tabs.
+- **3.3** Order the Home rows by what was watched recently.
+
+### 4. Search
+
+**Job:** find a title by name.
+
+**Lives in:** `src/search.cpp`. Data from **16** (`/api/search`). Recent searches are saved through **19**.
+
+**State:**
+
+| Item | Evidence |
+| --- | --- |
+| On-screen keyboard (6 columns) and 3-column results grid | Desktop |
+| Searches 450 ms after the last key | Desktop |
+| Recent searches, saved in settings | Desktop |
+
+**Gaps:**
+- No voice search with the LG mic.
+- Films and series are mixed, with no filter.
+- No "did you mean".
+
+**Next:**
+- **4.1** Check whether the TV's voice key reaches SDL. If it does, map it to search.
+- **4.2** Label each result as a film or series, with its year.
+
+### 5. Details, seasons and episodes
+
+**Job:** the title page. It continues into seasons and episodes, and decides what Play plays.
+
+**Lives in:** `src/details.cpp`, with `src/common.cpp` (backdrop, title or logo, meta line). Data from **16** (`/api/meta`) and **19** (progress for the title).
+
+**State:**
+
+| Item | Evidence |
+| --- | --- |
+| Logo or title, meta, IMDb rating, 3-line description, credits for films | Desktop |
+| Main button names what it plays: Resume S1 · E2 / Play S1 · E3 / Play | Desktop |
+| Down lifts the page into season pills and episode cards; About strip at the foot | Desktop |
+| Watched checks and resume bars on episodes | Desktop |
+| Specials last | Desktop (service) |
+
+**Gaps:**
+- **Season pills that do not fit across the screen are not drawn**, so shows with many seasons cannot reach the later ones. This is a real bug (`draw_episodes`, `if (sx + w > W - margin) break;`).
+- No trailer.
+- No "more like this".
+- No mark-as-watched.
+
+**Next:**
+- **5.1** Season pills that scroll with focus. This is the bug above.
+- **5.2** Mark an episode, or a season, as watched.
+- **5.3** "More like this" row at the foot, from Cinemeta genres.
+
+### 6. Sources and pairing ("Choose how to watch")
+
+**Job:** make the best playable version obvious, and make the alternatives and release details reachable. It also pairs AllDebrid once and shows the resolve as it happens.
+
+**Lives in:** `src/sources.cpp`, `src/pairing.cpp`. Data from **17** (`/api/sources/ranked`) and **18** (`/api/resolve/*`, `/api/pin/*`, `/api/account`).
+
+**State:**
+
+| Item | Evidence |
+| --- | --- |
+| Best match card in plain words, with a reason and a caution | Desktop |
+| Other versions: 5 visible rows, scrolling, availability in words | Desktop |
+| Release details drawer, opened with Right | Desktop |
+| Pairing PIN sheet, then continues straight to the chosen source | Desktop (fixtures) |
+| Resolve sheet with steps and progress. Asks for a file or quality when needed. On failure, "Try the next best". | Desktop (fixtures) |
+
+**Gaps:**
+- Nothing shows whether a release is already cached on AllDebrid (instant) or must download.
+- No manual link or magnet entry (the web app had one).
+- Ranker weights have not been checked against real results.
+
+**Next:**
+- **6.1** First real-source run on the TV: is the Best match the one you would have picked? Feed the answer into **17.1**.
+- **6.2** Show "Ready now" when AllDebrid already has a release, once **18.3** exists.
+- **6.3** Manual link entry, through the Search keyboard.
+
+### 7. Player screen
+
+**Job:** stay quiet during viewing. When summoned, show accurate seeking, audio, subtitles and the next episode. Handle the start, the end and errors.
+
+**Lives in:** `src/player.cpp` (view and key handling). The engine is **9**.
+
+**State:**
+
+| Item | Evidence |
+| --- | --- |
+| Starting screen (title, episode, delayed spinner, "Starting · 4K Dolby Vision") | Desktop |
+| Controls appear on any key and hide after 5 s; title, episode, format badges | Desktop |
+| Timeline with a seek bubble (target and jump); Left/Right speed up while held | Desktop |
+| Controls row: play/pause, Audio · X, Subtitles · X, Start over, Next episode | Desktop |
+| Track panels listing the TV-reported tracks | Desktop (simulated events) |
+| Up next with a 10 s countdown; Back stays | Desktop |
+| Error panel: Try again, Choose another version, Exit | Desktop |
+| Reconnecting screen after the TV drops the stream | Desktop |
+| Playback of the test clip | TV ✓ (0.3) |
+
+**Gaps:**
+- No seek thumbnails.
+- No clock or "ends at" time (the web app had one).
+- No subtitle size or style.
+- No skip-intro or skip-recap.
+
+**Next:**
+- **7.1** Add the clock and "ends at" to the controls.
+- **7.2** Subtitle size and background, once **9.4** shows the TV can render them.
+
+### 8. Settings and diagnostics
+
+**Job:** the account, preferences, and a way to see what is wrong without a computer.
+
+**Lives in:** `src/settings.cpp` (Settings and Diagnostics). Data from **18** (`/api/account`) and **19** (`/api/settings`).
+
+**State:**
+
+| Item | Evidence |
+| --- | --- |
+| AllDebrid row: connect, connected and where it is saved, storage errors only when real | Desktop |
+| Preferred audio language (Left/Right) | Desktop. It only affects ranking; see **9.2**. |
+| Diagnostics: display, remote keys, recent log | Desktop |
+| Version and TV model | Desktop |
+
+**Gaps:**
+- No subtitle language.
+- No autoplay-next switch.
+- No unpair.
+- No about or licences page.
+
+**Next:**
+- **8.1** Subtitle language and autoplay-next settings. They need **19** fields and **9.2**.
+- **8.2** Unpair AllDebrid. This overwrites the saved key with nothing; it does not delete files.
+- **8.3** About page: version, licences (Inter OFL, stb, Big Buck Bunny CC BY).
+
+---
+
+## Engine (C++, `native/src`)
+
+### 9. Player engine (Buna N2)
+
+**Job:** one playback session. It covers:
+- loading a URL into LG uMediaServer;
+- the clock and seek preview/commit;
+- buffering and stall detection, and tracks;
+- recovery when the TV drops the stream;
+- saving progress;
+- teardown.
+
+**Lives in:**
+- `src/session.*`: the platform-free clock, seek, phases and errors. It has unit tests.
+- `src/media.*`: `UmsPlayer`, which talks to `com.webos.media` over luna (load, subscribe, play, pause, seek, selectTrack, setSubtitleEnable, unload, notifyForeground/Background).
+- `src/player.cpp`: the exported video window, reload, resume and progress saves.
+
+**State:**
+
+| Item | Evidence |
+| --- | --- |
+| Load, play and unload through uMediaServer in an exported hardware video window | TV ✓ (0.3, test clip) |
+| Real resolved files (4K, HDR or Dolby Vision, Atmos) through this path | Untested natively. TV (user) in the web app only. |
+| Clock interpolation (capped 2 s ahead), seek preview, commit after 600 ms, landing confirmation, 15 s timeout | Unit tests, Desktop |
+| Stall watchdog (3 s) and startup timeout (45 s) | Unit tests |
+| Track lists from `sourceInfo`; selectTrack and setSubtitleEnable are sent | Desktop (simulated). TV switching untested. |
+| LG quick menu leaves playback alone; Home pauses and saves; foreground notify | Desktop (scripted window events) |
+| Pipeline lost → reopen at the same position, at most 3 per minute | Desktop (simulated `unloadCompleted`) |
+| Resume from ≥30 s below 95%; progress every 15 s, on pause and on exit | Desktop |
+| First-frame and seek-landing times in the log | Desktop |
+
+**Gaps:**
+- The preferred audio language is not chosen at start.
+- Chosen audio and subtitle tracks are **not restored after a reconnect**.
+- No external subtitles.
+- No frame-rate matching or output-mode report.
+- An expired AllDebrid link is not re-resolved; after 3 reloads it says the link may have expired.
+- Buffer depth and dropped frames are not reported.
+
+**Next:**
+- **9.1** TV check with one real file: first frame, a seek landing, an audio switch, and the quick menu (`TV-TEST.md` §3).
+- **9.2** Pick the preferred audio language at start, from `sourceInfo`.
+- **9.3** Restore the selected audio and subtitle tracks after a reload.
+- **9.4** Check which subtitle formats the TV renders (embedded SRT, ASS, PGS), then decide on external WebVTT.
+- **9.5** Re-resolve through **18** when a reload fails with a likely expired link, then continue at the same position.
+- **9.6** Native ES backend (N3) **only if** 9.1 to 9.4 show a gap uMediaServer cannot close.
+
+### 10. App shell and lifecycle
+
+**Job:** the process itself. It covers:
+- the window, the frame loop (draws only when something changes) and the screen stack with transitions;
+- the tabs, Back and exit;
+- routing lifecycle events (overlay or background) to the top screen;
+- starting and stopping the service;
+- launch parameters and scripted runs.
+
+**Lives in:** `src/main.cpp`, `src/screens.h` (screen contract), `src/ui.h` (`Ctx`, shared state).
+
+**State:**
+
+| Item | Evidence |
+| --- | --- |
+| Window, 1920×1080 canvas, idle loop | TV ✓ |
+| Screen stack with fade-and-rise transitions; screens stay alive under the next | Desktop |
+| Tabs (Search, Home, Films, Series, Settings); double-Back exit with a toast | Desktop |
+| Focus loss is ignored; hidden or background pauses; shown or foreground resumes | Desktop |
+| Service start over the bus, with a fork/exec fallback that runs the TV's Node | TV (user) for 0.4, which did not say which path ran |
+| Launch parameters `{uri, title, autoplay, loadType}` play a link directly | Desktop; untested on the TV |
+| Scripted runs (`BLOOB_SCRIPT`: key, wait, media, window, snap) | Desktop |
+
+**Gaps:**
+- Startup time is unmeasured.
+- The Exit key quits at once; whether the final progress save reaches the service is unverified.
+- Memory after leaving the player is unmeasured.
+- No deep links (open a title from the launcher).
+
+**Next:**
+- **10.1** Log the time from launch to first Home frame, and which service-start path was used.
+- **10.2** On Exit, flush the last progress save before quitting.
+- **10.3** Deep link `{id, type}` launch parameters, which open details.
+
+### 11. Remote input
+
+**Job:** turn remote events into semantic keys.
+
+**Lives in:** `src/keys.h`. The SDL hints in `main.cpp` let Back and Exit reach the app.
+
+**State:**
+
+| Item | Evidence |
+| --- | --- |
+| D-pad, OK, Back | TV ✓ |
+| Transport keys (play, pause, stop, fast-forward, rewind) | Untested on TV |
+| Colour keys mapped | Mapped, unused |
+| Exit quits | Untested on TV |
+| Key repeat drives scrolling and seek speed-up | Desktop |
+
+**Gaps:**
+- The Magic Remote pointer is ignored.
+- Number keys are not mapped.
+- The voice key is unknown.
+
+**Next:**
+- **11.1** Diagnostics already lists keys: press every key on the remote and record the scancodes in this file.
+- **11.2** Basic pointer support: hover moves focus and click is OK, on cards, buttons and rows.
+
+### 12. Rendering engine
+
+**Job:** draw everything. It covers:
+- text from Inter;
+- anti-aliased shapes, shadows, gradients and line icons;
+- layers for transitions.
+
+**Lives in:** `src/gfx.*` (canvas, fonts and glyph atlases, shapes, shadows, layers), `src/icons.*`.
+
+**State:**
+
+| Item | Evidence |
+| --- | --- |
+| SDL renderer (opengles2 on the TV) to a 1920×1080 canvas | TV ✓ |
+| Inter in 4 weights; exact-size glyphs, 2× oversampling ≤48 px, gamma lift, kerning | Desktop; TV (user) reported jaggies in 0.4, before this change |
+| Exact-size anti-aliased discs, rings, triangles; soft shadows; gradients | Desktop |
+| Layer capture for page transitions | Desktop |
+
+**Gaps:**
+- **The glyph atlas covers Latin-1 and a few symbols only** (`atlas_codepoints`). Polish, Czech, Turkish, Greek, Cyrillic, Arabic, CJK and so on show as missing characters.
+- There is no text shaping, so right-to-left scripts would also need more than glyphs.
+- Frame time on the TV is unmeasured.
+
+**Next:**
+- **12.1** Load glyphs on demand for any code point Inter has (Latin Extended, Greek, Cyrillic).
+- **12.2** Fallback font for scripts Inter lacks, starting with CJK and Arabic. Check the TV's system fonts first, which avoids shipping them.
+- **12.3** Frame-time log in Diagnostics: average and worst over the last 5 s.
+
+### 13. Artwork pipeline
+
+**Job:** get images fast without using up the TV's memory.
+
+**Lives in:** `src/images.*`. Fetching goes through **15**/`/api/image`.
+
+**State:**
+
+| Item | Evidence |
+| --- | --- |
+| Fetch and decode on 3 workers; scaled to the exact drawn size; corners and shading baked in | Desktop; TV (user) for 0.4 |
+| Blurred backdrops (quarter size, 3-pass box blur) | Desktop |
+| Logos decoded once at 760×240, then scaled | Desktop |
+| Least-recently-drawn eviction above a 192 MB budget | Desktop |
+| Fade-in; a failed backdrop keeps the previous one | Desktop |
+
+**Gaps:**
+- The 192 MB budget is a guess; TV memory is unmeasured.
+- No progressive or low-resolution placeholder before the full image.
+
+**Next:**
+- **13.1** Measure resident memory on the TV after scrolling every Home row. Set the budget from that.
+- **13.2** Show a tiny blurred placeholder while a backdrop loads.
+
+### 14. Data, workers and system bus
+
+**Job:** move data between the screens, the local service and the TV's system bus, without blocking the frame.
+
+**Lives in:**
+- `src/http.*`: blocking HTTP/1.1, 127.0.0.1 only.
+- `src/tasks.*`: worker pools (API 2, images 3). Newest jobs run first, and results are dropped if their screen has gone.
+- `src/api.*`: the service client.
+- `src/json.*`, `src/model.*`: parsing into `Item`, `Meta`, `Ranking`, `PlayRequest` and the rest.
+- `src/luna.*`: the bus over LG libhelpers, with replies handed to the UI thread. `src/luna_host.cpp` stands in for it on the desktop.
+- `src/platform.*`: the LG SDL extensions, resolved at runtime.
+
+**State:**
+
+| Item | Evidence |
+| --- | --- |
+| Luna calls and subscriptions | TV ✓ |
+| HTTP to the local service, worker pools, owner-guarded results | TV (user) for 0.4; Desktop |
+| JSON parser | Unit tests |
+| Model parsing | Desktop only (no unit tests) |
+
+**Gaps:**
+- No unit tests for the model parsers.
+- No shared retry or backoff policy; each screen has its own Try again.
+- HTTP opens a new connection per request.
+
+**Next:**
+- **14.1** Unit tests for `parse_meta`, `parse_ranking`, `parse_resume` and `next_episode`, against recorded service JSON.
+- **14.2** One retry with a short delay for idempotent GETs.
+
+---
+
+## Service (Node, `tv-app/service`, bundled into the IPK)
+
+### 15. Service core and security
+
+**Job:**
+- Serve the app's API on localhost.
+- Keep the AllDebrid key out of the app.
+- Refuse requests that are not from the app.
+
+**Lives in:**
+- `server.js`: the routes.
+- `config.js` and `bloob.json`: app ID, port, shared pairing.
+- `net.js`: HTTPS with size caps and allowed redirect hosts.
+- `native/scripts/stage-service.mjs`: staged as `com.muhib.bloob.service`, port 8790.
+
+**Routes:**
+- **Health and catalogue:** `health`, `home`, `browse`, `search`, `meta`, `image`.
+- **Progress and settings:** `progress` (GET and POST), `settings` (GET and POST).
+- **Sources and resolving:** `sources/ranked`, `sources/search`, `resolve/start|status|choose|cancel`.
+- **AllDebrid account:** `account`, `pin/start|check`.
+- **Web app only:** `link/unlock|quality|delayed`, `magnet/add|status|files`.
+
+**State:**
+
+| Item | Evidence |
+| --- | --- |
+| Accepts only `Host: 127.0.0.1/localhost`, and only JSON POSTs | Unit and integration tests |
+| Older-Node compatible (no `?.`, no `??`) | Policy, by review |
+| Runs on the TV | TV (user) for 0.4 |
+
+**Gaps:**
+- The API has no version number, so the app and service must ship together. They do today, in one IPK.
+- The Node version on the TV is not recorded.
+
+**Next:**
+- **15.1** Record `process.version` in `/api/health`, and show it in Diagnostics.
+
+### 16. Catalogue
+
+**Job:** films, series, seasons, episodes and artwork links.
+
+**Lives in:** `catalog.js` (Cinemeta, with Metahub artwork). It caches for 30 minutes, up to 300 entries, and never caches failures.
+
+**State:**
+
+| Item | Evidence |
+| --- | --- |
+| Home (10 rows), browse by type, meta with seasons (specials last), search | Desktop; TV (user) for 0.4 |
+| Shouting episode titles are title-cased; acronyms are kept | Unit tests |
+
+**Gaps:**
+- One provider.
+- Licensing review needed before any release.
+- Some titles have no logo.
+- No region or age-rating data.
+
+**Next:**
+- **16.1** Move the catalogue behind a small provider interface, the way **17.2** will for sources, so a second source can be added.
+
+### 17. Sources: discovery and ranking
+
+**Job:** find candidate releases for a title or episode, and rank them so one is clearly best.
+
+**Lives in:**
+- `release.js`: turns stream names into typed claims (resolution, HDR, codec, audio, channels, source type, size, seeders, languages).
+- `rank.js`: explainable scores, cautions, groups.
+- Torrentio is the indexer.
+
+**State:**
+
+| Item | Evidence |
+| --- | --- |
+| Release parser (both Torrentio formats) | Unit tests |
+| Ranker: one recommendation with a reason; cinema recordings and zero-seeder releases excluded | Unit tests; Desktop with fixtures |
+| Live Torrentio results | Not reachable from build machines. TV (user) in the web app. |
+
+**Gaps:**
+- One indexer, called directly.
+- Every quality field is a *claim from the name*, not a probe.
+- Weights are untuned.
+
+**Next:**
+- **17.1** Log the top 5 ranked releases (names only) for 10 real titles on the TV. Tune the weights from that.
+- **17.2** Put the indexer behind a provider interface.
+
+### 18. AllDebrid: pairing and resolving
+
+**Job:** pair once, keep the key safe and persistent, and turn a chosen release into a playable link.
+
+**Lives in:**
+- `account-store.js`: tries several folders, verifies each write by reading it back, and reports where the key went (never the key itself).
+- `resolve.js`: jobs that add a magnet, wait, list files, pick the episode file, then unlock. Each job can be cancelled, and can ask for a file or a quality.
+- The PIN routes in `server.js`.
+
+**State:**
+
+| Item | Evidence |
+| --- | --- |
+| PIN pairing | Desktop (fake AllDebrid); web app TV (user) |
+| Persistent storage with verified writes and per-folder diagnostics | Unit tests; **TV restart test pending** |
+| Resolve jobs with progress, cancelling, and asking for a file or quality | Unit tests; Desktop (fixtures) |
+| Revoked key detected; asks to pair again | Overwrite is unit-tested; detection only reviewed in code |
+
+**Gaps:**
+- Persistence for the native app (`com.muhib.bloob`) on the TV is unproven.
+- There is no "already cached" check before resolving.
+
+**Next:**
+- **18.1** On the TV: pair, quit, relaunch, and check Settings says "saved on this TV" (`TV-TEST.md` §4).
+- **18.2** Turn a link-expired error into a re-resolve, for **9.5**.
+- **18.3** Check AllDebrid availability without sending the key to third parties. Look at what AllDebrid's own API offers now.
+
+### 19. Progress and settings store
+
+**Job:** remember where each video was left, what was watched, and the viewer's choices.
+
+**Lives in:** `progress.js` (`progress.json`, `settings.json` in the service data folder).
+
+**State:**
+
+| Item | Evidence |
+| --- | --- |
+| Position, duration, watched at 95%, next episode | Unit tests; Desktop |
+| Continue watching: resume from 30 s; next episode after a finished one | Desktop |
+| Settings: preferred language, recent searches | Desktop |
+
+**Gaps:**
+- One profile.
+- The file grows forever.
+- No list field for My list.
+
+**Next:**
+- **19.1** Keep only the latest 500 progress entries.
+- **19.2** Settings fields for **8.1**: subtitle language, autoplay next.
+- **19.3** A `list` of saved titles, for **1.3**.
+
+---
+
+## Foundation
+
+### 20. Platform and packaging
+
+**Job:** build for the TV and ship one installable package.
+
+**Lives in:**
+- `native/CMakeLists.txt`.
+- `native/scripts/build.sh`: tests, cross-build, ABI guard, service staging, IPK.
+- `native/package/appinfo.json`.
+- The community webOS NDK (openlgtv buildroot-nc4).
+
+**State:**
+
+| Item | Evidence |
+| --- | --- |
+| ARM EABI5 binary, static C++ runtime, needs only GLIBC_2.4 | TV ✓ |
+| IPK with the app, fonts, test clip and service | TV ✓ (0.3, 0.4 installed) |
+| `native/artifacts/com.muhib.bloob_1.1.0_arm.ipk` | Built; not yet installed |
+
+**Gaps:**
+- No `requiredACG`. It works today on a developer-mode TV but may be needed later.
+- The IPK is committed by hand.
+
+**Next:**
+- **20.1** Add `requiredACG` for the luna services we call, once the TV shows which are needed.
+
+### 21. Testing and tooling
+
+**Job:** prove changes before they reach the TV, and make the TV pass quick.
+
+**Lives in:**
+- `native/tests/session_test.cpp`: session and JSON.
+- The `tv-app` Vitest suite: 68 tests across the service, web Buna and the ranker.
+- `native/scripts/ui-tour.sh`: the whole app, scripted, with fixtures, including quick-menu, Home and pipeline-lost events.
+- `native/scripts/ui-snapshots.sh`: player states.
+- `native/tests/fixtures/dev-service.js`: fake indexer and AllDebrid. It is never packaged.
+- `native/TV-TEST.md`.
+
+**State:**
+
+| Item | Evidence |
+| --- | --- |
+| Native tests: 10 groups (session clock, seek, stall, errors, tracks, end, JSON) | Pass |
+| Vitest suite (68) | Pass |
+| Desktop tour: 29 renders, plus lifecycle checks in its log | Desktop |
+| TV automation (key injection, screenshots) | Untested; procedure in `TV-TEST.md` §5 |
+
+**Gaps:**
+- The tour only takes pictures. Nothing fails if a screen breaks.
+- No CI.
+- No model-parsing tests (see **14.1**).
+
+**Next:**
+- **21.1** Make the tour assert its log: `push player`, `first frame`, `landed`, `reloading at <non-zero>`, `pop details`. Fail the script if any is missing.
+- **21.2** A GitHub Actions job running the native tests, the Vitest suite and the host build. The cross-build needs the NDK; cache it or skip that step.
+
+### 22. Observability
+
+**Job:** know what happened on the TV without guessing.
+
+**Lives in:**
+- `src/log.*`: `/tmp/bloob-native.log`, with links reduced to their host.
+- Diagnostics in **8**.
+- `/tmp/bloob-service.log` when the fallback start is used.
+
+**State:**
+
+| Item | Evidence |
+| --- | --- |
+| Log of navigation, media commands and events, first frame, seek landing, reloads | TV ✓ (0.3/0.4 logs read over SSH) |
+| URLs reduced to host; no keys | By design, reviewed |
+
+**Gaps:**
+- No metrics summary per session.
+- No memory, CPU or frame-time sampling for our own app.
+
+**Next:**
+- **22.1** End-of-session summary line: first frame, seeks and their landing error, stalls, reloads, duration watched.
+- **22.2** Sampling script for the native app, read-only over SSH, like `research/live-episode-study.md`: threads, resident memory and CPU during browse, play, pause and after exit.
+
+### 23. External services
+
+| Service | Used for | Layer | Risk |
+| --- | --- | --- | --- |
+| Cinemeta | Catalogue, metadata, search | 16 | Third-party, unversioned; licensing review needed |
+| Metahub | Posters, backdrops, logos | 13, 16 | Same |
+| Torrentio | Candidate releases | 17 | Cloudflare may block some networks; terms and rate limits apply |
+| AllDebrid | Pairing, resolving, links | 18 | Account-bound. Links are bearer secrets; never log them. |
+| LG uMediaServer, luna, SDL | Playback, system, window | 9, 10, 14 | Firmware updates can change behaviour |
+
+### 24. Web app (legacy, `tv-app/src`)
+
+**Job:** the first Bloob, built with SolidJS and web Buna (`com.muhib.tvprototype`, 0.2.0). It shares the service code with the native app.
+
+**State:** installed on the TV. A real source played there with HDR and Atmos (user report). It is no longer the main track.
+
+**Next:**
+- **24.1** Decide: freeze it as a fallback, or retire it. Retiring it means leaving it installed; nothing is deleted on the TV.
+
+---
+
+## Suggested order
+
+The TV has not seen 1.1 yet, so the first increments are measurement. After that, fix what the TV shows.
+
+1. **1.1, 9.1, 18.1, 2.1:** the TV pass in `TV-TEST.md`. It costs one evening and decides most of what follows.
+2. **5.1:** season pills that scroll. This is a bug any long show will hit.
+3. **9.3, 9.2:** keep the viewer's tracks across a reconnect, and start in their language.
+4. **12.1:** draw any character Inter has, because titles and episode names are not all Latin-1.
+5. **21.1, 14.1:** make the tour fail when something breaks, and test the model parsers.
+6. **10.2, 22.1:** a reliable last save, and a per-session summary in the log.
+7. After that, choose between features (**1.2, 1.3, 3.1, 7.1, 8.1**) and quality (**6.1/17.1** tuning) based on what the sofa test showed.
