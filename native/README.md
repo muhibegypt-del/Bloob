@@ -1,6 +1,6 @@
-# Bloob native (Buna N2)
+# Bloob native 1.1 (Buna N2)
 
-A native webOS app (`com.muhib.bloob`, "Bloob Native") written in C++ against the community webOS NDK. It is the whole app: catalogue, search, details with seasons and episodes, source choice, AllDebrid pairing and resolution, and playback through the TV's own media pipeline. It draws its own UI (design direction "A · Cinema") and owns playback with the native Buna session.
+A native webOS app (`com.muhib.bloob`, "Bloob Native") written in C++ against the community webOS NDK. It is the whole app: catalogue, search, details with seasons and episodes, source choice, AllDebrid pairing and resolution, and playback through the TV's own media pipeline. It draws its own UI and owns playback with the native Buna session. The visual system, with screen layouts and states, is in [`DESIGN.md`](DESIGN.md). The TV test script, including the hand-the-remote-over acceptance task, is in [`TV-TEST.md`](TV-TEST.md).
 
 It installs alongside the web app (`com.muhib.tvprototype`) and does not replace it.
 
@@ -9,7 +9,7 @@ It installs alongside the web app (`com.muhib.tvprototype`) and does not replace
 ```
 bloob (C++)                                   com.muhib.bloob.service (Node, bundled)
   SDL window + remote  ──────────────┐          catalogue/search/details   ← Cinemeta
-  screens + renderer (Manrope)       │ HTTP     artwork proxy + cache       ← metahub / TMDB images
+  screens + renderer (Inter)         │ HTTP     artwork proxy + cache       ← metahub / TMDB images
   native Buna session ──┐            ├────────► sources + ranking           ← Torrentio
                         │            │ 127.0.0.1 AllDebrid pairing + resolve jobs
   luna (libhelpers) ────┤            │ :8790    watch progress, settings
@@ -21,9 +21,9 @@ The service is the same code as the web app's (`tv-app/service`), staged as the 
 
 | Part | Files | What it does |
 | --- | --- | --- |
-| Shell | `main.cpp` | Window, remote, navigation rail (Home, Search, Films, Series, Settings), screen stack, service start-up, idle-friendly frame loop (draws only when something changes or animates) |
+| Shell | `main.cpp` | Window, remote, tab bar (Search, Home, Films, Series, Settings), screen stack with fade-and-rise transitions, lifecycle (overlay vs background), service start-up, idle-friendly frame loop (draws only when something changes or animates) |
 | Screens | `browse.cpp`, `search.cpp`, `details.cpp`, `sources.cpp`, `player.cpp`, `settings.cpp`, `pairing.cpp` | Home/Films/Series with a backdrop that follows focus; search with an on-screen keyboard; details with resume and episode logic; sources (recommended card, table, pairing, resolve progress, file/quality questions); player; settings and diagnostics |
-| Toolkit | `ui.*`, `common.*`, `gfx.*`, `icons.*` | Theme, text layout (wrap, ellipsis, kerning), eased animations, buttons/chips/focus rings, gradients, anti-aliased shapes and line icons |
+| Toolkit | `theme.h`, `ui.*`, `common.*`, `gfx.*`, `icons.*` | Design tokens, type scale, text layout (wrap, ellipsis, kerning, oversampled glyphs with gamma), eased animations, cards, buttons, pills, focus rings, soft shadows, blurred backdrops, exact-size anti-aliased shapes and line icons |
 | Artwork | `images.*` | Fetched through the service, decoded and scaled on worker threads to the exact size drawn, rounded corners and title shading baked in, faded in, least-recently-drawn textures released over a 192 MB budget |
 | Plumbing | `http.*`, `tasks.*`, `api.*`, `model.*`, `json.*` | Localhost HTTP client, worker pools whose results land on the UI thread, typed service API, data model |
 | Playback | `media.*`, `session.*`, `luna.*` | uMediaServer over luna (`load`, `subscribe`, `play`, `pause`, `seek`, `selectTrack`, `setSubtitleEnable`, `unload`); native Buna session (clock, seek preview/commit, stall watchdog, errors) |
@@ -34,7 +34,11 @@ The service is the same code as the web app's (`tv-app/service`), staged as the 
 - **Pairing**: if AllDebrid is not connected, pressing Play shows a PIN and continues to that source once paired. Settings can reconnect at any time.
 - **Progress** is saved every 15 s while playing, on pause and on exit. Home's *Continue watching* resumes unfinished titles and offers the next episode for finished ones. Playback resumes automatically (a *Start over* button appears).
 - **Up next**: when an episode ends, the next one starts after a 10 s countdown (Back to stay).
-- **Back**: player → closes menus, hides controls, then exits to where you came from. Rows → back to the top, then the rail. Rail → Home, then exits Bloob.
+- **Back**:
+  - **Player:** closes menus, then hides the controls, then exits to where you came from.
+  - **Rows:** back to the top, then the tabs.
+  - **Tabs:** go to Home. A second Back exits Bloob, after a prompt.
+- **LG quick menu, volume and other overlays** leave playback alone. Going to the background (Home, another app) pauses and saves. If the TV releases the media pipeline meanwhile, the player shows *Reconnecting* and reopens at the same position, at most three times a minute.
 - **Audio and subtitles** list the file's real tracks from the TV's media pipeline.
 
 ## Build
@@ -45,7 +49,8 @@ curl -L -o /tmp/sdk.tgz https://github.com/openlgtv/buildroot-nc4/releases/downl
 tar xzf /tmp/sdk.tgz -C /opt && /opt/arm-webos-linux-gnueabi_sdk-buildroot/relocate-sdk.sh
 
 native/scripts/build.sh          # unit tests → cross build → ABI guard → service staging → artifacts/com.muhib.bloob_<v>_arm.ipk
-native/scripts/ui-tour.sh        # desktop tour of the whole app: real service + live catalogue, fixture sources, scripted remote
+native/scripts/ui-tour.sh [dir]  # desktop tour of the whole app, following the acceptance task: real service + live catalogue,
+                                 # fixture sources, scripted remote, quick-menu / Home / pipeline-lost events; 1920×1080 PNGs
 native/scripts/ui-snapshots.sh   # desktop player states with simulated TV media events
 ```
 
@@ -57,7 +62,7 @@ The built binary needs only `GLIBC_2.4` and no `GLIBCXX`, because the C++ runtim
 
 ```bat
 cd /d %USERPROFILE%\Downloads
-ares-install -d rootedTV com.muhib.bloob_0.4.0_arm.ipk
+ares-install -d rootedTV com.muhib.bloob_1.1.0_arm.ipk
 ares-launch -d rootedTV com.muhib.bloob
 ssh root@192.168.1.26 "cat /tmp/bloob-native.log"
 ```
@@ -74,7 +79,8 @@ ares-launch -d rootedTV com.muhib.bloob -p "{\"uri\":\"https://...\",\"title\":\
 
 - **0.3.x (13 October 2026), OLED55G26LA, webOS 9.2.2:** window, remote, luna (`getSystemInfo`), uMediaServer `load` with the exported video window, and the bundled clip playing.
 - **Not yet verified:**
-  - **0.4.0:** the bundled service starting on the TV, and artwork and catalogue loading there.
+  - **0.4.0 / 1.1.0:** the bundled service starting on the TV, and artwork and catalogue loading there.
+  - **1.1.0:** the fix for the quick menu (user report on 0.4: playback died after opening it), legibility at viewing distance, and the acceptance task. See `TV-TEST.md`.
   - **AllDebrid on the native app:** pairing and resolving.
   - **Real films:** seeking, and audio and subtitle switching, on real content.
 
@@ -89,4 +95,4 @@ ares-launch -d rootedTV com.muhib.bloob -p "{\"uri\":\"https://...\",\"title\":\
 - **Kodi's webOS port (GPL-2.0+):** media pipeline options and TV capability queries.
 - **webosbrew documentation:** remote scancodes.
 
-No code from these projects is included. stb_truetype and stb_image are public domain (MIT alternative). Manrope is under the SIL Open Font License (`third_party/fonts/Manrope-LICENSE.txt`).
+No code from these projects is included. stb_truetype and stb_image are public domain (MIT alternative). Inter is under the SIL Open Font License (`third_party/fonts/Inter-LICENSE.txt`).

@@ -28,11 +28,15 @@ class Images {
   void shutdown();
   // Request and (if ready) return an image drawn at w×h. Call every frame it is visible.
   // `shade` darkens the lower part so a title can sit on the image.
-  ImageRef get(const std::string &url, int w, int h, int radius = 0, Fit fit = Fit::Cover, bool shade = false);
+  // `blur` (px at w×h) returns a soft, quarter-resolution texture for frosted
+  // backgrounds; draw it stretched to w×h.
+  ImageRef get(const std::string &url, int w, int h, int radius = 0, Fit fit = Fit::Cover, bool shade = false, int blur = 0);
   // Warm the cache without drawing.
-  void prefetch(const std::string &url, int w, int h, int radius = 0, Fit fit = Fit::Cover, bool shade = false) {
-    get(url, w, h, radius, fit, shade);
+  void prefetch(const std::string &url, int w, int h, int radius = 0, Fit fit = Fit::Cover, bool shade = false, int blur = 0) {
+    get(url, w, h, radius, fit, shade, blur);
   }
+  // True once the image is decoded (or failed), so a transition can wait for it.
+  bool settled(const std::string &url, int w, int h, int radius = 0, Fit fit = Fit::Cover, bool shade = false, int blur = 0);
   void begin_frame(long long now) { now_ = now; }
   // Release textures over budget. Returns true while any visible image is fading in.
   bool end_frame();
@@ -53,7 +57,8 @@ class Images {
     long long failed_at = 0;
     std::shared_ptr<Shared> shared = std::make_shared<Shared>();
   };
-  void load(const std::string &key, const std::string &url, int w, int h, int radius, Fit fit, bool shade);
+  void load(const std::string &key, const std::string &url, int w, int h, int radius, Fit fit, bool shade, int blur);
+  static std::string key_for(const std::string &url, int w, int h, int radius, Fit fit, bool shade, int blur);
 
   SDL_Renderer *renderer_ = nullptr;
   Tasks *tasks_ = nullptr;
@@ -73,3 +78,5 @@ struct Pixels {
   int w = 0, h = 0;
 };
 Pixels scale_image(const unsigned char *rgba, int sw, int sh, int box_w, int box_h, Fit fit, int radius, bool shade = false);
+// Three box-blur passes (≈ Gaussian) in place.
+void blur_image(Pixels &p, int radius);

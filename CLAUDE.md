@@ -13,22 +13,48 @@ Build **Bloob**, a distinct webOS application with:
 
 The current prototype is a vertical slice, not the finished product. The user has seen a high-quality resolved stream play with HDR and Atmos on this TV, but criticized the old player overlay and source chooser and had to re-pair AllDebrid at every start. Version 0.2.0 (12 October 2026) answers all three: Buna now owns playback (`tv-app/src/buna/`), the source screen is recommendation-first, and pairing storage tries several locations, verifies each write, and reports where the key went. All of it is covered by unit tests and a key-driven end-to-end run in desktop Chromium. **None of it has been verified on the TV yet**; see "TV verification" in `tv-app/README.md`.
 
-## Native track (Buna N2, 13 October 2026)
+## Native track (Buna N2, 13 October 2026; 1.1 UI pass the same day)
 
 The owner chose native. `native/` is a C++ webOS app (`com.muhib.bloob`, "Bloob Native") built with the community webOS NDK (openlgtv buildroot-nc4, the toolchain Moonlight TV uses).
 
-- **What it contains:** the whole app, not a test host. That is Home/Films/Series rows with a focus-following backdrop, search with an on-screen keyboard, details with seasons, episodes and resume, *Choose how to watch* (recommended card, options table, AllDebrid PIN pairing, resolve progress), the player with real track menus and up next, and settings.
-- **Rendering and playback:** the TV's SDL2 provides the window and remote. Bloob draws with its own renderer (Manrope via stb_truetype, artwork via stb_image scaled on worker threads, 1920×1080 offscreen canvas). Playback goes through LG uMediaServer over luna (`com.webos.media`) in an exported hardware video window under the UI.
-- **Service:** the app bundles its own copy of the Bloob service (`tv-app/service`, staged as `com.muhib.bloob.service` on port 8790). The app talks to it over plain localhost HTTP. The service now also serves the catalogue, search, artwork proxy, ranked sources, AllDebrid resolve jobs, watch progress and settings. If the bus will not start the service, the app runs it directly with the TV's Node and stops it on exit.
+- **What it contains:** the whole app, not a test host.
+  - Tabs: Search, Home, Films, Series, Settings.
+  - Home: an artwork-led hero, then shelves.
+  - Details: the page continues into seasons and episodes.
+  - *Choose how to watch*: a best-match card, other versions, release details, AllDebrid PIN pairing and resolve progress.
+  - Player: quiet during viewing, with seek preview, real track panels and up next.
+  - Settings.
+- **Design (1.1):** the visual system, with tokens, type, focus, motion, states and per-screen layouts, is in `native/DESIGN.md`. The tokens live in `native/src/theme.h`, and the type scale and components in `ui.cpp`.
+- **Rendering and playback:**
+  - The TV's SDL2 provides the window and remote. Bloob draws with its own renderer: Inter via stb_truetype with oversampling and gamma, exact-size anti-aliased shapes, and artwork via stb_image scaled on worker threads, on a 1920×1080 offscreen canvas.
+  - Playback goes through LG uMediaServer over luna (`com.webos.media`), in an exported hardware video window under the UI.
+- **Lifecycle (1.1):**
+  - Focus loss alone, such as the LG quick menu, leaves playback alone.
+  - Hidden or background pauses and saves.
+  - Foreground sends `notifyForeground`.
+  - A released pipeline (`unloadCompleted`, `released` or `suspended`, or a refused command) reopens at the same position, at most three times a minute.
+  - This answers the 0.4 user report that playback died after the brightness menu. It is not yet verified on the TV.
+- **Service:** the app bundles its own copy of the Bloob service (`tv-app/service`, staged as `com.muhib.bloob.service` on port 8790). The app talks to it over plain localhost HTTP. The service also serves:
+  - the catalogue, search and an artwork proxy;
+  - ranked sources and AllDebrid resolve jobs;
+  - watch progress and settings.
+  If the bus will not start the service, the app runs it directly with the TV's Node and stops it on exit.
 - **Build and test scripts:**
-  - `native/scripts/build.sh`: tests, cross-build, ABI guard (GLIBC_2.4 only, no GLIBCXX), service staging, IPK.
-  - `native/scripts/ui-tour.sh`: drives the whole app on the desktop against the real service, with fixture sources.
+  - `native/scripts/build.sh`: tests, cross-build, ABI guard (GLIBC_2.4 only, no GLIBCXX), service staging, IPK (`native/artifacts/com.muhib.bloob_1.1.0_arm.ipk`).
+  - `native/scripts/ui-tour.sh`: drives the whole app on the desktop through the acceptance task, plus quick-menu, Home and pipeline-lost events, against the real service with fixture sources.
   - `native/scripts/ui-snapshots.sh`: covers player states.
+  - `native/TV-TEST.md`: the TV pass, with the acceptance task, viewing distance and lifecycle.
 
 **TV status:**
 
 - **0.3.x verified on the TV:** OLED55G26LA, webOS 9.2.2. Window, remote, luna, uMediaServer load and the exported video window worked, and the test clip played.
-- **0.4.0 not yet run on the TV:** the catalogue, the service and AllDebrid have only run on the desktop.
+- **0.4.0 ran on the TV (user report):**
+  - The app worked.
+  - Fonts showed jaggies.
+  - Some UI was buggy.
+  - Playback died after the LG quick menu.
+  - The look was not yet the calm, Apple-like feel the user wants.
+- **1.1.0 is the response to that report and has not yet run on the TV.**
 
 See `native/README.md`. Elements of A is UI inspiration only. Technical references are the open-source Moonlight TV and Kodi webOS code, read but not copied. The web app (`tv-app/`) remains installed and working.
 

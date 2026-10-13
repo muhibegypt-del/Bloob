@@ -103,12 +103,20 @@ function browse(type) {
   return rows(specs).then(result => ({ rows: result }));
 }
 
+// Some listings shout ("THE ONE WHERE…"). Quiet those down; leave mixed case alone.
+const SMALL_WORDS = new Set(['a', 'an', 'and', 'as', 'at', 'but', 'by', 'for', 'in', 'of', 'on', 'or', 'the', 'to', 'vs']);
+function calmTitle(title) {
+  if (!/[A-Z]{2}.*\s.*[A-Z]{2}/.test(title) || /[a-z]/.test(title)) return title;  // one word may be an acronym
+  return title.toLowerCase().replace(/[a-z\u00e0-\u00ff][^\s-]*/g, (word, offset) =>
+    offset > 0 && SMALL_WORDS.has(word) ? word : word.charAt(0).toUpperCase() + word.slice(1));
+}
+
 function episodeOf(v) {
   return {
     id: String(v.id || ''),
     season: Number(v.season) || 0,
     episode: Number(v.episode !== undefined ? v.episode : v.number) || 0,
-    title: v.name || v.title || '',
+    title: calmTitle(String(v.name || v.title || '')),
     overview: v.overview || v.description || '',
     released: v.released || v.firstAired || '',
     thumbnail: typeof v.thumbnail === 'string' && /^https:\/\//.test(v.thumbnail) ? v.thumbnail : '',
@@ -161,4 +169,4 @@ function search(query) {
     });
 }
 
-module.exports = { home, browse, meta, search, art };
+module.exports = { calmTitle, home, browse, meta, search, art };

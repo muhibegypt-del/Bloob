@@ -55,6 +55,8 @@ class Session {
   long long seek_origin_ms(long long fallback) const { return (preview_ || pending_) ? seek_origin_ : fallback; }
   long long first_frame_ms() const { return first_frame_ms_; }
   long long seek_started_ms() const { return seek_started_; }
+  // When the current buffering or stall began (for a delayed spinner).
+  long long stalled_since() const { return buffering_since_; }
   const std::string &error() const { return error_; }
   int subtitle_index() const { return subtitle_index_; }
 
@@ -71,6 +73,7 @@ class Session {
   bool paused_ = false;
   bool buffering_ = false;
   bool stalled_ = false;
+  long long buffering_since_ = 0;
   bool ended_ = false;
   std::string error_;
 

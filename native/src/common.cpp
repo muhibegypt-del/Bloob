@@ -2,80 +2,107 @@
 
 #include <cstdlib>
 
-void Backdrop::set(const std::string &url) {
+namespace {
+constexpr int kBlur = 48;  // px at 1080p for the soft backdrop
+}
+
+void Backdrop::set(const std::string &url, bool immediate) {
   if (url == current_) return;
   // Whatever is on screen now stays underneath while the new picture fades in.
   if (!current_.empty() && ctx().images.get(current_, W, H).texture) previous_ = current_;
   current_ = url;
-  fade_.rate = 9.0f;
-  fade_.snap(0);
-  fade_.to(1);
+  if (immediate) {
+    fade_.snap(1);
+    previous_.clear();
+  } else {
+    fade_.snap(0);
+    fade_.to(1);
+  }
 }
 
 void Backdrop::update(double dt) {
-  ImageRef ref = current_.empty() ? ImageRef{} : ctx().images.get(current_, W, H);
-  // Hold the fade until the picture exists, so it fades in rather than popping.
-  if (ref.texture) {
+  if (current_.empty()) return;
+  Images &images = ctx().images;
+  // A picture that never arrives leaves the previous one in place.
+  ImageRef ref = images.get(current_, W, H);
+  if (ref.failed) {
+    if (!previous_.empty()) current_ = previous_;
+    previous_.clear();
+    fade_.snap(1);
+    return;
+  }
+  // Hold the fade until the picture is decoded, so it never pops in half-drawn.
+  if (images.settled(current_, W, H)) {
     if (fade_.step(dt)) ctx().animating = true;
-    if (fade_.value >= 1.0f && ref.alpha == 255) previous_.clear();
+    if (fade_.value >= 1.0f) previous_.clear();
   }
 }
 
-void Backdrop::draw(float dim) {
+void Backdrop::draw(float dim, float blur) {
   Ctx &c = ctx();
-  c.gfx.fill_rect(0, 0, W, H, theme::bg);
-  if (!previous_.empty()) {
-    ImageRef prev = c.images.get(previous_, W, H);
-    if (prev.texture) c.gfx.texture(prev.texture, 0, 0, W, H, 255);
-  }
-  if (!current_.empty()) {
-    ImageRef ref = c.images.get(current_, W, H);
-    if (ref.texture) {
-      int a = std::min<int>(ref.alpha, static_cast<int>(fade_.value * 255));
-      c.gfx.texture(ref.texture, 0, 0, W, H, static_cast<Uint8>(a));
+  c.gfx.fill_rect(0, 0, W, H, theme::ground);
+  auto layer = [&](const std::string &url, float alpha) {
+    if (url.empty() || alpha <= 0.01f) return;
+    if (blur < 0.99f) {
+      ImageRef sharp = c.images.get(url, W, H);
+      if (sharp.texture) c.gfx.texture(sharp.texture, 0, 0, W, H, static_cast<Uint8>(alpha * sharp.alpha));
     }
-  }
-  if (dim > 0) c.gfx.fill_rect(0, 0, W, H, with_alpha(theme::bg, static_cast<int>(dim * 150)));
+    if (blur > 0.01f) {
+      ImageRef soft = c.images.get(url, W, H, 0, Fit::Cover, false, kBlur);
+      if (soft.texture) c.gfx.texture(soft.texture, 0, 0, W, H, static_cast<Uint8>(alpha * blur * soft.alpha));
+    }
+  };
+  layer(previous_, 1.0f);
+  if (!current_.empty() && c.images.settled(current_, W, H)) layer(current_, fade_.value);
+  if (dim > 0) c.gfx.fill_rect(0, 0, W, H, with_alpha(theme::ground, static_cast<int>(dim * 200)));
 }
 
 void draw_scrims(float left, int bottom_from, float bottom) {
   Gfx &g = ctx().gfx;
   auto a = [](float v) { return static_cast<Uint8>(std::max(0.0f, std::min(255.0f, v))); };
   if (left > 0) {
-    // Solid behind the rail and text, then easing out across the picture.
-    g.fill_rect(0, 0, 330, H, with_alpha(theme::bg, static_cast<int>(255 * left)));
-    g.gradient_h(330, 0, 420, H, theme::bg, a(255 * left), a(225 * left));
-    g.gradient_h(750, 0, 600, H, theme::bg, a(225 * left), a(30 * left));
-    g.gradient_h(1350, 0, 570, H, theme::bg, a(30 * left), 0);
+    // Dense where the text sits, gone by two-thirds across.
+    g.gradient_h(0, 0, 420, H, theme::ground, a(240 * left), a(200 * left));
+    g.gradient_h(420, 0, 520, H, theme::ground, a(200 * left), a(70 * left));
+    g.gradient_h(940, 0, 360, H, theme::ground, a(70 * left), 0);
   }
-  if (bottom > 0 && bottom_from < H) {
-    g.gradient_v(0, bottom_from, W, H - bottom_from, theme::bg, 0, a(255 * bottom));
-  }
+  if (bottom > 0 && bottom_from < H) g.gradient_v(0, bottom_from, W, H - bottom_from, theme::ground, 0, a(255 * bottom));
 }
 
-int draw_title(const Item &item, int x, int top, int box_w, int box_h, int text_size, float alpha) {
+int draw_title(const Item &item, int x, int top, int box_w, int box_h, float alpha, bool centred) {
   Ctx &c = ctx();
-  int a = static_cast<int>(255 * alpha);
   if (!item.logo.empty()) {
-    ImageRef logo = c.images.get(item.logo, box_w, box_h, 0, Fit::Contain);
+    // Decoded once at the largest size used, then scaled: boxes animate, and a
+    // new size per frame would mean a new decode per frame.
+    ImageRef logo = c.images.get(item.logo, 760, 240, 0, Fit::Contain);
     if (logo.texture) {
-      c.gfx.texture(logo.texture, x, top + box_h - logo.h, logo.w, logo.h, static_cast<Uint8>(std::min<int>(a, logo.alpha)));
+      float scale = std::min(1.0f, std::min(static_cast<float>(box_w) / logo.w, static_cast<float>(box_h) / logo.h));
+      int lw = static_cast<int>(logo.w * scale), lh = static_cast<int>(logo.h * scale);
+      int lx = centred ? x + (box_w - lw) / 2 : x;
+      c.gfx.texture(logo.texture, lx, top + box_h - lh, lw, lh, static_cast<Uint8>(std::min<float>(255 * alpha, logo.alpha)));
       return top + box_h;
     }
-    if (!logo.failed) return top + box_h;  // still loading: hold the space, avoid a text flash
+    if (!logo.failed) return top + box_h;  // still loading: hold the space rather than flash type
   }
-  int line = text_size + text_size / 12;
-  auto lines = wrap(c.fonts.heavy, item.name, text_size, box_w + 160, 2);
+  // Display type, sized down for long names.
+  Font &f = c.fonts.bold;
+  int size = box_h >= 200 ? 76 : box_h >= 140 ? 60 : 48;
+  auto lines = wrap(f, item.name, size, box_w + 120, 2);
+  if (lines.size() > 1 && size > 48) {
+    size = size * 4 / 5;
+    lines = wrap(f, item.name, size, box_w + 120, 2);
+  }
+  int line = size + size / 10;
   int y = top + box_h - static_cast<int>(lines.size()) * line;
   for (auto &l : lines) {
-    c.fonts.heavy.draw(l, x, y, text_size, with_alpha(theme::text, a));
+    int lx = centred ? x + (box_w - f.measure(l, size)) / 2 : x;
+    f.draw(l, lx, y, size, fade(theme::primary, alpha));
     y += line;
   }
   return top + box_h;
 }
 
 std::string runtime_text(const std::string &runtime) {
-  // Cinemeta gives "145 min".
   int minutes = std::atoi(runtime.c_str());
   if (minutes <= 0) return runtime;
   if (minutes < 60) return std::to_string(minutes) + " min";
@@ -85,13 +112,12 @@ std::string runtime_text(const std::string &runtime) {
 std::string meta_line(const Item &item) {
   std::vector<std::string> parts;
   if (!item.year.empty()) parts.push_back(item.year);
-  if (item.series()) parts.push_back("Series");
-  else if (!item.runtime.empty()) parts.push_back(runtime_text(item.runtime));
   if (!item.genres.empty()) {
     std::string g = item.genres[0];
     if (item.genres.size() > 1) g += ", " + item.genres[1];
     parts.push_back(g);
   }
-  if (!item.rating.empty()) parts.push_back("IMDb " + item.rating);
+  if (item.series()) parts.push_back("Series");
+  else if (!item.runtime.empty()) parts.push_back(runtime_text(item.runtime));
   return join(parts);
 }

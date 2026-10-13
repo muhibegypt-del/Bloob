@@ -1,6 +1,6 @@
-// Bloob native (Buna N2): SDL window and remote input, our own renderer and
-// screens, the bundled local service for catalogue/sources/AllDebrid, and LG's
-// media pipeline in a hardware plane beneath the UI for playback.
+// Bloob native: the app shell. SDL window and remote input, the tab bar and
+// screen stack with animated transitions, app lifecycle, the bundled local
+// service (catalogue, sources, AllDebrid), and scripted desktop runs.
 #include <SDL.h>
 #include <fcntl.h>
 #include <signal.h>
@@ -26,7 +26,6 @@
 
 namespace {
 
-constexpr int RAIL_W = 132;
 constexpr long long kServiceBusWaitMs = 8000;
 constexpr long long kServiceTimeoutMs = 30000;
 
@@ -50,13 +49,16 @@ LaunchParams parse_launch(int argc, char **argv) {
   return params;
 }
 
-struct RailItem {
+// Tab bar: Search and Settings are icons at the ends, pages in between.
+struct Tab {
   const char *label;
-  Icon icon;
+  int icon;  // Icon value or -1 for a text tab
 };
-const RailItem kRail[] = {{"Home", Icon::Home}, {"Search", Icon::Search}, {"Films", Icon::Film}, {"Series", Icon::Tv},
-                          {"Settings", Icon::Settings}};
-constexpr int kRailCount = 5;
+const Tab kTabs[] = {{"Search", static_cast<int>(Icon::Search)}, {"Home", -1}, {"Films", -1}, {"Series", -1},
+                     {"Settings", static_cast<int>(Icon::Settings)}};
+constexpr int kTabCount = 5;
+constexpr int kHomeTab = 1;
+constexpr long long kExitConfirmMs = 2500;
 
 class App {
  public:
@@ -94,10 +96,10 @@ class App {
          wh, mode.w, mode.h, mode.refresh_rate, c.webos.missing().c_str());
     c.gfx.init(c.renderer, W, H);
     std::string fonts = c.dir + "/assets/fonts/";
-    c.fonts.regular.load(c.renderer, fonts + "Manrope-Regular.ttf");
-    c.fonts.semibold.load(c.renderer, fonts + "Manrope-SemiBold.ttf");
-    c.fonts.bold.load(c.renderer, fonts + "Manrope-Bold.ttf");
-    c.fonts.heavy.load(c.renderer, fonts + "Manrope-ExtraBold.ttf");
+    c.fonts.regular.load(c.renderer, fonts + "Inter-Regular.ttf");
+    c.fonts.medium.load(c.renderer, fonts + "Inter-Medium.ttf");
+    c.fonts.semibold.load(c.renderer, fonts + "Inter-SemiBold.ttf");
+    c.fonts.bold.load(c.renderer, fonts + "Inter-Bold.ttf");
     c.icons.init(c.renderer);
 
     wake_event_ = SDL_RegisterEvents(1);
@@ -121,7 +123,8 @@ class App {
       toast_until_ = ctx().now + 3500;
     };
     c.quit = [this] { running_ = false; };
-    c.refresh_home = [] {};
+    c.focus_tabs = [this] { set_tabs_focus(true); };
+    c.show_tabs = [this](bool show) { tabs_wanted_ = show; };
 
     Luna::instance().call("luna://com.webos.service.tv.systemproperty/getSystemInfo",
                           "{\"keys\":[\"modelName\",\"firmwareVersion\",\"sdkVersion\"]}", [](const std::string &reply) {
@@ -136,9 +139,9 @@ class App {
                           });
     start_service();
 
-    roots_.resize(kRailCount);
-    root_ = 0;
-    roots_[0] = make_browse(Browse::Home);
+    roots_.resize(kTabCount);
+    root_ = kHomeTab;
+    roots_[kHomeTab] = make_browse(Browse::Home);
 
     load_script();
     LaunchParams launch = parse_launch(argc, argv);
@@ -246,7 +249,8 @@ class App {
 
   void shutdown() {
     Ctx &c = ctx();
-    for (auto it = stack_.rbegin(); it != stack_.rend(); ++it) (*it)->suspend();
+    for (auto it = stack_.rbegin(); it != stack_.rend(); ++it) (*it)->background();
+    leaving_.reset();
     stack_.clear();
     roots_.clear();
     ops_.clear();
@@ -275,11 +279,17 @@ class App {
     return roots_[static_cast<size_t>(root_)].get();
   }
 
+  Screen *below_top() {
+    if (stack_.size() >= 2) return stack_[stack_.size() - 2].get();
+    if (stack_.size() == 1) return roots_[static_cast<size_t>(root_)].get();
+    return nullptr;
+  }
+
   void ensure_root(int index) {
     if (roots_[static_cast<size_t>(index)]) return;
     switch (index) {
-      case 0: roots_[0] = make_browse(Browse::Home); break;
-      case 1: roots_[1] = make_search(); break;
+      case 0: roots_[0] = make_search(); break;
+      case 1: roots_[1] = make_browse(Browse::Home); break;
       case 2: roots_[2] = make_browse(Browse::Movies); break;
       case 3: roots_[3] = make_browse(Browse::Series); break;
       case 4: roots_[4] = make_settings(); break;
@@ -292,43 +302,64 @@ class App {
       ops_.pop_front();
       Screen *before = top();
       switch (op.kind) {
-        case Op::Push:
+        case Op::Push: {
           before->hidden();
+          bool animate = !before->over_video() && !op.screen->over_video();
           stack_.push_back(std::move(op.screen));
           logf("nav", "push %s", stack_.back()->name());
+          finish_leaving();
+          entering_.snap(animate ? 0.0f : 1.0f);
+          entering_.to(1);
           break;
-        case Op::Pop:
+        }
+        case Op::Pop: {
           if (stack_.empty()) break;
           logf("nav", "pop %s", stack_.back()->name());
+          std::unique_ptr<Screen> gone = std::move(stack_.back());
           stack_.pop_back();
+          finish_leaving();
+          entering_.snap(1);
+          if (!gone->over_video() && !top()->over_video()) {
+            leaving_ = std::move(gone);  // fades out over the screen it returns to
+            leaving_fade_.snap(1);
+            leaving_fade_.to(0);
+          }
           top()->shown();
           break;
+        }
         case Op::Replace:
+          finish_leaving();
           if (!stack_.empty()) {
             logf("nav", "replace %s with %s", stack_.back()->name(), op.screen->name());
             stack_.back() = std::move(op.screen);
           } else {
             stack_.push_back(std::move(op.screen));
           }
+          entering_.snap(1);
           break;
       }
       dirty_ = true;
     }
   }
 
+  void finish_leaving() { leaving_.reset(); }
+
   void select_root(int index) {
     if (index == root_) return;
     roots_[static_cast<size_t>(root_)]->hidden();
     ensure_root(index);
     root_ = index;
-    roots_[static_cast<size_t>(root_)]->set_rail_focus(rail_focus_);
+    tabs_wanted_ = true;
+    roots_[static_cast<size_t>(root_)]->set_tabs_focus(tabs_focus_);
     roots_[static_cast<size_t>(root_)]->shown();
+    page_fade_.snap(0.0f);
+    page_fade_.to(1);
   }
 
-  void set_rail_focus(bool focus) {
-    rail_focus_ = focus;
-    rail_index_ = root_;
-    roots_[static_cast<size_t>(root_)]->set_rail_focus(focus);
+  void set_tabs_focus(bool focus) {
+    tabs_focus_ = focus;
+    roots_[static_cast<size_t>(root_)]->set_tabs_focus(focus);
+    if (focus) tabs_wanted_ = true;
   }
 
   // ---------------------------------------------------------------- input
@@ -350,29 +381,34 @@ class App {
       return;
     }
     bool repeat = event.repeat != 0;
+    // A key during a transition lands on the destination at once.
+    if (leaving_) finish_leaving();
+    entering_.snap(1);
     if (!stack_.empty()) {
       stack_.back()->key(key, repeat);
       return;
     }
     Screen *root = roots_[static_cast<size_t>(root_)].get();
-    if (rail_focus_) {
+    if (tabs_focus_) {
       switch (key) {
-        case Key::Up:
-          if (rail_index_ > 0) select_root(--rail_index_);
-          break;
-        case Key::Down:
-          if (rail_index_ + 1 < kRailCount) select_root(++rail_index_);
+        case Key::Left:
+          if (root_ > 0) select_root(root_ - 1);
           break;
         case Key::Right:
+          if (root_ + 1 < kTabCount) select_root(root_ + 1);
+          break;
+        case Key::Down:
         case Key::Ok:
-          set_rail_focus(false);
+          set_tabs_focus(false);
           break;
         case Key::Back:
-          if (root_ != 0) {
-            select_root(0);
-            rail_index_ = 0;
-          } else {
+          if (root_ != kHomeTab) {
+            select_root(kHomeTab);
+          } else if (exit_armed_at_ && c.now - exit_armed_at_ < kExitConfirmMs) {
             running_ = false;
+          } else {
+            exit_armed_at_ = c.now;
+            c.toast("Press Back again to close Bloob");
           }
           break;
         default:
@@ -380,45 +416,91 @@ class App {
       }
       return;
     }
-    if (!root->key(key, repeat) && (key == Key::Left || key == Key::Back)) set_rail_focus(true);
+    if (!root->key(key, repeat) && (key == Key::Up || key == Key::Back)) set_tabs_focus(true);
   }
 
   void on_event(const SDL_Event &e) {
-    if (e.type == SDL_QUIT) running_ = false;
-    else if (e.type == SDL_KEYDOWN) on_key(e.key);
-    else if (e.type == SDL_WINDOWEVENT) {
-      if (e.window.event == SDL_WINDOWEVENT_FOCUS_LOST || e.window.event == SDL_WINDOWEVENT_HIDDEN) {
-        // Moved to the background (Home button, input switch): pause and save.
-        top()->suspend();
-        logf("app", "window hidden/focus lost");
+    if (e.type == SDL_QUIT) {
+      running_ = false;
+    } else if (e.type == SDL_KEYDOWN) {
+      on_key(e.key);
+    } else if (e.type == SDL_WINDOWEVENT) {
+      // Focus loss alone is a system overlay (quick settings, volume): the app
+      // is still on screen and playback must carry on untouched.
+      switch (e.window.event) {
+        case SDL_WINDOWEVENT_FOCUS_LOST: logf("app", "focus lost (overlay or background)"); break;
+        case SDL_WINDOWEVENT_FOCUS_GAINED: logf("app", "focus gained"); foreground(); break;
+        case SDL_WINDOWEVENT_HIDDEN:
+        case SDL_WINDOWEVENT_MINIMIZED: logf("app", "window hidden"); background(); break;
+        case SDL_WINDOWEVENT_SHOWN:
+        case SDL_WINDOWEVENT_RESTORED: logf("app", "window shown"); foreground(); break;
+        default: break;
       }
       dirty_ = true;
-    } else if (e.type == SDL_APP_WILLENTERBACKGROUND) {
-      top()->suspend();
+    } else if (e.type == SDL_APP_WILLENTERBACKGROUND || e.type == SDL_APP_DIDENTERBACKGROUND) {
+      logf("app", "entering background");
+      background();
+    } else if (e.type == SDL_APP_DIDENTERFOREGROUND) {
+      logf("app", "back in the foreground");
+      foreground();
     }
+  }
+
+  void background() {
+    if (in_background_) return;
+    in_background_ = true;
+    top()->background();
+  }
+
+  void foreground() {
+    bool was = in_background_;
+    in_background_ = false;
+    top()->foreground();
+    (void)was;
   }
 
   // ---------------------------------------------------------------- drawing
 
-  void draw_rail() {
+  void draw_tabs() {
     Ctx &c = ctx();
-    rail_open_.to(rail_focus_ ? 1.0f : 0.0f);
-    float o = rail_open_.value;
-    int w = RAIL_W + static_cast<int>(188 * o);
-    c.gfx.fill_rect(0, 0, w, H, with_alpha(rgba(0x07080a), static_cast<int>(140 + 100 * o)));
-    if (o > 0.01f) c.gfx.gradient_h(w, 0, 160, H, rgba(0x07080a), static_cast<Uint8>(200 * o), 0);
-    c.gfx.fill_round(40, 56, 52, 52, 16, theme::accent);
-    draw_text_center(c.fonts.heavy, "b", 66, 61, 30, theme::ink);
-    for (int i = 0; i < kRailCount; i++) {
-      int y = i == kRailCount - 1 ? H - 128 : 168 + i * 82;
-      bool active = i == root_;
-      bool focused = rail_focus_ && i == rail_index_;
-      int bw = 64 + static_cast<int>(172 * o);
-      if (focused) c.gfx.fill_round(34, y, bw, 64, 20, theme::white);
-      else if (active) c.gfx.fill_round(34, y, bw, 64, 20, with_alpha(theme::white, 30));
-      Color fg = focused ? theme::ink : active ? theme::white : rgba(0x8d929b);
-      c.icons.draw(kRail[i].icon, 51, y + 17, 30, fg);
-      if (o > 0.05f) c.fonts.bold.draw(kRail[i].label, 100, y + 18, 24, with_alpha(fg, static_cast<int>(255 * o)));
+    float a = tabs_alpha_.value;
+    if (a <= 0.01f) return;
+    int dy = static_cast<int>((1.0f - a) * -24);
+    // Measure.
+    std::vector<int> widths(kTabCount);
+    int total = 0;
+    for (int i = 0; i < kTabCount; i++) {
+      widths[static_cast<size_t>(i)] = kTabs[i].icon >= 0 ? 64 : measure(Text::Headline, kTabs[i].label) + 48;
+      total += widths[static_cast<size_t>(i)];
+    }
+    int pad = 8, h = 64;
+    int bw = total + pad * 2, bx = (W - bw) / 2, by = 40 + dy;
+    c.gfx.fill_round(bx, by, bw, h + pad * 2, (h + pad * 2) / 2, fade(with_alpha(theme::ground, 150), a));
+    int x = bx + pad;
+    for (int i = 0; i < kTabCount; i++) {
+      int w = widths[static_cast<size_t>(i)];
+      bool current = i == root_;
+      bool focused = tabs_focus_ && current;
+      if (focused) {
+        c.gfx.shadow(x, by + pad, w, h, h / 2, 16, 8, static_cast<Uint8>(140 * a));
+        c.gfx.fill_round(x, by + pad, w, h, h / 2, fade(theme::focus, a));
+      } else if (current) {
+        c.gfx.fill_round(x, by + pad, w, h, h / 2, fade(with_alpha(theme::focus, 40), a));
+      }
+      Color fg = fade(focused ? theme::ink : current ? theme::primary : theme::secondary, a);
+      if (kTabs[i].icon >= 0) c.icons.draw(static_cast<Icon>(kTabs[i].icon), x + 16, by + pad + 16, 32, fg);
+      else text_center(Text::Headline, kTabs[i].label, x + w / 2, by + pad + (h - line_for(Text::Headline)) / 2, fg);
+      x += w;
+    }
+  }
+
+  void draw_screen(Screen *s, bool layer, float alpha, int dy) {
+    Ctx &c = ctx();
+    if (layer && c.gfx.begin_layer()) {
+      s->draw();
+      c.gfx.end_layer(alpha, dy);
+    } else {
+      s->draw();
     }
   }
 
@@ -427,12 +509,25 @@ class App {
     c.images.begin_frame(c.now);
     c.gfx.begin_frame();
     Screen *screen = top();
-    screen->draw();
-    if (stack_.empty()) draw_rail();
+    bool entering = entering_.value < 0.999f && below_top();
+    if (entering) {
+      // The new screen rises and fades in over the one it came from.
+      below_top()->draw();
+      draw_screen(screen, true, entering_.value, static_cast<int>((1.0f - entering_.value) * 28));
+    } else {
+      if (stack_.empty() && page_fade_.value < 0.999f) {
+        c.gfx.clear(theme::ground);
+        draw_screen(screen, true, page_fade_.value, 0);
+      } else {
+        screen->draw();
+      }
+      if (stack_.empty()) draw_tabs();
+      if (leaving_) draw_screen(leaving_.get(), true, leaving_fade_.value, static_cast<int>((1.0f - leaving_fade_.value) * 20));
+    }
     if (!toast_.empty() && c.now < toast_until_) {
-      int w = c.fonts.semibold.measure(toast_, 24) + 64;
-      c.gfx.fill_round(W / 2 - w / 2, H - 140, w, 64, 32, with_alpha(theme::panel2, 240));
-      draw_text_center(c.fonts.semibold, toast_, W / 2, H - 123, 24, theme::text);
+      int w = measure(Text::Callout, toast_) + 64;
+      c.gfx.fill_round(W / 2 - w / 2, H - 150, w, 64, 32, with_alpha(theme::raised, 240));
+      text_center(Text::Callout, toast_, W / 2, H - 134, theme::primary);
       c.redraw_at(toast_until_);
     }
     c.gfx.end_frame();
@@ -443,7 +538,8 @@ class App {
 
   // ---------------------------------------------------------------- scripted runs
 
-  // BLOOB_SCRIPT: steps separated by '|': key:<name>, wait:<ms>, media:<event json>, pump, snap:<name>, quit.
+  // BLOOB_SCRIPT: steps separated by '|': key:<name>, wait:<ms>, media:<event json>, window:<event>,
+  // background, foreground, pump, snap:<name>, quit.
   void load_script() {
     const char *spec = std::getenv("BLOOB_SCRIPT");
     const char *dir_env = std::getenv("BLOOB_SNAPSHOT_DIR");
@@ -473,6 +569,19 @@ class App {
     on_key(key);
   }
 
+  // A system window event, as the TV would send it: focus-lost (quick menu),
+  // focus-gained, hidden (Home or another app), shown.
+  void window_event(const std::string &name) {
+    static const std::pair<const char *, Uint8> events[] = {
+        {"focus-lost", SDL_WINDOWEVENT_FOCUS_LOST}, {"focus-gained", SDL_WINDOWEVENT_FOCUS_GAINED},
+        {"hidden", SDL_WINDOWEVENT_HIDDEN}, {"shown", SDL_WINDOWEVENT_SHOWN}};
+    SDL_Event e{};
+    e.type = SDL_WINDOWEVENT;
+    for (auto &ev : events)
+      if (name == ev.first) e.window.event = ev.second;
+    if (e.window.event) on_event(e);
+  }
+
   void snapshot(const std::string &name) {
     Ctx &c = ctx();
     render();
@@ -500,6 +609,9 @@ class App {
       else if (step.kind == "media") Luna::instance().inject(step.arg);
       else if (step.kind == "pump") Luna::instance().pump();
       else if (step.kind == "snap") snapshot(step.arg);
+      else if (step.kind == "background") background();
+      else if (step.kind == "foreground") foreground();
+      else if (step.kind == "window") window_event(step.arg);
       else if (step.kind == "quit") running_ = false;
       apply_ops();
       dirty_ = true;
@@ -549,7 +661,15 @@ class App {
       c.animating = false;
       c.next_redraw = 0;
       top()->update(c.dt);
-      if (stack_.empty() && rail_open_.step(c.dt)) c.animating = true;
+      if (leaving_) {
+        leaving_->update(c.dt);
+        if (!leaving_fade_.step(c.dt)) finish_leaving();
+        c.animating = true;
+      }
+      if (entering_.step(c.dt)) c.animating = true;
+      if (page_fade_.step(c.dt)) c.animating = true;
+      tabs_alpha_.to(stack_.empty() && (tabs_wanted_ || tabs_focus_) ? 1.0f : 0.0f);
+      if (tabs_alpha_.step(c.dt)) c.animating = true;
       apply_ops();
       if (dirty_ || was_animating || c.animating || redraw_due) render();
     }
@@ -569,11 +689,17 @@ class App {
   bool dirty_ = true;
   std::vector<std::unique_ptr<Screen>> roots_;
   std::vector<std::unique_ptr<Screen>> stack_;
+  std::unique_ptr<Screen> leaving_;
   std::deque<Op> ops_;
-  int root_ = 0;
-  bool rail_focus_ = false;
-  int rail_index_ = 0;
-  Anim rail_open_;
+  int root_ = kHomeTab;
+  bool tabs_focus_ = false;
+  bool tabs_wanted_ = true;
+  bool in_background_ = false;
+  long long exit_armed_at_ = 0;
+  Anim entering_{theme::fade_rate, 1};
+  Anim leaving_fade_{theme::fade_rate * 1.2f, 0};
+  Anim page_fade_{theme::fade_rate, 1};
+  Anim tabs_alpha_{theme::fade_rate, 1};
   std::string toast_;
   long long toast_until_ = 0;
   long long service_started_at_ = 0;

@@ -83,30 +83,35 @@ void Pairing::update() {
 void Pairing::draw() {
   if (!active_) return;
   Ctx &c = ctx();
-  c.gfx.fill_rect(0, 0, W, H, with_alpha(theme::bg, 225));
-  int w = 1040, h = 600, x = (W - w) / 2, y = (H - h) / 2;
-  c.gfx.fill_round(x, y, w, h, 32, rgba(0x121418));
-  c.fonts.bold.draw(upper("Connect AllDebrid"), x + 64, y + 60, 18, theme::text3);
-  c.fonts.heavy.draw("Pair this TV once", x + 64, y + 94, 48, theme::text);
-  draw_paragraph(c.fonts.regular, "On your phone or computer, open the address below and enter the code. Bloob keeps the connection on this TV.",
-                 x + 64, y + 170, 24, 36, theme::text2, w - 128, 2);
-  int box_y = y + 270;
-  c.gfx.fill_round(x + 64, box_y, w - 128, 170, 24, rgba(0x1b1e23));
-  c.fonts.regular.draw("alldebrid.com/pin", x + 104, box_y + 36, 30, theme::text2);
+  using namespace theme;
+  c.gfx.fill_rect(0, 0, W, H, with_alpha(ground, 215));
+  int w = 1000, h = 560, x = (W - w) / 2, y = (H - h) / 2;
+  draw_panel(x, y, w, h);
+  text(Text::Eyebrow, upper("Connect AllDebrid"), x + 64, y + 56, accent);
+  text(Text::Title1, "Pair this TV once", x + 64, y + 88, primary);
+  paragraph(Text::Body, "On your phone or computer, open the address below and enter the code. Bloob remembers the connection.",
+            x + 64, y + 164, secondary, w - 128, 2);
+  int by = y + 266;
+  c.gfx.fill_round(x + 64, by, w - 128, 160, 22, with_alpha(raised2, 230));
+  text(Text::Title2, "alldebrid.com/pin", x + 104, by + 36, primary);
   if (pin_.empty()) {
-    if (error_.empty()) draw_spinner(x + w - 200, box_y + 85, 48);
+    if (error_.empty()) draw_spinner(x + w - 180, by + 80, 44);
   } else {
-    int pw = c.fonts.heavy.measure(pin_, 84);
-    c.fonts.heavy.draw(pin_, x + w - 104 - pw, box_y + 36, 84, theme::accent);
+    Font &f = c.fonts.bold;
+    int pw = f.measure(pin_, 84);
+    f.draw(pin_, x + w - 104 - pw, by + 30, 84, accent);
     long long left = std::max(0LL, (expires_at_ - c.now) / 1000);
-    c.fonts.regular.draw("Code renews in " + std::to_string(left / 60) + ":" + (left % 60 < 10 ? "0" : "") + std::to_string(left % 60),
-                         x + 104, box_y + 96, 22, theme::text3);
-    c.redraw_at((c.now / 1000 + 1) * 1000);  // countdown
+    text(Text::Caption, "New code in " + std::to_string(left / 60) + ":" + (left % 60 < 10 ? "0" : "") + std::to_string(left % 60),
+         x + 104, by + 96, tertiary);
+    c.redraw_at((c.now / 1000 + 1) * 1000);
   }
-  if (!error_.empty()) draw_paragraph(c.fonts.regular, error_, x + 64, box_y + 190, 22, 32, theme::bad, w - 128, 2);
-  else if (!pin_.empty()) {
-    draw_spinner(x + 84, box_y + 214, 26, theme::text3);
-    c.fonts.regular.draw("Waiting for you to enter the code\xE2\x80\xA6", x + 112, box_y + 201, 22, theme::text3);
+  if (!error_.empty()) {
+    paragraph(Text::Callout, error_, x + 64, by + 186, problem, w - 128, 2);
+  } else if (!pin_.empty()) {
+    draw_spinner(x + 80, by + 202, 24, tertiary);
+    text(Text::Callout, "Waiting for the code\xE2\x80\xA6", x + 106, by + 186, secondary);
   }
-  draw_button(x + 64, y + h - 110, "Cancel", true, false, -1, 64);
+  ButtonSpec cancel{"Cancel", -1, true};
+  cancel.h = 64;
+  draw_button(x + w - 64 - button_width(cancel), y + h - 100, cancel);
 }

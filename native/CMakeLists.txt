@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(bloob_native VERSION 0.4.0 LANGUAGES C CXX)
+project(bloob_native VERSION 1.1.0 LANGUAGES C CXX)
 
 # Cross-compile for the TV with the webOS NDK (openlgtv buildroot-nc4):
 #   cmake -B build -DCMAKE_TOOLCHAIN_FILE=/opt/arm-webos-linux-gnueabi_sdk-buildroot/share/buildroot/toolchainfile.cmake
@@ -49,11 +49,11 @@ if (CMAKE_CROSSCOMPILING)
     COMMAND ${CMAKE_STRIP} ${PKG}/bin/bloob
     COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_SOURCE_DIR}/package/appinfo.json ${CMAKE_SOURCE_DIR}/package/icon.png ${PKG}/
     COMMAND ${CMAKE_COMMAND} -E copy
-      ${CMAKE_SOURCE_DIR}/third_party/fonts/Manrope-Regular.ttf
-      ${CMAKE_SOURCE_DIR}/third_party/fonts/Manrope-SemiBold.ttf
-      ${CMAKE_SOURCE_DIR}/third_party/fonts/Manrope-Bold.ttf
-      ${CMAKE_SOURCE_DIR}/third_party/fonts/Manrope-ExtraBold.ttf
-      ${CMAKE_SOURCE_DIR}/third_party/fonts/Manrope-LICENSE.txt
+      ${CMAKE_SOURCE_DIR}/third_party/fonts/Inter-Regular.ttf
+      ${CMAKE_SOURCE_DIR}/third_party/fonts/Inter-Medium.ttf
+      ${CMAKE_SOURCE_DIR}/third_party/fonts/Inter-SemiBold.ttf
+      ${CMAKE_SOURCE_DIR}/third_party/fonts/Inter-Bold.ttf
+      ${CMAKE_SOURCE_DIR}/third_party/fonts/Inter-LICENSE.txt
       ${PKG}/assets/fonts/
     COMMAND ${CMAKE_COMMAND} -E copy
       ${CMAKE_SOURCE_DIR}/../tv-app/service/www/media/big-buck-bunny-480p-30sec.mp4

@@ -84,7 +84,10 @@ void Session::on_event(const MediaEvent &event, const MediaInfo &info, long long
       paused_ = true;
       intent_play_ = false;
       break;
-    case MediaEvent::BufferingStart: buffering_ = true; break;
+    case MediaEvent::BufferingStart:
+      if (!buffering_) buffering_since_ = now;
+      buffering_ = true;
+      break;
     case MediaEvent::BufferingEnd: buffering_ = false; break;
     case MediaEvent::Time: {
       if (event.time_ms > media_ms_ + 20 || event.time_ms < media_ms_) last_advance_at_ = now;
@@ -119,6 +122,7 @@ void Session::on_event(const MediaEvent &event, const MediaInfo &info, long long
       break;
     case MediaEvent::VideoInfo:
     case MediaEvent::TrackSelected:
+    case MediaEvent::Lost:  // the player reloads; the session is reopened
       break;
   }
 }
@@ -141,6 +145,7 @@ bool Session::tick(long long now) {
   Phase p = phase();
   if ((p == Phase::Playing) && !stalled_ && now - last_advance_at_ > kStallMs) {
     stalled_ = true;
+    buffering_since_ = now;
     changed = true;
   }
   return changed;

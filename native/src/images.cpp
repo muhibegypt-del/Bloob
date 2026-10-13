@@ -190,14 +190,56 @@ void Images::shutdown() {
   bytes_ = 0;
 }
 
-ImageRef Images::get(const std::string &url, int w, int h, int radius, Fit fit, bool shade) {
+std::string Images::key_for(const std::string &url, int w, int h, int radius, Fit fit, bool shade, int blur) {
+  return std::to_string(w) + "x" + std::to_string(h) + "r" + std::to_string(radius) + (fit == Fit::Cover ? "c" : "f") +
+         (shade ? "s" : "") + (blur ? "b" + std::to_string(blur) : "") + url;
+}
+
+bool Images::settled(const std::string &url, int w, int h, int radius, Fit fit, bool shade, int blur) {
+  if (url.empty()) return true;
+  ImageRef ref = get(url, w, h, radius, fit, shade, blur);
+  return ref.texture != nullptr || ref.failed;
+}
+
+void blur_image(Pixels &p, int radius) {
+  if (radius <= 0 || p.w <= 0 || p.h <= 0) return;
+  std::vector<int> buf(static_cast<size_t>(p.w) * p.h * 4);
+  unsigned char *d = reinterpret_cast<unsigned char *>(&p.data[0]);
+  for (size_t i = 0; i < buf.size(); i++) buf[i] = d[i];
+  std::vector<int> tmp(buf.size());
+  auto pass = [&](bool horizontal) {
+    int n = horizontal ? p.w : p.h, m = horizontal ? p.h : p.w;
+    for (int line = 0; line < m; line++) {
+      for (int c = 0; c < 4; c++) {
+        auto at = [&](int i) -> int & {
+          int x = horizontal ? i : line, y = horizontal ? line : i;
+          return buf[(static_cast<size_t>(y) * p.w + x) * 4 + c];
+        };
+        int sum = 0;
+        for (int i = -radius; i <= radius; i++) sum += at(std::max(0, std::min(n - 1, i)));
+        for (int i = 0; i < n; i++) {
+          int x = horizontal ? i : line, y = horizontal ? line : i;
+          tmp[(static_cast<size_t>(y) * p.w + x) * 4 + c] = sum / (2 * radius + 1);
+          sum += at(std::min(n - 1, i + radius + 1)) - at(std::max(0, i - radius));
+        }
+      }
+    }
+    buf.swap(tmp);
+  };
+  for (int k = 0; k < 3; k++) {
+    pass(true);
+    pass(false);
+  }
+  for (size_t i = 0; i < buf.size(); i++) d[i] = static_cast<unsigned char>(std::max(0, std::min(255, buf[i])));
+}
+
+ImageRef Images::get(const std::string &url, int w, int h, int radius, Fit fit, bool shade, int blur) {
   ImageRef ref;
   if (url.empty() || w <= 0 || h <= 0) {
     ref.failed = true;
     return ref;
   }
-  std::string key = std::to_string(w) + "x" + std::to_string(h) + "r" + std::to_string(radius) + (fit == Fit::Cover ? "c" : "f") +
-                    (shade ? "s" : "") + url;
+  std::string key = key_for(url, w, h, radius, fit, shade, blur);
   Entry &e = entries_[key];
   e.used_at = now_;
   e.shared->wanted.store(now_);
@@ -220,7 +262,7 @@ ImageRef Images::get(const std::string &url, int w, int h, int radius, Fit fit, 
       // fall through
     case Entry::Idle:
       e.state = Entry::Loading;
-      load(key, url, w, h, radius, fit, shade);
+      load(key, url, w, h, radius, fit, shade, blur);
       return ref;
     case Entry::Loading:
       return ref;
@@ -228,7 +270,7 @@ ImageRef Images::get(const std::string &url, int w, int h, int radius, Fit fit, 
   return ref;
 }
 
-void Images::load(const std::string &key, const std::string &url, int w, int h, int radius, Fit fit, bool shade) {
+void Images::load(const std::string &key, const std::string &url, int w, int h, int radius, Fit fit, bool shade, int blur) {
   std::shared_ptr<Shared> shared = entries_[key].shared;
   Api *api = api_;
   tasks_->run(
@@ -255,7 +297,13 @@ void Images::load(const std::string &key, const std::string &url, int w, int h, 
             result->failed = true;
             if (status != 404) logf("images", "image failed (status %d)", status);
           } else {
-            result->pixels = scale_image(decoded, sw, sh, w, h, fit, radius, shade);
+            if (blur > 0) {
+              // Blurred art carries no detail: a quarter-size texture is enough.
+              result->pixels = scale_image(decoded, sw, sh, std::max(1, w / 4), std::max(1, h / 4), fit, 0, false);
+              blur_image(result->pixels, std::max(1, blur / 4));
+            } else {
+              result->pixels = scale_image(decoded, sw, sh, w, h, fit, radius, shade);
+            }
             stbi_image_free(decoded);
           }
         }

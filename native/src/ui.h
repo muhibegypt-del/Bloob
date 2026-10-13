@@ -1,7 +1,7 @@
 #pragma once
-// Shared UI services and building blocks: the app context every screen uses,
-// the theme, text layout (ellipsis, wrapping), eased animation values and the
-// common controls (buttons, chips, focus rings, progress bars).
+// Shared UI services and components: the app context every screen uses, text
+// in the type scale, eased values, and the visual system's controls (buttons,
+// cards, pills, list rows, panels, focus frames).
 #include <SDL.h>
 
 #include <functional>
@@ -16,37 +16,17 @@
 #include "keys.h"
 #include "platform.h"
 #include "tasks.h"
-
-constexpr int W = 1920;
-constexpr int H = 1080;
-
-namespace theme {
-const Color bg = rgba(0x07080a);
-const Color text = rgba(0xf2f1ee);
-const Color text2 = rgba(0xc7cbd1);
-const Color text3 = rgba(0x8d929b);
-const Color text4 = rgba(0x6d737c);
-const Color panel = rgba(0x121418);
-const Color panel2 = rgba(0x1b1e23);
-const Color line = rgba(0x1b1d22);
-const Color accent = rgba(0xf2b84b);
-const Color ok = rgba(0x5fd38d);
-const Color warn = rgba(0xf2b84b);
-const Color warn_ink = rgba(0x8a5a00);
-const Color bad = rgba(0xff7a6b);
-const Color white = rgba(0xffffff);
-const Color ink = rgba(0x07080a);
-const Color ink2 = rgba(0x3a3f47);
-}  // namespace theme
+#include "theme.h"
 
 inline Color with_alpha(Color c, int a) { return {c.r, c.g, c.b, static_cast<Uint8>(std::max(0, std::min(255, a)))}; }
+inline Color fade(Color c, float alpha) { return with_alpha(c, static_cast<int>(c.a * std::max(0.0f, std::min(1.0f, alpha)))); }
 inline Color mix(Color a, Color b, float t) {
   auto m = [t](Uint8 x, Uint8 y) { return static_cast<Uint8>(x + (y - x) * t + 0.5f); };
   return {m(a.r, b.r), m(a.g, b.g), m(a.b, b.b), m(a.a, b.a)};
 }
 
 struct Fonts {
-  Font regular, semibold, bold, heavy;
+  Font regular, medium, semibold, bold;
 };
 
 class Screen;
@@ -54,10 +34,13 @@ class Screen;
 // Eases toward a target; exponential approach, frame-rate independent.
 struct Anim {
   float value = 0, target = 0;
-  float rate = 14.0f;  // higher is snappier
+  float rate = 14.0f;  // higher is snappier (theme:: *_rate)
+  Anim() = default;
+  explicit Anim(float r, float v = 0) : value(v), target(v), rate(r) {}
   void snap(float v) { value = target = v; }
   void to(float v) { target = v; }
-  bool step(double dt);  // returns true while moving
+  bool step(double dt);  // true while moving
+  bool settled() const { return value == target; }
 };
 
 struct Ctx {
@@ -86,44 +69,83 @@ struct Ctx {
     if (next_redraw == 0 || t < next_redraw) next_redraw = t;
   }
 
-  // Navigation (implemented by the app).
+  // Navigation (implemented by the app shell).
   std::function<void(std::unique_ptr<Screen>)> push;
   std::function<void()> pop;
   std::function<void(std::unique_ptr<Screen>)> replace;  // swap the top screen
   std::function<void(const std::string &)> toast;
   std::function<void()> quit;
-  std::function<void()> refresh_home;  // continue-watching changed
+  std::function<void()> focus_tabs;   // root screens hand focus up to the tab bar
+  std::function<void(bool)> show_tabs;  // root screens hide the bar when scrolled
 };
 
 Ctx &ctx();
 
-// ---- text
+// ---- text in the type scale
 
-// Fits `text` into `max_w`, ending with "…" when cut.
+Font &font_for(Text style);
+int size_for(Text style);
+int line_for(Text style);
+// Draws text with its top at `y`; `max_w` ellipsizes. Returns the width drawn.
+int text(Text style, const std::string &s, int x, int y, Color color, int max_w = 0);
+int text_right(Text style, const std::string &s, int right, int y, Color color);
+int text_center(Text style, const std::string &s, int cx, int y, Color color, int max_w = 0);
+int measure(Text style, const std::string &s);
+// Wrapped paragraph; returns the y below it.
+int paragraph(Text style, const std::string &s, int x, int y, Color color, int max_w, int max_lines);
 std::string ellipsize(Font &font, const std::string &text, int size, int max_w);
-// Wraps into at most `max_lines` lines no wider than `max_w`; the last is ellipsized.
 std::vector<std::string> wrap(Font &font, const std::string &text, int size, int max_w, int max_lines);
-int draw_text(Font &font, const std::string &text, int x, int y, int size, Color color, int max_w = 0);
-int draw_text_right(Font &font, const std::string &text, int right, int y, int size, Color color);
-int draw_text_center(Font &font, const std::string &text, int cx, int y, int size, Color color);
-// Draws a paragraph; returns the y below it.
-int draw_paragraph(Font &font, const std::string &text, int x, int y, int size, int line_h, Color color, int max_w, int max_lines);
 std::string upper(std::string s);
 
-// ---- controls
+// ---- components
 
-// A pill button. Returns its width. `icon`: an Icon value, kPlayIcon, or -1.
-constexpr int kPlayIcon = 1000;
-int button_width(const std::string &label, bool has_icon, int h = 76);
-int draw_button(int x, int y, const std::string &label, bool focused, bool primary = false, int icon = -1, int h = 76, float lift = 0,
-                float alpha = 1.0f);
-void draw_chip(int x, int y, const std::string &label, bool focused, Color bg = theme::panel, Color fg = theme::text2);
-int chip_width(const std::string &label);
-void draw_focus_ring(int x, int y, int w, int h, int radius, float strength = 1.0f);
-void draw_progress(int x, int y, int w, int h, double fraction, Color fill = theme::accent, Color track = with_alpha(theme::white, 50));
-void draw_badge(int x, int y, const std::string &label, Color color = theme::text4);  // outlined "4K"
+constexpr int kPlayIcon = 1000;  // the solid play triangle (not a line icon)
+
+struct ButtonSpec {
+  std::string label;
+  int icon = -1;          // Icon value, kPlayIcon, or -1
+  bool focused = false;
+  float lift = 1.0f;      // 0..1 focus animation progress
+  float alpha = 1.0f;
+  int h = theme::button_h;
+};
+int button_width(const ButtonSpec &b);
+int draw_button(int x, int y, const ButtonSpec &b);  // returns width
+
+// Artwork card: image (with missing-art fallback), optional title on the art,
+// progress, and the focus treatment (lift, shadow, frame).
+struct CardSpec {
+  std::string art, fallback_art, title;
+  int w = theme::card_w, h = theme::card_h, radius = theme::card_radius;
+  bool title_on_art = false;
+  double progress = -1;    // 0..1 to show a progress bar
+  float focus = 0;         // 0..1 focus animation (lift + shadow)
+  bool focused = false;    // frame appears at once
+  float alpha = 1.0f;
+};
+// Draws centred on the card's resting box (x, y, w, h); returns the drawn box.
+SDL_Rect draw_card(int x, int y, const CardSpec &c);
+void draw_missing_art(int x, int y, int w, int h, int radius, const std::string &title, float alpha = 1.0f);
+void draw_focus_frame(int x, int y, int w, int h, int radius, float alpha = 1.0f);
+
+// Pills: compact controls (player track buttons, season tabs, filters).
+int pill_width(const std::string &label, int icon = -1);
+int draw_pill(int x, int y, const std::string &label, bool focused, bool selected = false, int icon = -1, float alpha = 1.0f);
+
+// List row (menus, sources): white when focused.
+void draw_row_focus(int x, int y, int w, int h);
+
+// Panels over blurred art.
+void draw_panel(int x, int y, int w, int h, float alpha = 1.0f);
+
+void draw_progress(int x, int y, int w, int h, double fraction, Color fill = theme::accent,
+                   Color track = with_alpha(theme::focus, 50));
+void draw_badge(int x, int y, const std::string &label, Color color = theme::tertiary);  // outlined "4K"
 int badge_width(const std::string &label);
-void draw_spinner(int cx, int cy, int size, Color color = theme::text2);
+// Spinner that only appears after `since` + spinner delay (quick loads show nothing).
+void draw_spinner(int cx, int cy, int size, Color color = theme::secondary, long long since = 0);
+// "OK  Play" hint: a key cap and its meaning.
+int draw_hint(int x, int y, const std::string &key, const std::string &label);
 
 // ---- formatting
 

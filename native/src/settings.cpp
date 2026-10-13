@@ -9,7 +9,6 @@
 
 namespace {
 
-constexpr int CL = 212;
 const char *kLanguages[] = {"English", "French", "Spanish", "German", "Italian", "Portuguese", "Hindi", "Urdu",
                             "Arabic", "Turkish", "Japanese", "Korean"};
 constexpr int kLanguageCount = sizeof kLanguages / sizeof kLanguages[0];
@@ -19,7 +18,7 @@ class SettingsScreen : public Screen {
   SettingsScreen() { refresh(); }
   const char *name() const override { return "settings"; }
   bool root() const override { return true; }
-  void set_rail_focus(bool rail) override { rail_ = rail; }
+  void set_tabs_focus(bool tabs) override { tabs_ = tabs; }
   void shown() override { refresh(); }
 
   void refresh() {
@@ -37,8 +36,12 @@ class SettingsScreen : public Screen {
       // Where the pairing could not be saved, and why (no key material).
       attempts_.clear();
       const Json &list = r.json["attempts"];
-      for (size_t i = 0; i < list.size(); i++)
-        attempts_ += (attempts_.empty() ? "" : ", ") + list[i]["location"].as_string() + " " + list[i]["result"].as_string();
+      for (size_t i = 0; i < list.size(); i++) {
+        // "none" and "empty" just mean nothing was saved there yet; only real errors are worth showing.
+        std::string result = list[i]["result"].as_string();
+        if (result == "none" || result == "empty") continue;
+        attempts_ += (attempts_.empty() ? "" : ", ") + list[i]["location"].as_string() + " " + result;
+      }
       (void)storage;
     }, alive_);
   }
@@ -46,11 +49,14 @@ class SettingsScreen : public Screen {
   bool key(Key key, bool repeat) override {
     if (pairing_.active()) return pairing_.key(key);
     switch (key) {
-      case Key::Up: row_ = std::max(0, row_ - 1); return true;
+      case Key::Up:
+        if (row_ == 0) return false;  // to the tab bar
+        row_--;
+        return true;
       case Key::Down: row_ = std::min(2, row_ + 1); return true;
       case Key::Left:
-        if (row_ == 1) { cycle(-1); return true; }
-        return false;
+        if (row_ == 1) cycle(-1);
+        return true;
       case Key::Right:
         if (row_ == 1) cycle(1);
         return true;
@@ -72,43 +78,50 @@ class SettingsScreen : public Screen {
     ctx().save_settings();
   }
 
-  void update(double) override { pairing_.update(); }
+  void update(double) override {
+    ctx().show_tabs(true);
+    pairing_.update();
+  }
 
   void draw() override {
     Ctx &c = ctx();
-    c.gfx.clear(theme::bg);
-    c.fonts.heavy.draw("Settings", CL, 80, 56, theme::text);
+    using namespace theme;
+    c.gfx.clear(ground);
+    int x = margin, w = 1180;
+    text(Text::Title1, "Settings", x, 170, primary);
     struct Row {
       std::string title, value, action;
     };
     std::vector<Row> rows = {
         {"AllDebrid", account_.empty() ? "Checking\xE2\x80\xA6" : account_, ctx().paired ? "Reconnect" : "Connect"},
-        {"Preferred audio language", ctx().language, "\xE2\x97\x80  \xE2\x96\xB6"},
+        {"Preferred audio language", ctx().language, ""},
         {"Diagnostics", "Display, remote keys and the recent log", "Open"},
     };
-    int y = 200;
+    int y = 270;
     for (int i = 0; i < 3; i++) {
-      bool f = row_ == i && !rail_ && !pairing_.active();
-      c.gfx.fill_round(CL, y, 1100, 120, 24, f ? theme::white : theme::panel);
-      c.fonts.bold.draw(rows[static_cast<size_t>(i)].title, CL + 40, y + 26, 28, f ? theme::ink : theme::text);
-      draw_text(c.fonts.regular, rows[static_cast<size_t>(i)].value, CL + 40, y + 70, 22, f ? theme::ink2 : theme::text2, 760);
+      bool f = row_ == i && !tabs_ && !pairing_.active();
+      if (f) draw_row_focus(x, y, w, 120);
+      else c.gfx.fill_round(x, y, w, 120, 18, raised);
+      const Row &r = rows[static_cast<size_t>(i)];
+      text(Text::Headline, r.title, x + 40, y + 24, f ? ink : primary);
+      text(Text::Callout, r.value, x + 40, y + 66, f ? ink2 : secondary, 800);
       if (i == 1) {
-        c.icons.draw(Icon::ChevronLeft, CL + 1100 - 160, y + 42, 36, f ? theme::ink : theme::text3);
-        c.icons.draw(Icon::ChevronRight, CL + 1100 - 76, y + 42, 36, f ? theme::ink : theme::text3);
+        c.icons.draw(Icon::ChevronLeft, x + w - 150, y + 42, 36, f ? ink : tertiary);
+        c.icons.draw(Icon::ChevronRight, x + w - 76, y + 42, 36, f ? ink : tertiary);
       } else {
-        draw_text_right(c.fonts.bold, rows[static_cast<size_t>(i)].action, CL + 1100 - 40, y + 46, 24, f ? theme::ink : theme::text3);
+        text_right(Text::Headline, r.action, x + w - 40, y + 42, f ? ink : tertiary);
       }
       y += 140;
     }
-    c.fonts.regular.draw("The preferred language decides which sources are recommended first.", CL, y + 10, 21, theme::text3);
-    if (!ctx().paired && !attempts_.empty()) c.fonts.regular.draw("Storage: " + attempts_, CL, y + 46, 18, theme::text4);
-    c.fonts.regular.draw("Bloob 0.4 \xC2\xB7 Buna N2 \xC2\xB7 " + ctx().tv_model, CL, H - 70, 20, theme::text4);
+    text(Text::Caption, "The preferred language decides which versions are recommended first.", x, y + 8, tertiary);
+    if (!ctx().paired && !attempts_.empty()) text(Text::Footnote, "Where the pairing could not be saved: " + attempts_, x, y + 44, tertiary, w);
+    text(Text::Footnote, "Bloob 1.1 \xC2\xB7 " + ctx().tv_model, x, H - 80, tertiary);
     pairing_.draw();
   }
 
  private:
   int row_ = 0;
-  bool rail_ = false;
+  bool tabs_ = false;
   std::string account_, attempts_;
   Pairing pairing_;
 };
@@ -122,8 +135,8 @@ class DiagnosticsScreen : public Screen {
   }
   void draw() override {
     Ctx &c = ctx();
-    c.gfx.clear(theme::bg);
-    c.fonts.heavy.draw("Diagnostics", 96, 72, 52, theme::text);
+    c.gfx.clear(theme::ground);
+    text(Text::Title1, "Diagnostics", 96, 72, theme::primary);
     SDL_DisplayMode mode{};
     SDL_GetCurrentDisplayMode(0, &mode);
     SDL_RendererInfo info{};
@@ -151,17 +164,17 @@ class DiagnosticsScreen : public Screen {
     };
     int y = 170;
     for (auto &row : rows) {
-      c.fonts.regular.draw(row.first, 96, y, 24, theme::text3);
-      draw_text(c.fonts.semibold, row.second, 520, y, 24, theme::text, W - 620);
+      text(Text::Callout, row.first, 96, y, theme::tertiary);
+      text(Text::Callout, row.second, 520, y, theme::primary, W - 620);
       y += 44;
     }
-    c.fonts.semibold.draw("Recent log", 96, y + 16, 24, theme::text2);
+    text(Text::Headline, "Recent log", 96, y + 16, theme::secondary);
     y += 60;
     for (auto &line : log_tail(8)) {
-      draw_text(c.fonts.regular, line, 96, y, 18, theme::text3, W - 192);
+      text(Text::Footnote, line, 96, y, theme::tertiary, W - 192);
       y += 28;
     }
-    c.fonts.regular.draw("Press any remote key to see its code  \xC2\xB7  Back returns", 96, 1024, 22, theme::text3);
+    text(Text::Caption, "Press any remote key to see its code  \xC2\xB7  Back returns", 96, 1024, theme::tertiary);
     c.redraw_at(c.now + 1000);
   }
 };

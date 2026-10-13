@@ -3,6 +3,7 @@
 // It plays a URI through the TV's own pipeline, the same hardware path the
 // web engine uses, and reports source/track/time events.
 #include <functional>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -29,7 +30,10 @@ struct MediaInfo {
 
 struct MediaEvent {
   enum Kind { Loaded, Playing, Paused, BufferingStart, BufferingEnd, SeekDone, Time, SourceInfo, VideoInfo,
-              TrackSelected, EndOfStream, Error } kind;
+              TrackSelected, EndOfStream, Error,
+              // The pipeline is gone (the TV released it, or a command was refused
+              // because the media ID no longer exists). The player reloads.
+              Lost } kind;
   long long time_ms = 0;
   std::string text;  // error text or track type
   int code = 0;      // error code or track index
@@ -48,6 +52,9 @@ class UmsPlayer {
   void select_track(const std::string &type, int index);
   void set_subtitles(bool enabled);
   void unload();
+  // uMediaServer's resource policy follows the app's foreground state.
+  void notify_foreground();
+  void notify_background();
 
   const std::string &media_id() const { return media_id_; }
   const MediaInfo &info() const { return info_; }
@@ -62,4 +69,6 @@ class UmsPlayer {
   int subscription_ = 0;
   int generation_ = 0;  // bumps on unload so late load replies are discarded
   bool logged_keys_ = false;
+  bool lost_ = false;
+  std::shared_ptr<int> alive_ = std::make_shared<int>(0);  // guards late luna replies
 };

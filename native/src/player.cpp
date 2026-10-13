@@ -1,7 +1,9 @@
 // Player: LG's media pipeline in the hardware video plane under a transparent
-// window, driven by the native Buna session. Minimal chrome: a timeline with a
-// seek preview, a short control row, audio and subtitle menus listing the
-// file's real tracks, resume, progress saving and "up next" for series.
+// window, driven by the native Buna session. Quiet while watching; any key
+// reveals the title, an accurate timeline and a short row of controls (play,
+// audio, subtitles, start over, next episode). Track lists come from the file
+// itself. If the TV takes the pipeline away (system UI, resource conflict),
+// playback reloads where it was.
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -15,9 +17,13 @@
 
 namespace {
 
-constexpr long long kHudTimeoutMs = 6000;
+using namespace theme;
+
 constexpr long long kSaveEveryMs = 15000;
 constexpr long long kUpNextMs = 10000;
+constexpr long long kBufferingDelayMs = 500;
+constexpr int kMaxReloads = 3;
+constexpr long long kReloadWindowMs = 60000;
 
 std::string language_name(const std::string &code) {
   static const std::pair<const char *, const char *> names[] = {
@@ -45,14 +51,23 @@ std::string codec_name(std::string codec) {
   if (codec == "EAC3" || codec == "E-AC-3") return "Dolby Digital Plus";
   if (codec == "AC3" || codec == "AC-3") return "Dolby Digital";
   if (codec.find("TRUEHD") != std::string::npos) return "Dolby TrueHD";
-  if (codec.find("DTS") != std::string::npos) return codec;
   return codec;
 }
 
+std::string channels_name(int channels) {
+  return channels >= 8 ? "7.1" : channels == 6 ? "5.1" : channels == 2 ? "Stereo" : channels == 1 ? "Mono"
+         : channels ? std::to_string(channels) + " ch" : "";
+}
+
+// "English · Dolby Digital Plus 5.1"
 std::string audio_label(const MediaTrack &t) {
-  std::string ch = t.channels >= 8 ? "7.1" : t.channels == 6 ? "5.1" : t.channels == 2 ? "Stereo" : t.channels == 1 ? "Mono"
-                   : t.channels ? std::to_string(t.channels) + " ch" : "";
-  return join({language_name(t.language), join({codec_name(t.codec), ch}, " ")});
+  return join({language_name(t.language), join({codec_name(t.codec), channels_name(t.channels)}, " ")});
+}
+
+std::string subtitle_label(const MediaTrack &t) {
+  std::string kind = upper(t.codec);
+  if (kind == "TEXT" || kind == "SUBTITLE") kind.clear();  // generic: says nothing
+  return join({language_name(t.language), kind});
 }
 
 class UmsPort : public PlayerPort {
@@ -68,51 +83,84 @@ class UmsPort : public PlayerPort {
   UmsPlayer &player_;
 };
 
-enum class Ctl { Back10, Toggle, Fwd10, StartOver, Next, Audio, Subtitles };
+enum class Ctl { Toggle, Audio, Subtitles, StartOver, Next };
 
 class PlayerScreen : public Screen {
  public:
   PlayerScreen(const PlayRequest &req, const std::string &url, const std::string &source, const std::string &load_type)
       : req_(req), url_(url), source_(source), load_type_(load_type) {
+    start_at_ = req.resume_ms;
     open();
   }
   ~PlayerScreen() override { close(); }
 
   const char *name() const override { return "player"; }
-  bool over_video() const override { return session_.started() && session_.phase() != Phase::Error; }
+  bool over_video() const override { return true; }
 
   // ---------------------------------------------------------------- lifecycle
 
   void open() {
     Ctx &c = ctx();
-    menu_ = Menu::None;
+    panel_ = Panel::None;
     zone_ = Zone::Timeline;
-    control_ = 1;
     error_focus_ = 0;
-    resumed_ = false;
+    resume_done_ = false;
     up_next_ = false;
+    opened_at_ = c.now;
     show_hud();
     session_.open(&port_, c.now);
-    if (c.webos.create_exported_window) {
+    if (window_id_.empty() && c.webos.create_exported_window) {
       const char *created = c.webos.create_exported_window(0);
       window_id_ = created ? created : "";
+      logf("player", "exported video window: %s", window_id_.empty() ? "(none)" : window_id_.c_str());
     }
-    logf("player", "exported video window: %s", window_id_.empty() ? "(none)" : window_id_.c_str());
     place_video(0, 0);
     opened_ = true;
     ums_.load(url_, c.app_id, window_id_, load_type_, [this](const MediaEvent &event) { on_media(event); });
   }
 
-  void close() {
+  // Release the pipeline. `keep_window` when reopening straight away.
+  void close(bool keep_window = false) {
     if (!opened_) return;
     save_progress();
     ums_.unload();
     session_.close();
-    Ctx &c = ctx();
-    if (!window_id_.empty() && c.webos.destroy_exported_window) c.webos.destroy_exported_window(window_id_.c_str());
-    window_id_.clear();
     opened_ = false;
-    if (c.refresh_home) c.refresh_home();
+    Ctx &c = ctx();
+    if (!keep_window && !window_id_.empty() && c.webos.destroy_exported_window) {
+      c.webos.destroy_exported_window(window_id_.c_str());
+      window_id_.clear();
+    }
+  }
+
+  // Where the viewer is, for saving and reopening. Until a reopened pipeline is
+  // playing again, or while a seek is unconfirmed, the target is the truth;
+  // the media clock still reads zero or the old position.
+  long long viewer_position() const {
+    if (!session_.started() || !resume_done_) return start_at_;
+    if (auto pending = session_.pending_ms()) return *pending;
+    return session_.position_ms(ctx().now);
+  }
+
+  // Reopen at the last known position: after the TV dropped the pipeline, or Try again.
+  void reload(const char *why) {
+    Ctx &c = ctx();
+    if (c.now - reload_window_start_ > kReloadWindowMs) {
+      reload_window_start_ = c.now;
+      reloads_ = 0;
+    }
+    if (++reloads_ > kMaxReloads) {
+      logf("player", "giving up after %d reloads", reloads_ - 1);
+      failure_ = "Playback keeps stopping. The link may have expired; try choosing the source again.";
+      return;
+    }
+    long long at = viewer_position();
+    logf("player", "reloading at %lld ms (%s)", at, why);
+    start_at_ = at;
+    reconnecting_ = true;
+    lost_ = false;
+    close(true);
+    open();
   }
 
   void exit(bool another = false) {
@@ -121,35 +169,48 @@ class PlayerScreen : public Screen {
     ctx().pop();
   }
 
-  void suspend() override {
+  void background() override {
+    in_background_ = true;
+    if (!session_.started()) return;
     if (session_.intent_play()) session_.pause();
     save_progress();
+    ums_.notify_background();
   }
 
-  void hidden() override { suspend(); }
+  void foreground() override {
+    if (!in_background_) return;
+    in_background_ = false;
+    ums_.notify_foreground();
+    if (lost_) reload("pipeline released while away");
+  }
 
   void on_media(const MediaEvent &event) {
     Ctx &c = ctx();
     long long t = c.now;
+    if (event.kind == MediaEvent::Lost) {
+      logf("player", "pipeline lost: %s", event.text.c_str());
+      lost_ = true;
+      if (!in_background_) reload(event.text.c_str());
+      return;
+    }
     bool had_frame = session_.first_frame_ms() >= 0;
     auto pending = session_.pending_ms();
     long long seek_started = session_.seek_started_ms();
     session_.on_event(event, ums_.info(), t);
     if (!had_frame && session_.first_frame_ms() >= 0) logf("player", "first frame after %lld ms", session_.first_frame_ms());
-    if (pending && !session_.pending_ms()) {
+    if (pending && !session_.pending_ms())
       logf("player", "seek to %lld ms landed at %lld ms after %lld ms", *pending, session_.position_ms(t), t - seek_started);
-    }
-    if (event.kind == MediaEvent::VideoInfo || event.kind == MediaEvent::SourceInfo || event.kind == MediaEvent::Loaded) {
+    if (event.kind == MediaEvent::VideoInfo || event.kind == MediaEvent::SourceInfo || event.kind == MediaEvent::Loaded)
       place_video(ums_.info().width, ums_.info().height);
-    }
     // Continue where the viewer left off, once the pipeline is playing.
     if (event.kind == MediaEvent::Playing && !resume_done_) {
       resume_done_ = true;
+      reconnecting_ = false;
       long long d = session_.duration_ms();
-      if (req_.resume_ms >= 30000 && (d <= 0 || req_.resume_ms < d * 95 / 100)) {
-        session_.seek_to(req_.resume_ms, t);
-        resumed_ = true;
-        logf("player", "resuming at %lld ms", req_.resume_ms);
+      if (start_at_ >= 30000 && (d <= 0 || start_at_ < d * 95 / 100)) {
+        session_.seek_to(start_at_, t);
+        resumed_ = req_.resume_ms > 0;
+        logf("player", "continuing at %lld ms", start_at_);
       }
     }
     if (event.kind == MediaEvent::Paused) save_progress();
@@ -174,9 +235,9 @@ class PlayerScreen : public Screen {
   }
 
   void save_progress(bool finished = false) {
-    if (!session_.started()) return;
+    if (!session_.started() || req_.video_id == "launch") return;
     long long duration = session_.duration_ms();
-    long long position = finished ? duration : session_.position_ms(ctx().now);
+    long long position = finished ? duration : viewer_position();
     if (duration <= 0 || position <= 0) return;
     std::string body = "{\"videoId\":" + Json::quote(req_.video_id) + ",\"id\":" + Json::quote(req_.item.id) +
                        ",\"type\":" + Json::quote(req_.item.type) + ",\"name\":" + Json::quote(req_.item.name) +
@@ -200,80 +261,97 @@ class PlayerScreen : public Screen {
     next.season = req_.next->season;
     next.episode = req_.next->episode;
     next.episode_title = req_.next->title;
-    // The episode after that is unknown here; Details works it out next time.
     close();
     ctx().replace(make_sources(next, true));
   }
 
-  // ---------------------------------------------------------------- HUD
+  // ---------------------------------------------------------------- controls
 
   enum class Zone { Timeline, Controls };
-  enum class Menu { None, Audio, Subtitles };
+  enum class Panel { None, Audio, Subtitles };
 
   void show_hud() {
     hud_ = true;
-    hud_until_ = ctx().now + kHudTimeoutMs;
+    hud_until_ = ctx().now + hud_timeout_ms;
   }
 
   bool hud_pinned() const {
     Phase p = session_.phase();
-    return menu_ != Menu::None || p == Phase::Paused || p == Phase::Ended || p == Phase::Loading || p == Phase::Error ||
-           session_.preview_ms().has_value() || session_.pending_ms().has_value();
+    return panel_ != Panel::None || p == Phase::Paused || p == Phase::Ended || p == Phase::Loading || p == Phase::Error ||
+           session_.preview_ms().has_value() || session_.pending_ms().has_value() || !failure_.empty();
   }
 
   std::vector<Ctl> controls() const {
-    std::vector<Ctl> list = {Ctl::Back10, Ctl::Toggle, Ctl::Fwd10};
+    std::vector<Ctl> list = {Ctl::Toggle, Ctl::Audio, Ctl::Subtitles};
     if (resumed_) list.push_back(Ctl::StartOver);
     if (req_.next) list.push_back(Ctl::Next);
-    list.push_back(Ctl::Audio);
-    list.push_back(Ctl::Subtitles);
     return list;
+  }
+
+  std::string control_label(Ctl ctl) const {
+    const MediaInfo &info = ums_.info();
+    switch (ctl) {
+      case Ctl::Audio: {
+        for (auto &a : info.audio)
+          if (a.selected) return "Audio \xC2\xB7 " + join({language_name(a.language), channels_name(a.channels)}, " ");
+        return "Audio";
+      }
+      case Ctl::Subtitles: {
+        int i = session_.subtitle_index();
+        if (i >= 0 && i < static_cast<int>(info.text.size())) return "Subtitles \xC2\xB7 " + language_name(info.text[static_cast<size_t>(i)].language);
+        return "Subtitles \xC2\xB7 Off";
+      }
+      case Ctl::StartOver: return "Start over";
+      case Ctl::Next: return "Next episode";
+      case Ctl::Toggle: return "";
+    }
+    return "";
   }
 
   void run_control(Ctl ctl) {
     long long t = ctx().now;
     switch (ctl) {
-      case Ctl::Back10: session_.nudge(-1, t); break;
       case Ctl::Toggle: session_.toggle(); break;
-      case Ctl::Fwd10: session_.nudge(1, t); break;
+      case Ctl::Audio: open_panel(Panel::Audio); break;
+      case Ctl::Subtitles: open_panel(Panel::Subtitles); break;
       case Ctl::StartOver:
         session_.seek_to(0, t);
         resumed_ = false;
-        control_ = 1;
+        control_ = 0;
         break;
       case Ctl::Next: play_next(); return;
-      case Ctl::Audio: menu_ = Menu::Audio; menu_index_ = selected_index(Menu::Audio); break;
-      case Ctl::Subtitles: menu_ = Menu::Subtitles; menu_index_ = selected_index(Menu::Subtitles); break;
     }
     show_hud();
   }
 
-  int selected_index(Menu which) const {
+  void open_panel(Panel p) {
+    panel_ = p;
     const MediaInfo &info = ums_.info();
-    if (which == Menu::Audio) {
-      for (size_t i = 0; i < info.audio.size(); i++) if (info.audio[i].selected) return static_cast<int>(i);
-      return 0;
+    if (p == Panel::Audio) {
+      panel_index_ = 0;
+      for (size_t i = 0; i < info.audio.size(); i++) if (info.audio[i].selected) panel_index_ = static_cast<int>(i);
+    } else {
+      panel_index_ = session_.subtitle_index() + 1;  // row 0 = Off
     }
-    return session_.subtitle_index() + 1;  // row 0 = Off
   }
 
-  int menu_rows() const {
+  int panel_rows() const {
     const MediaInfo &info = ums_.info();
-    return menu_ == Menu::Audio ? static_cast<int>(info.audio.size()) : static_cast<int>(info.text.size()) + 1;
+    return panel_ == Panel::Audio ? static_cast<int>(info.audio.size()) : static_cast<int>(info.text.size()) + 1;
   }
 
   // ---------------------------------------------------------------- input
 
   bool key(Key key, bool repeat) override {
     long long t = ctx().now;
-    Phase phase = session_.phase();
-    if (phase == Phase::Error) {
+    if (session_.phase() == Phase::Error || !failure_.empty()) {
       if (key == Key::Left) error_focus_ = std::max(0, error_focus_ - 1);
       if (key == Key::Right) error_focus_ = std::min(2, error_focus_ + 1);
       if (key == Key::Ok && !repeat) {
         if (error_focus_ == 0) {
-          close();
-          open();
+          failure_.clear();
+          reloads_ = 0;
+          reload("try again");
         } else {
           exit(error_focus_ == 1);
         }
@@ -286,16 +364,16 @@ class PlayerScreen : public Screen {
       else if (key == Key::Back) up_next_ = false;
       return true;
     }
-    if (menu_ != Menu::None) {
-      int rows = menu_rows();
-      if (key == Key::Up) menu_index_ = std::max(0, menu_index_ - 1);
-      if (key == Key::Down) menu_index_ = std::min(std::max(0, rows - 1), menu_index_ + 1);
+    if (panel_ != Panel::None) {
+      int rows = panel_rows();
+      if (key == Key::Up) panel_index_ = std::max(0, panel_index_ - 1);
+      if (key == Key::Down) panel_index_ = std::min(std::max(0, rows - 1), panel_index_ + 1);
       if (key == Key::Ok && rows > 0 && !repeat) {
-        if (menu_ == Menu::Audio) session_.select_audio(menu_index_);
-        else session_.select_text(menu_index_ - 1);
-        menu_ = Menu::None;
+        if (panel_ == Panel::Audio) session_.select_audio(panel_index_);
+        else session_.select_text(panel_index_ - 1);
+        panel_ = Panel::None;
       }
-      if (key == Key::Back || key == Key::Left || key == Key::Right) menu_ = Menu::None;
+      if (key == Key::Back || key == Key::Left) panel_ = Panel::None;
       show_hud();
       return true;
     }
@@ -310,17 +388,19 @@ class PlayerScreen : public Screen {
     }
     if (key == Key::Back) {
       if (session_.cancel_preview()) { show_hud(); return true; }
-      if (hud_ && session_.phase() == Phase::Playing) { hud_ = false; return true; }
+      if (hud_ && session_.phase() == Phase::Playing && zone_ == Zone::Timeline) { hud_ = false; return true; }
+      if (hud_ && zone_ == Zone::Controls) { zone_ = Zone::Timeline; show_hud(); return true; }
       exit();
       return true;
     }
     auto list = controls();
     int count = static_cast<int>(list.size());
     if (!hud_) {
+      // First press only reveals the controls, except the obvious ones.
       if (key == Key::Left || key == Key::Right) session_.nudge(key == Key::Right ? 1 : -1, t);
-      if (key == Key::Ok && !repeat) { session_.toggle(); zone_ = Zone::Controls; control_ = 1; }
-      if (key == Key::Down) { zone_ = Zone::Controls; control_ = 1; }
-      if (key == Key::Up) zone_ = Zone::Timeline;
+      if (key == Key::Ok && !repeat) session_.toggle();
+      zone_ = key == Key::Down ? Zone::Controls : Zone::Timeline;
+      control_ = 0;
       show_hud();
       return true;
     }
@@ -328,7 +408,7 @@ class PlayerScreen : public Screen {
     if (zone_ == Zone::Timeline) {
       if (key == Key::Left || key == Key::Right) session_.nudge(key == Key::Right ? 1 : -1, t);
       if (key == Key::Ok && !repeat) { if (!session_.commit_preview(t)) session_.toggle(); }
-      if (key == Key::Down) { zone_ = Zone::Controls; control_ = std::min(1, count - 1); }
+      if (key == Key::Down) { zone_ = Zone::Controls; control_ = std::min(control_, count - 1); }
       return true;
     }
     if (key == Key::Up) zone_ = Zone::Timeline;
@@ -351,6 +431,9 @@ class PlayerScreen : public Screen {
       return;
     }
     bool show = hud_ || hud_pinned();
+    hud_anim_.to(show ? 1.0f : 0.0f);
+    panel_anim_.to(panel_ != Panel::None ? 1.0f : 0.0f);
+    if (hud_anim_.step(dt) | panel_anim_.step(dt)) c.animating = true;
     // Redraw for a visible moving clock (4×/s), the seek preview and countdowns.
     if (session_.preview_ms() || up_next_ || session_.phase() == Phase::Buffering || !session_.started()) c.animating = true;
     else if (show) c.redraw_at((t / 250 + 1) * 250);
@@ -359,215 +442,204 @@ class PlayerScreen : public Screen {
 
   void draw() override {
     Ctx &c = ctx();
-    long long t = c.now;
     Phase phase = session_.phase();
-
-    if (!session_.started() && phase != Phase::Error) {
+    if ((!session_.started() || reconnecting_) && phase != Phase::Error && failure_.empty()) {
       draw_startup();
       return;
     }
     // Transparent: the hardware video plane under the window shows through.
     c.gfx.clear({0, 0, 0, 0});
+    if (phase == Phase::Error || !failure_.empty()) return draw_error();
+    if (up_next_) return draw_up_next();
 
-    if (phase == Phase::Error) {
-      draw_error();
-      return;
-    }
-    if (up_next_) {
-      draw_up_next();
-      return;
-    }
-    bool show = hud_ || hud_pinned();
-    if (!show) {
-      if (phase == Phase::Buffering) {
-        c.gfx.fill_circle(W / 2, H / 2, 56, with_alpha(theme::bg, 150));
-        draw_spinner(W / 2, H / 2, 56, theme::white);
+    float a = hud_anim_.value;
+    if (phase == Phase::Buffering && session_.started()) {
+      long long since = session_.stalled_since();
+      if (c.now - since > kBufferingDelayMs) {
+        c.gfx.fill_circle(W / 2, H / 2, 54, with_alpha(ground, 150));
+        draw_spinner(W / 2, H / 2, 52, primary);
+      } else {
+        c.redraw_at(since + kBufferingDelayMs);
       }
-      return;
+    }
+    if (a <= 0.01f) return;
+    draw_hud(a, phase);
+    if (panel_anim_.value > 0.01f) draw_panel_tracks(panel_anim_.value);
+  }
+
+  std::vector<std::string> badges() const {
+    const MediaInfo &info = ums_.info();
+    std::vector<std::string> out;
+    if (info.height >= 2000) out.push_back("4K");
+    else if (info.height >= 1000) out.push_back("HD");
+    std::string hdr = upper(info.hdr);
+    if (hdr.find("DOLBY") != std::string::npos || hdr == "DV") out.push_back("Dolby Vision");
+    else if (!hdr.empty() && hdr != "NONE" && hdr != "SDR") out.push_back(hdr.find("HLG") != std::string::npos ? "HLG" : "HDR");
+    for (auto &t : info.audio)
+      if (t.selected) {
+        std::string codec = upper(t.codec);
+        if (codec.find("TRUEHD") != std::string::npos || codec.find("ATMOS") != std::string::npos) out.push_back("Dolby TrueHD");
+        else if (codec.find("EAC3") != std::string::npos) out.push_back("Dolby Digital+");
+        if (t.channels >= 6) out.push_back(channels_name(t.channels));
+      }
+    return out;
+  }
+
+  void draw_hud(float a, Phase phase) {
+    Ctx &c = ctx();
+    long long t = c.now;
+    c.gfx.gradient_v(0, H - 440, W, 440, rgba(0x000000), 0, static_cast<Uint8>(225 * a));
+    c.gfx.gradient_v(0, 0, W, 160, rgba(0x000000), static_cast<Uint8>(120 * a), 0);
+
+    // Title and context, bottom-left; quiet stream badges on the right.
+    std::string title = req_.item.series() ? req_.episode_title.empty() ? req_.item.name : req_.episode_title : req_.item.name;
+    std::string sub = req_.item.series() ? join({req_.item.name, episode_code(req_.season, req_.episode)}) : join({req_.item.year, req_.item.genres.empty() ? "" : req_.item.genres[0]});
+    text(Text::Title2, title, margin, H - 346, fade(primary, a), 1100);
+    text(Text::Callout, sub, margin, H - 296, fade(primary, a * 0.8f), 1100);
+    int bx = W - margin;
+    auto list = badges();
+    for (auto it = list.rbegin(); it != list.rend(); ++it) {
+      bx -= badge_width(*it);
+      draw_badge(bx, H - 296, *it, fade(secondary, a));
+      bx -= 10;
     }
 
-    c.gfx.gradient_v(0, 0, W, 260, rgba(0x000000), 190, 0);
-    c.gfx.gradient_v(0, H - 420, W, 420, rgba(0x000000), 0, 215);
-    draw_text(c.fonts.heavy, req_.item.name, 96, 60, 40, theme::text, 1300);
-    std::string sub = req_.label();
-    std::string stream = stream_line();
-    draw_text(c.fonts.regular, join({sub, stream}), 96, 116, 22, theme::text2, 1500);
-
-    long long display = session_.display_ms(t);
-    long long duration = session_.duration_ms();
-    long long position = session_.position_ms(t);
-    std::string status = phase == Phase::Seeking ? "Seeking\xE2\x80\xA6" : phase == Phase::Buffering ? "Buffering\xE2\x80\xA6"
-                         : phase == Phase::Ended ? "Finished" : phase == Phase::Paused ? "Paused" : "";
-    if (!status.empty()) {
-      int w = c.fonts.semibold.measure(status, 22) + 40;
-      c.gfx.fill_round(96, H - 312, w, 46, 23, with_alpha(theme::white, 40));
-      c.fonts.semibold.draw(status, 116, H - 301, 22, theme::text);
-    }
-
-    int tx = 96, tw = W - 192, ty = H - 214;
-    bool timeline_focus = zone_ == Zone::Timeline;
-    int th = timeline_focus ? 8 : 6;
-    c.gfx.fill_round(tx, ty - th / 2, tw, th, th / 2, with_alpha(theme::white, 60));
+    // Timeline.
+    long long display = session_.display_ms(t), duration = session_.duration_ms(), position = session_.position_ms(t);
+    int tx = margin, tw = W - 2 * margin, ty = H - 214;
+    bool timeline = zone_ == Zone::Timeline && panel_ == Panel::None;
+    int th = timeline ? 8 : 6;
+    c.gfx.fill_round(tx, ty - th / 2, tw, th, th / 2, fade(with_alpha(focus, 70), a));
     double frac = duration > 0 ? std::min(1.0, std::max(0.0, static_cast<double>(display) / duration)) : 0;
-    c.gfx.fill_round(tx, ty - th / 2, std::max(th, static_cast<int>(tw * frac)), th, th / 2, theme::white);
-    if (timeline_focus || session_.preview_ms() || session_.pending_ms()) c.gfx.fill_circle(tx + static_cast<int>(tw * frac), ty, 12, theme::white);
+    c.gfx.fill_round(tx, ty - th / 2, std::max(th, static_cast<int>(tw * frac)), th, th / 2, fade(focus, a));
+    int kx = tx + static_cast<int>(tw * frac);
+    if (timeline || session_.preview_ms() || session_.pending_ms()) c.gfx.fill_circle(kx, ty, timeline ? 13 : 10, fade(focus, a));
     if (session_.preview_ms() || session_.pending_ms()) {
       long long delta = display - session_.seek_origin_ms(position);
       long long s = (delta < 0 ? -delta : delta) / 1000;
-      std::string d = std::string(delta < 0 ? "\xE2\x88\x92" : "+") + (s < 60 ? std::to_string(s) + "s" : clock_text(s * 1000));
-      std::string label = clock_text(display) + "   " + d;
-      int lw = c.fonts.bold.measure(label, 28) + 40;
-      int lx = std::max(tx, std::min(tx + tw - lw, tx + static_cast<int>(tw * frac) - lw / 2));
-      c.gfx.fill_round(lx, ty - 92, lw, 60, 14, theme::white);
-      c.fonts.bold.draw(label, lx + 20, ty - 82, 28, theme::ink);
+      std::string d = std::string(delta < 0 ? "\xE2\x88\x92" : "+") + (s < 60 ? std::to_string(s) + " s" : clock_text(s * 1000));
+      std::string label = clock_text(display);
+      int lw = std::max(measure(Text::Headline, label), measure(Text::Caption, d)) + 44;
+      int lx = std::max(tx, std::min(tx + tw - lw, kx - lw / 2));
+      c.gfx.shadow(lx, ty - 112, lw, 84, 16, 18, 8, static_cast<Uint8>(140 * a));
+      c.gfx.fill_round(lx, ty - 112, lw, 84, 16, fade(focus, a));
+      text_center(Text::Headline, label, lx + lw / 2, ty - 104, fade(ink, a));
+      text_center(Text::Caption, d, lx + lw / 2, ty - 68, fade(ink2, a));
     }
-    c.fonts.regular.draw(clock_text(display), tx, ty + 22, 24, theme::text2);
-    draw_text_right(c.fonts.regular, duration > 0 ? "\xE2\x88\x92" + clock_text(std::max(0LL, duration - display)) : "--:--",
-                    tx + tw, ty + 22, 24, theme::text2);
+    text(Text::Callout, clock_text(display), tx, ty + 20, fade(secondary, a));
+    text_right(Text::Callout, duration > 0 ? "\xE2\x88\x92" + clock_text(std::max(0LL, duration - display)) : "--:--", tx + tw, ty + 20,
+               fade(secondary, a));
+    if (phase == Phase::Seeking) text_center(Text::Callout, "Seeking\xE2\x80\xA6", W / 2, ty + 20, fade(secondary, a));
+    else if (phase == Phase::Paused) text_center(Text::Callout, "Paused", W / 2, ty + 20, fade(secondary, a));
+    else if (phase == Phase::Ended) text_center(Text::Callout, "Finished", W / 2, ty + 20, fade(secondary, a));
 
-    draw_controls(phase);
-    if (menu_ != Menu::None) draw_menu();
-  }
-
-  std::string stream_line() const {
-    const MediaInfo &info = ums_.info();
-    std::vector<std::string> parts;
-    if (info.height >= 2000) parts.push_back("4K");
-    else if (info.height >= 1000) parts.push_back("1080p");
-    else if (info.height >= 700) parts.push_back("720p");
-    else if (info.height > 0) parts.push_back(std::to_string(info.height) + "p");
-    if (!info.hdr.empty() && upper(info.hdr) != "NONE" && upper(info.hdr) != "SDR") parts.push_back(info.hdr == "DolbyVision" ? "Dolby Vision" : info.hdr);
-    if (!info.video_codec.empty()) parts.push_back(upper(info.video_codec));
-    for (auto &a : info.audio) if (a.selected) parts.push_back(audio_label(a));
-    return join(parts);
-  }
-
-  void draw_controls(Phase phase) {
-    Ctx &c = ctx();
-    auto list = controls();
-    int x = 96;
-    int y = H - 140;
-    // Transport on the left, extras on the right.
-    std::vector<int> xs(list.size());
-    int right = W - 96;
-    for (int i = static_cast<int>(list.size()) - 1; i >= 0; i--) {
-      Ctl ctl = list[static_cast<size_t>(i)];
-      if (ctl == Ctl::Back10 || ctl == Ctl::Toggle || ctl == Ctl::Fwd10) continue;
-      right -= 76;
-      xs[static_cast<size_t>(i)] = right;
-      right -= 18;
-    }
-    for (size_t i = 0; i < list.size(); i++) {
-      Ctl ctl = list[i];
-      bool f = zone_ == Zone::Controls && static_cast<int>(i) == control_;
-      int size = ctl == Ctl::Toggle ? 88 : 76;
-      int cx = (ctl == Ctl::Back10 || ctl == Ctl::Toggle || ctl == Ctl::Fwd10) ? x : xs[i];
-      int cy = y + (88 - size) / 2;
-      c.gfx.fill_circle(cx + size / 2, cy + size / 2, size / 2, f ? theme::white : with_alpha(theme::white, 38));
-      Color fg = f ? theme::ink : theme::text;
-      int is = 40;
-      int ix = cx + (size - is) / 2, iy = cy + (size - is) / 2;
-      const char *label = "";
-      switch (ctl) {
-        case Ctl::Back10: c.icons.draw(Icon::Back10, ix, iy, is, fg); c.fonts.bold.draw("10", cx + size / 2 - 9, cy + size / 2 - 8, 14, fg); label = "Back 10 s"; break;
-        case Ctl::Fwd10: c.icons.draw(Icon::Forward10, ix, iy, is, fg); c.fonts.bold.draw("10", cx + size / 2 - 9, cy + size / 2 - 8, 14, fg); label = "Forward 10 s"; break;
-        case Ctl::Toggle:
-          if (session_.intent_play() && phase != Phase::Ended) { c.gfx.bars(cx + 30, cy + 29, 30, fg); label = "Pause"; }
-          else { c.gfx.triangle_right(cx + 30, cy + 25, 38, fg); label = "Play"; }
-          break;
-        case Ctl::StartOver: c.icons.draw(Icon::Restart, ix, iy, is, fg); label = "Start over"; break;
-        case Ctl::Next: c.icons.draw(Icon::Next, ix, iy, is, fg); label = "Next episode"; break;
-        case Ctl::Audio: c.icons.draw(Icon::Audio, ix, iy, is, fg); label = "Audio"; break;
-        case Ctl::Subtitles: c.icons.draw(Icon::Subtitles, ix, iy, is, fg); label = "Subtitles"; break;
+    // Controls row: play/pause, then the track and episode pills.
+    auto ctl = controls();
+    int x = margin, y = H - 128;
+    for (size_t i = 0; i < ctl.size(); i++) {
+      bool f = zone_ == Zone::Controls && static_cast<int>(i) == control_ && panel_ == Panel::None;
+      if (ctl[i] == Ctl::Toggle) {
+        int r = 30;
+        if (f) c.gfx.shadow(x, y - 2, 2 * r, 2 * r, r, 16, 8, static_cast<Uint8>(130 * a));
+        c.gfx.fill_circle(x + r, y + 28, r, fade(f ? focus : glass_light, a));
+        Color fg = fade(f ? ink : primary, a);
+        if (session_.intent_play() && phase != Phase::Ended) c.gfx.bars(x + r - 11, y + 17, 22, fg);
+        else c.gfx.triangle_right(x + r - 9, y + 14, 28, fg);
+        x += 2 * r + 16;
+        continue;
       }
-      if (f) draw_text_center(c.fonts.semibold, label, cx + size / 2, cy + size + 10, 20, theme::text);
-      if (ctl == Ctl::Back10 || ctl == Ctl::Toggle || ctl == Ctl::Fwd10) x = cx + size + 22;
+      int icon = ctl[i] == Ctl::Audio ? static_cast<int>(Icon::Audio) : ctl[i] == Ctl::Subtitles ? static_cast<int>(Icon::Subtitles)
+                 : ctl[i] == Ctl::StartOver ? static_cast<int>(Icon::Restart) : static_cast<int>(Icon::Next);
+      x += draw_pill(x, y, control_label(ctl[i]), f, false, icon, a) + 14;
     }
   }
 
-  void draw_menu() {
+  void draw_panel_tracks(float a) {
     Ctx &c = ctx();
     const MediaInfo &info = ums_.info();
-    int w = 640, x = W - 96 - w, y = 170;
-    int rows = menu_rows();
-    int h = 132 + std::max(1, rows) * 68 + 56;
-    c.gfx.fill_round(x, y, w, h, 28, rgba(0x121418, 245));
-    c.fonts.heavy.draw(menu_ == Menu::Audio ? "Audio" : "Subtitles", x + 40, y + 36, 34, theme::text);
-    int ry = y + 108;
-    if (rows == 0) c.fonts.regular.draw("This video reports no audio tracks.", x + 40, ry + 14, 22, theme::text2);
-    for (int i = 0; i < rows; i++) {
-      bool f = i == menu_index_;
+    int rows = panel_rows();
+    int w = 620, x = W - margin - w + static_cast<int>((1.0f - a) * 50), y = 96;
+    int h = std::min(H - 192 - 200, 150 + std::max(1, rows) * 76 + 40);
+    c.gfx.shadow(x, y, w, h, panel_radius, 36, 16, static_cast<Uint8>(170 * a));
+    c.gfx.fill_round(x, y, w, h, panel_radius, fade(rgba(0x1c1e23, 245), a));
+    text(Text::Title2, panel_ == Panel::Audio ? "Audio" : "Subtitles", x + 40, y + 40, fade(primary, a));
+    int ry = y + 112;
+    if (panel_ == Panel::Audio && rows == 0) paragraph(Text::Callout, "This video reports no audio tracks.", x + 40, ry, fade(secondary, a), w - 80, 2);
+    int visible = (h - 150) / 76;
+    int first = std::max(0, std::min(panel_index_ - visible / 2, rows - visible));
+    for (int i = first; i < std::min(rows, first + visible); i++) {
+      bool f = i == panel_index_;
       std::string label;
       bool selected = false;
-      if (menu_ == Menu::Audio) {
+      if (panel_ == Panel::Audio) {
         label = audio_label(info.audio[static_cast<size_t>(i)]);
         selected = info.audio[static_cast<size_t>(i)].selected;
       } else if (i == 0) {
         label = "Off";
         selected = session_.subtitle_index() < 0;
       } else {
-        const MediaTrack &tr = info.text[static_cast<size_t>(i - 1)];
-        std::string kind = upper(tr.codec);
-        if (kind == "TEXT" || kind == "SUBTITLE") kind.clear();  // generic: says nothing
-        label = join({language_name(tr.language), kind});
+        label = subtitle_label(info.text[static_cast<size_t>(i - 1)]);
         selected = session_.subtitle_index() == i - 1;
       }
-      if (f) c.gfx.fill_round(x + 16, ry, w - 32, 60, 16, theme::white);
-      draw_text(c.fonts.regular, label, x + 40, ry + 16, 24, f ? theme::ink : theme::text, w - 140);
-      if (selected) c.icons.draw(Icon::Check, x + w - 76, ry + 14, 32, f ? theme::ink : theme::ok);
-      ry += 68;
+      if (f) draw_row_focus(x + 20, ry, w - 40, 64);
+      text(Text::Callout, label, x + 44, ry + 16, fade(f ? ink : primary, a), w - 150);
+      if (selected) c.icons.draw(Icon::Check, x + w - 84, ry + 16, 32, fade(f ? ink : good, a));
+      ry += 76;
     }
-    if (menu_ == Menu::Subtitles && info.text.empty()) c.fonts.regular.draw("This video has no built-in subtitles.", x + 40, ry + 4, 20, theme::text3);
+    if (panel_ == Panel::Subtitles && info.text.empty())
+      paragraph(Text::Caption, "This video has no built-in subtitles.", x + 40, ry + 8, fade(tertiary, a), w - 80, 2);
   }
 
   void draw_startup() {
     Ctx &c = ctx();
-    c.gfx.clear(theme::bg);
-    ImageRef bg = c.images.get(req_.item.backdrop, W, H);
-    if (bg.texture) {
-      c.gfx.texture(bg.texture, 0, 0, W, H, bg.alpha);
-      c.gfx.fill_rect(0, 0, W, H, with_alpha(theme::bg, 170));
+    c.gfx.clear(ground);
+    ImageRef soft = c.images.get(req_.item.backdrop, W, H, 0, Fit::Cover, false, 48);
+    if (soft.texture) {
+      c.gfx.texture(soft.texture, 0, 0, W, H, soft.alpha);
+      c.gfx.fill_rect(0, 0, W, H, with_alpha(ground, 150));
     }
-    // Title art centred (or the name), then what is starting.
-    int y = 330;
-    ImageRef logo = req_.item.logo.empty() ? ImageRef{} : c.images.get(req_.item.logo, 720, 200, 0, Fit::Contain);
-    if (logo.texture) c.gfx.texture(logo.texture, W / 2 - logo.w / 2, y + 200 - logo.h, logo.w, logo.h, logo.alpha);
-    else if (logo.failed || req_.item.logo.empty()) draw_text_center(c.fonts.heavy, req_.item.name, W / 2, y + 120, 72, theme::text);
-    y += 230;
-    if (!req_.label().empty()) draw_text_center(c.fonts.semibold, req_.label(), W / 2, y, 26, theme::text2);
-    draw_spinner(W / 2, y + 110, 52, theme::white);
-    draw_text_center(c.fonts.regular, source_.empty() ? "Starting\xE2\x80\xA6" : "Starting \xC2\xB7 " + source_, W / 2, y + 160, 22, theme::text3);
+    int y = draw_title(req_.item, W / 2 - 380, 300, 760, 200, 1.0f, true) + 28;
+    if (req_.item.series()) {
+      text_center(Text::Title2, episode_code(req_.season, req_.episode), W / 2, y, primary);
+      y += line_for(Text::Title2);
+      if (!req_.episode_title.empty()) text_center(Text::Callout, req_.episode_title, W / 2, y + 4, secondary, 900);
+      y += line_for(Text::Callout) + 8;
+    }
+    draw_spinner(W / 2, y + 70, 48, primary, opened_at_);
+    std::string what = reconnecting_ ? "Reconnecting\xE2\x80\xA6" : join({"Starting", source_});
+    if (c.now - opened_at_ > spinner_delay_ms) text_center(Text::Callout, what, W / 2, y + 120, tertiary);
   }
 
   void draw_error() {
     Ctx &c = ctx();
-    c.gfx.fill_rect(0, 0, W, H, with_alpha(theme::bg, 235));
-    c.icons.draw(Icon::Warning, W / 2 - 28, 300, 56, theme::warn);
-    draw_text_center(c.fonts.heavy, "Playback stopped", W / 2, 380, 52, theme::text);
-    auto lines = wrap(c.fonts.regular, session_.error(), 26, 1000, 3);
-    int y = 460;
-    for (auto &l : lines) {
-      draw_text_center(c.fonts.regular, l, W / 2, y, 26, theme::text2);
-      y += 38;
+    c.gfx.fill_rect(0, 0, W, H, with_alpha(ground, 235));
+    int w = 1000, h = 400, x = (W - w) / 2, y = (H - h) / 2;
+    draw_panel(x, y, w, h);
+    c.icons.draw(Icon::Warning, x + 56, y + 58, 40, caution);
+    text(Text::Title2, "Playback stopped", x + 112, y + 56, primary);
+    paragraph(Text::Body, failure_.empty() ? session_.error() : failure_, x + 56, y + 130, secondary, w - 112, 3);
+    const char *labels[3] = {"Try again", "Choose another version", "Exit"};
+    int bx = x + 56;
+    for (int i = 0; i < 3; i++) {
+      ButtonSpec b{labels[i], -1, error_focus_ == i};
+      bx += draw_button(bx, y + h - 112, b) + 16;
     }
-    const char *labels[3] = {"Try again", "Choose another source", "Exit"};
-    int total = 0;
-    for (auto *l : labels) total += button_width(l, false) + 20;
-    int x = W / 2 - total / 2;
-    for (int i = 0; i < 3; i++) x += draw_button(x, 600, labels[i], error_focus_ == i, i == 0) + 20;
   }
 
   void draw_up_next() {
     Ctx &c = ctx();
-    c.gfx.fill_rect(0, 0, W, H, with_alpha(theme::bg, 200));
     const NextEpisode &n = *req_.next;
-    long long left = std::max(0LL, (kUpNextMs - (c.now - up_next_at_) + 999) / 1000);
-    c.fonts.bold.draw(upper("Up next"), 160, 640, 18, rgba(0x9fb7bd));
-    c.fonts.heavy.draw(episode_code(n.season, n.episode) + " \xC2\xB7 " + n.title, 160, 676, 48, theme::text);
-    int bx = 160;
-    bx += draw_button(bx, 780, "Play now", true, true, kPlayIcon) + 24;
-    c.fonts.regular.draw("Starts in " + std::to_string(left) + " s  \xC2\xB7  Back to stay", bx, 803, 24, theme::text2);
-    draw_progress(160, 900, 600, 6, static_cast<double>(c.now - up_next_at_) / kUpNextMs, theme::white);
+    c.gfx.gradient_v(0, H - 520, W, 520, rgba(0x000000), 0, 230);
+    long long elapsed = c.now - up_next_at_;
+    long long left = std::max(0LL, (kUpNextMs - elapsed + 999) / 1000);
+    int x = margin, y = H - 380;
+    text(Text::Eyebrow, upper("Up next"), x, y, accent);
+    text(Text::Title1, episode_code(n.season, n.episode), x, y + 34, primary);
+    text(Text::Title2, n.title, x, y + 98, secondary, 1200);
+    ButtonSpec play{"Play now", kPlayIcon, true};
+    int bw = draw_button(x, y + 170, play);
+    text(Text::Callout, "Starts in " + std::to_string(left) + " s  \xC2\xB7  Back to stay", x + bw + 28, y + 190, secondary);
+    draw_progress(x, y + 270, 520, 6, static_cast<double>(elapsed) / kUpNextMs, focus);
   }
 
  private:
@@ -578,17 +650,26 @@ class PlayerScreen : public Screen {
   Session session_;
   std::string window_id_;
   bool opened_ = false;
+  long long opened_at_ = 0;
+  long long start_at_ = 0;
+  bool reconnecting_ = false;
+  bool lost_ = false;
+  bool in_background_ = false;
+  int reloads_ = 0;
+  long long reload_window_start_ = 0;
+  std::string failure_;
   bool hud_ = true;
   long long hud_until_ = 0;
   Zone zone_ = Zone::Timeline;
-  int control_ = 1;
-  Menu menu_ = Menu::None;
-  int menu_index_ = 0;
+  int control_ = 0;
+  Panel panel_ = Panel::None;
+  int panel_index_ = 0;
   int error_focus_ = 0;
   long long last_save_ = 0;
   bool resume_done_ = false, resumed_ = false;
   bool up_next_ = false;
   long long up_next_at_ = 0;
+  Anim hud_anim_{fade_rate, 1}, panel_anim_{fade_rate};
 };
 
 }  // namespace

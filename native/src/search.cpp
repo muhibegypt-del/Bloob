@@ -1,6 +1,7 @@
 // Search: an on-screen keyboard on the left, results on the right that update
 // as you type (after a short pause). Right from the keyboard's edge moves into
-// the results; Left from the first column comes back.
+// the results; Left from their first column comes back; Up from the top row
+// reaches the tab bar.
 #include <algorithm>
 #include <cmath>
 
@@ -11,35 +12,30 @@
 
 namespace {
 
-constexpr int CL = 212;
-constexpr int KW = 640;
+using namespace theme;
+
+constexpr int KX = margin, KW = 640;
 constexpr int KCOLS = 6;
-constexpr int KEY_H = 64, KEY_GAP = 10;
-constexpr int RX = 940, RW = W - 96 - RX;
-constexpr int RCOLS = 3, RGAP = 28;
+constexpr int KEY_H = 66, KEY_GAP = 10;
+constexpr int RX = 840, RW = W - margin - RX;
+constexpr int RCOLS = 3, RGAP = 32;
 constexpr int RTW = (RW - (RCOLS - 1) * RGAP) / RCOLS;
 constexpr int RTH = RTW * 9 / 16;
-constexpr int RROW = RTH + 86;
+constexpr int RROW = RTH + 90;
+constexpr int TOP = 170;
 constexpr long long kDebounceMs = 450;
 
 const char *kKeys = "abcdefghijklmnopqrstuvwxyz1234567890";
 
 class SearchScreen : public Screen {
  public:
-  SearchScreen() {
-    focus_.rate = 16;
-    scroll_.rate = 12;
-  }
-
   const char *name() const override { return "search"; }
   bool root() const override { return true; }
-  void set_rail_focus(bool rail) override { rail_ = rail; }
+  void set_tabs_focus(bool tabs) override { tabs_ = tabs; }
 
   int key_rows() const { return (static_cast<int>(std::string(kKeys).size()) + KCOLS - 1) / KCOLS; }
-
-  // Keyboard positions: rows of letters/digits, then one row of [Space, Delete, Clear].
   int row_length(int row) const {
-    if (row == key_rows()) return 3;
+    if (row == key_rows()) return 3;  // Space, Delete, Clear
     int total = static_cast<int>(std::string(kKeys).size());
     return std::min(KCOLS, total - row * KCOLS);
   }
@@ -50,14 +46,17 @@ class SearchScreen : public Screen {
     changed();
   }
 
-  void changed() {
-    due_at_ = ctx().now + kDebounceMs;
+  void changed() { due_at_ = ctx().now + kDebounceMs; }
+
+  std::string current_query() const {
+    std::string q = query_;
+    while (!q.empty() && q.back() == ' ') q.pop_back();
+    return q;
   }
 
   void run_search() {
     due_at_ = 0;
-    std::string q = query_;
-    while (!q.empty() && q.back() == ' ') q.pop_back();
+    std::string q = current_query();
     if (q.size() < 2) {
       results_.clear();
       searched_.clear();
@@ -66,6 +65,7 @@ class SearchScreen : public Screen {
     }
     if (q == searched_) return;
     searching_ = true;
+    searching_since_ = ctx().now;
     std::string asked = q;
     ctx().api.get("/api/search?q=" + url_encode(q), [this, asked](const ApiResult &r) {
       if (asked != current_query()) return;  // a newer query is on its way
@@ -80,14 +80,8 @@ class SearchScreen : public Screen {
     }, alive_);
   }
 
-  std::string current_query() const {
-    std::string q = query_;
-    while (!q.empty() && q.back() == ' ') q.pop_back();
-    return q;
-  }
-
   void remember(const std::string &q) {
-    auto &list = recent();
+    auto &list = ctx().recent_searches;
     if (!list.empty() && list[0] == q) return;
     list.erase(std::remove(list.begin(), list.end(), q), list.end());
     list.insert(list.begin(), q);
@@ -95,11 +89,11 @@ class SearchScreen : public Screen {
     ctx().save_settings();
   }
 
-  static std::vector<std::string> &recent() { return ctx().recent_searches; }
-
   // ---------------------------------------------------------------- input
 
   bool key(Key key, bool repeat) override {
+    lift_.snap(0);
+    lift_.to(1);
     if (zone_ == Zone::Keys) return keyboard_key(key, repeat);
     if (zone_ == Zone::Recent) return recent_key(key);
     return results_key(key, repeat);
@@ -109,45 +103,35 @@ class SearchScreen : public Screen {
     int rows = key_rows() + 1;
     switch (key) {
       case Key::Left:
-        if (kcol_ == 0) return false;
-        kcol_--;
-        break;
+        if (kcol_ > 0) kcol_--;
+        return true;
       case Key::Right:
         if (kcol_ + 1 < row_length(krow_)) kcol_++;
-        else if (!results_.empty()) {
-          zone_ = Zone::Results;
-          result_ = std::min(result_, static_cast<int>(results_.size()) - 1);
-        }
-        break;
+        else if (!results_.empty()) zone_ = Zone::Results;
+        return true;
       case Key::Up:
-        if (krow_ > 0) {
-          if (krow_ == key_rows()) kcol_ = kcol_ * KCOLS / 3 + 1;  // action row → the keys above it
-          krow_--;
-          kcol_ = std::min(kcol_, row_length(krow_) - 1);
-        }
-        break;
+        if (krow_ == 0) return false;  // to the tab bar
+        if (krow_ == key_rows()) kcol_ = kcol_ * KCOLS / 3 + 1;
+        krow_--;
+        kcol_ = std::min(kcol_, row_length(krow_) - 1);
+        return true;
       case Key::Down:
         if (krow_ + 1 < rows) {
           krow_++;
-          if (krow_ == key_rows()) kcol_ = std::min(2, kcol_ * 3 / KCOLS);  // into the action row
+          if (krow_ == key_rows()) kcol_ = std::min(2, kcol_ * 3 / KCOLS);
           else kcol_ = std::min(kcol_, row_length(krow_) - 1);
-        } else if (!recent().empty() && query_.empty()) {
+        } else if (!ctx().recent_searches.empty() && current_query().empty()) {
           zone_ = Zone::Recent;
           recent_index_ = 0;
         }
-        break;
+        return true;
       case Key::Ok:
         if (repeat && krow_ == key_rows() && kcol_ != 1) return true;
         press_key();
-        break;
-      case Key::Back:
-        return false;
+        return true;
       default:
-        return false;
+        return false;  // Back: the tab bar
     }
-    focus_.snap(0);
-    focus_.to(1);
-    return true;
   }
 
   void press_key() {
@@ -167,22 +151,19 @@ class SearchScreen : public Screen {
   }
 
   bool recent_key(Key key) {
-    auto &list = recent();
+    auto &list = ctx().recent_searches;
     switch (key) {
-      case Key::Left:
-        if (recent_index_ == 0) return false;
-        recent_index_--;
-        break;
-      case Key::Right: recent_index_ = std::min(static_cast<int>(list.size()) - 1, recent_index_ + 1); break;
-      case Key::Up: zone_ = Zone::Keys; break;
+      case Key::Left: recent_index_ = std::max(0, recent_index_ - 1); return true;
+      case Key::Right: recent_index_ = std::min(static_cast<int>(list.size()) - 1, recent_index_ + 1); return true;
+      case Key::Up: zone_ = Zone::Keys; return true;
       case Key::Ok:
         query_ = list[static_cast<size_t>(recent_index_)];
         run_search();
         zone_ = Zone::Keys;
-        break;
-      default: return false;
+        return true;
+      case Key::Back: zone_ = Zone::Keys; return true;
+      default: return true;
     }
-    return true;
   }
 
   bool results_key(Key key, bool repeat) {
@@ -213,15 +194,13 @@ class SearchScreen : public Screen {
         zone_ = Zone::Keys;
         return true;
       default:
-        return false;
+        return true;
     }
     int row = result_ / RCOLS;
     float target = scroll_.target;
     if (row < target) target = static_cast<float>(row);
     if (row > target + 2) target = static_cast<float>(row - 2);
     scroll_.to(target);
-    focus_.snap(0);
-    focus_.to(1);
     return true;
   }
 
@@ -229,11 +208,11 @@ class SearchScreen : public Screen {
 
   void update(double dt) override {
     Ctx &c = ctx();
+    c.show_tabs(true);
     if (due_at_ && c.now >= due_at_) run_search();
     if (due_at_) c.redraw_at(due_at_);
-    if (focus_.step(dt) | scroll_.step(dt)) c.animating = true;
-    // Caret blink while the keyboard has focus.
-    if (zone_ == Zone::Keys && !rail_) {
+    if (lift_.step(dt) | scroll_.step(dt)) c.animating = true;
+    if (zone_ == Zone::Keys && !tabs_) {
       caret_ = (c.now / 530) % 2 == 0;
       c.redraw_at((c.now / 530 + 1) * 530);
     }
@@ -241,104 +220,101 @@ class SearchScreen : public Screen {
 
   void draw() override {
     Ctx &c = ctx();
-    c.gfx.clear(theme::bg);
-    c.gfx.fill_rect(0, 0, 900, H, rgba(0x0b0c0f));
-
-    // Input.
-    c.fonts.bold.draw(upper("Search films and series"), CL, 80, 18, theme::text3);
-    int iy = 120;
-    c.gfx.fill_round(CL, iy, KW, 84, 20, rgba(0x15171b));
-    c.icons.draw(Icon::Search, CL + 26, iy + 25, 34, theme::text3);
-    int qx = CL + 80;
-    std::string shown = query_.empty() ? "" : query_;
-    int qw = draw_text(c.fonts.bold, shown, qx, iy + 18, 38, theme::text, KW - 110);
-    if (query_.empty()) c.fonts.bold.draw("Title", qx, iy + 18, 38, theme::text4);
-    if (zone_ == Zone::Keys && !rail_ && caret_) c.gfx.fill_rect(qx + qw + 4, iy + 22, 3, 42, theme::accent);
+    c.gfx.clear(ground);
+    // Field.
+    int iy = TOP;
+    c.gfx.fill_round(KX, iy, KW, 84, 20, raised);
+    c.icons.draw(Icon::Search, KX + 26, iy + 25, 34, tertiary);
+    int qx = KX + 80;
+    int qw = text(Text::Title2, query_, qx, iy + 21, primary, KW - 110);
+    if (query_.empty()) text(Text::Title2, "Films and series", qx, iy + 21, tertiary);
+    if (zone_ == Zone::Keys && !tabs_ && caret_) c.gfx.fill_rect(qx + qw + 4, iy + 22, 3, 42, accent);
 
     // Keyboard.
     int kw = (KW - (KCOLS - 1) * KEY_GAP) / KCOLS;
-    int ky = 236;
-    for (int r = 0; r < key_rows(); r++) {
+    int ky = iy + 120;
+    for (int r = 0; r < key_rows(); r++)
       for (int k = 0; k < row_length(r); k++) {
-        int x = CL + k * (kw + KEY_GAP), y = ky + r * (KEY_H + KEY_GAP);
-        bool f = zone_ == Zone::Keys && !rail_ && krow_ == r && kcol_ == k;
-        draw_key(x, y, kw, std::string(1, kKeys[r * KCOLS + k]), f);
+        bool f = zone_ == Zone::Keys && !tabs_ && krow_ == r && kcol_ == k;
+        draw_key(KX + k * (kw + KEY_GAP), ky + r * (KEY_H + KEY_GAP), kw, std::string(1, kKeys[r * KCOLS + k]), f);
       }
-    }
     int ay = ky + key_rows() * (KEY_H + KEY_GAP);
     int aw = (KW - 2 * KEY_GAP) / 3;
     const char *actions[3] = {"Space", "Delete", "Clear"};
     for (int k = 0; k < 3; k++) {
-      bool f = zone_ == Zone::Keys && !rail_ && krow_ == key_rows() && kcol_ == k;
-      draw_key(CL + k * (aw + KEY_GAP), ay, aw, actions[k], f, 22);
+      bool f = zone_ == Zone::Keys && !tabs_ && krow_ == key_rows() && kcol_ == k;
+      draw_key(KX + k * (aw + KEY_GAP), ay, aw, actions[k], f, true);
     }
     // Recent searches.
-    auto &list = recent();
+    auto &list = ctx().recent_searches;
     if (!list.empty()) {
-      int ry = ay + KEY_H + 36;
-      c.fonts.regular.draw("Recent", CL, ry + 14, 20, theme::text3);
-      int rx = CL + 90;
+      int ry = ay + KEY_H + 40;
+      text(Text::Eyebrow, upper("Recent"), KX, ry, tertiary);
+      int rx = KX;
       for (size_t i = 0; i < list.size(); i++) {
-        int w = chip_width(list[i]);
-        if (rx + w > CL + KW + 40) break;
-        draw_chip(rx, ry, list[i], zone_ == Zone::Recent && static_cast<int>(i) == recent_index_ && !rail_, rgba(0x15171b), theme::text);
-        rx += w + 10;
+        int w = pill_width(list[i]);
+        if (rx + w > KX + KW + 40) break;
+        rx += draw_pill(rx, ry + 34, list[i], zone_ == Zone::Recent && static_cast<int>(i) == recent_index_ && !tabs_) + 12;
       }
     }
-
     draw_results();
   }
 
-  void draw_key(int x, int y, int w, const std::string &label, bool focused, int size = 28) {
+  void draw_key(int x, int y, int w, const std::string &label, bool focused, bool small = false) {
     Ctx &c = ctx();
-    float s = focused ? 1.0f + 0.08f * focus_.value : 1.0f;
+    float s = focused ? 1.0f + 0.08f * lift_.value : 1.0f;
     int gw = static_cast<int>(w * s), gh = static_cast<int>(KEY_H * s);
     int gx = x - (gw - w) / 2, gy = y - (gh - KEY_H) / 2;
-    c.gfx.fill_round(gx, gy, gw, gh, 14, focused ? theme::white : rgba(0x15171b));
-    Font &f = c.fonts.bold;
-    draw_text_center(f, label, gx + gw / 2, gy + (gh - f.line_height(size)) / 2, size, focused ? theme::ink : theme::text);
+    if (focused) c.gfx.shadow(gx, gy, gw, gh, 14, 16, 8, 140);
+    c.gfx.fill_round(gx, gy, gw, gh, 14, focused ? focus : raised);
+    Text style = small ? Text::Callout : Text::Title2;
+    text_center(style, label, gx + gw / 2, gy + (gh - line_for(style)) / 2, focused ? ink : primary);
   }
 
   void draw_results() {
     Ctx &c = ctx();
     std::string q = current_query();
     if (q.size() < 2) {
-      c.fonts.heavy.draw("Find something to watch", RX, 80, 40, theme::text);
-      draw_paragraph(c.fonts.regular, "Type a few letters of a film or series. Results appear as you type.", RX, 140, 24, 36, theme::text3, RW, 2);
+      text(Text::Title1, "Find something to watch", RX, TOP + 4, primary);
+      paragraph(Text::Body, "Type a few letters of a film or series. Results appear as you type.", RX, TOP + 76, secondary, RW, 2);
       return;
     }
-    std::string heading = "Results for \xE2\x80\x9C" + q + "\xE2\x80\x9D";
-    draw_text(c.fonts.heavy, heading, RX, 80, 36, theme::text, RW - 80);
-    if (searching_ || due_at_) draw_spinner(RX + RW - 24, 102, 34);
+    text(Text::Title2, "Results for \xE2\x80\x9C" + q + "\xE2\x80\x9D", RX, TOP + 18, primary, RW - 80);
+    if (searching_ || due_at_) draw_spinner(RX + RW - 24, TOP + 40, 34, secondary, searching_ ? searching_since_ : 0);
     if (!error_.empty()) {
-      draw_paragraph(c.fonts.regular, error_, RX, 150, 24, 36, theme::bad, RW, 3);
+      paragraph(Text::Body, error_, RX, TOP + 90, problem, RW, 3);
       return;
     }
     if (results_.empty()) {
-      if (!searching_ && !due_at_ && searched_ == q) c.fonts.regular.draw("Nothing found. Try another spelling.", RX, 150, 24, theme::text3);
+      if (!searching_ && !due_at_ && searched_ == q) text(Text::Body, "Nothing found. Try another spelling.", RX, TOP + 90, tertiary);
       return;
     }
-    c.fonts.regular.draw("Films and series", RX, 134, 20, theme::text3);
-    int top = 190;
+    int top = TOP + 100;
     float s = scroll_.value;
-    for (size_t i = 0; i < results_.size(); i++) {
+    std::vector<size_t> order;
+    for (size_t i = 0; i < results_.size(); i++) if (static_cast<int>(i) != result_) order.push_back(i);
+    if (result_ < static_cast<int>(results_.size())) order.push_back(static_cast<size_t>(result_));
+    for (size_t i : order) {
       int row = static_cast<int>(i) / RCOLS, col = static_cast<int>(i) % RCOLS;
       float y = top + (row - s) * RROW;
-      if (y > H || y + RROW < top - 30) continue;
+      if (y > H || y + RROW < top - 40) continue;
       const Item &it = results_[i];
       int x = RX + col * (RTW + RGAP);
-      bool f = zone_ == Zone::Results && !rail_ && static_cast<int>(i) == result_;
-      float sc = f ? 1.0f + 0.05f * focus_.value : 1.0f;
-      int w = static_cast<int>(RTW * sc), h = static_cast<int>(RTH * sc);
-      int tx = x - (w - RTW) / 2, ty = static_cast<int>(y) - (h - RTH) / 2;
-      ImageRef img = c.images.get(it.tile, RTW, RTH, 14, Fit::Cover, true);
-      if (img.failed && !it.poster.empty()) img = c.images.get(it.poster, RTW, RTH, 14, Fit::Cover, true);
-      c.gfx.fill_round(tx, ty, w, h, 14, theme::panel2);
-      if (img.texture) c.gfx.texture(img.texture, tx, ty, w, h, img.alpha);
-      draw_text(c.fonts.heavy, it.name, tx + 16, ty + h - 44, 22, theme::text, w - 32);
-      if (f) draw_focus_ring(tx, ty, w, h, 14, focus_.value);
-      draw_text(c.fonts.regular, join({it.series() ? "Series" : "Film", it.year}), x, static_cast<int>(y) + RTH + 14, 19, f ? theme::text2 : theme::text3, RTW);
+      bool f = zone_ == Zone::Results && !tabs_ && static_cast<int>(i) == result_;
+      CardSpec cs;
+      cs.art = it.tile;
+      cs.fallback_art = it.poster;
+      cs.title = it.name;
+      cs.w = RTW;
+      cs.h = RTH;
+      cs.focus = f ? lift_.value : 0;
+      cs.focused = f;
+      draw_card(x, static_cast<int>(y), cs);
+      int ly = static_cast<int>(y) + RTH + (f ? 20 : 14);
+      text(Text::Caption, it.name, x, ly, f ? primary : secondary, RTW);
+      text(Text::Footnote, join({it.series() ? "Series" : "Film", it.year}), x, ly + 30, tertiary, RTW);
     }
+    (void)c;
   }
 
  private:
@@ -346,14 +322,15 @@ class SearchScreen : public Screen {
   std::string query_, searched_, error_;
   std::vector<Item> results_;
   bool searching_ = false;
+  long long searching_since_ = 0;
   long long due_at_ = 0;
   Zone zone_ = Zone::Keys;
   int krow_ = 0, kcol_ = 0;
   int result_ = 0;
   int recent_index_ = 0;
-  bool rail_ = false;
+  bool tabs_ = false;
   bool caret_ = true;
-  Anim focus_, scroll_;
+  Anim lift_{focus_rate, 1}, scroll_{scroll_rate};
 };
 
 }  // namespace

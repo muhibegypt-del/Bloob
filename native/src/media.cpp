@@ -18,10 +18,11 @@ bool UmsPlayer::load(const std::string &uri, const std::string &app_id, const st
   logf("media", "load %s type=%s window=%s", redact_uri(uri).c_str(), load_type.c_str(), window_id.c_str());
 
   int generation = ++generation_;
-  int id = Luna::instance().call(std::string(kService) + "load", payload, [this, generation](const std::string &reply) {
+  std::weak_ptr<int> alive = alive_;
+  int id = Luna::instance().call(std::string(kService) + "load", payload, [this, alive, generation](const std::string &reply) {
     bool ok = false;
     Json json = Json::parse(reply, &ok);
-    if (generation != generation_) {
+    if (alive.expired() || generation != generation_) {
       // The viewer left before the pipeline answered: release it immediately.
       std::string stale = json["mediaId"].as_string();
       if (!stale.empty()) {
@@ -37,7 +38,9 @@ bool UmsPlayer::load(const std::string &uri, const std::string &app_id, const st
       return;
     }
     media_id_ = json["mediaId"].as_string();
+    lost_ = false;
     logf("media", "loaded mediaId=%s", media_id_.c_str());
+    notify_foreground();
     subscription_ = Luna::instance().call(std::string(kService) + "subscribe",
                                           "{\"mediaId\":" + Json::quote(media_id_) + "}",
                                           [this](const std::string &event) { on_event(event); }, true);
@@ -52,11 +55,25 @@ void UmsPlayer::command(const char *method, const std::string &extra) {
   std::string payload = "{\"mediaId\":" + Json::quote(media_id_) + extra + "}";
   std::string name = method;
   logf("media", "-> %s%s", method, extra.c_str());
-  Luna::instance().call(std::string(kService) + method, payload, [name](const std::string &reply) {
+  int generation = generation_;
+  std::weak_ptr<int> alive = alive_;
+  Luna::instance().call(std::string(kService) + method, payload, [this, alive, name, generation](const std::string &reply) {
     Json json = Json::parse(reply);
-    if (!json["returnValue"].as_bool(true)) logf("media", "%s failed: %s", name.c_str(), reply.c_str());
+    if (json["returnValue"].as_bool(true)) return;
+    logf("media", "%s failed: %s", name.c_str(), reply.c_str());
+    if (alive.expired()) return;  // the player has gone
+    // A refused play/pause/seek on a pipeline we still think is live means the
+    // TV released it (seen after system overlays). Report it once.
+    bool transport = name == "play" || name == "pause" || name == "seek";
+    if (transport && generation == generation_ && listener_ && !lost_) {
+      lost_ = true;
+      listener_({MediaEvent::Lost, 0, name + " refused"});
+    }
   });
 }
+
+void UmsPlayer::notify_foreground() { command("notifyForeground"); }
+void UmsPlayer::notify_background() { command("notifyBackground"); }
 
 void UmsPlayer::play() { command("play"); }
 void UmsPlayer::pause() { command("pause"); }
@@ -173,6 +190,13 @@ void UmsPlayer::on_event(const std::string &payload) {
   if (json.has("bufferingEnd")) listener_({MediaEvent::BufferingEnd});
   if (json.has("seekDone")) listener_({MediaEvent::SeekDone});
   if (json.has("endOfStream")) listener_({MediaEvent::EndOfStream});
+  // The pipeline was taken away (resource conflict, system UI). Not after our own unload:
+  // that drops the subscription first.
+  if ((json.has("unloadCompleted") || json.has("released") || json.has("suspended")) && !lost_) {
+    lost_ = true;
+    logf("media", "pipeline released by the TV");
+    listener_({MediaEvent::Lost, 0, "released"});
+  }
   if (json.has("error")) {
     const Json &e = json["error"];
     logf("media", "error %lld %s", e["errorCode"].as_int(), e["errorText"].as_string().c_str());

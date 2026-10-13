@@ -1,9 +1,11 @@
-// Choose how to watch: one recommended source in plain language, the other
-// options as a compact table, then pairing (once) and AllDebrid resolution
-// with visible, cancellable progress. A question (which file, which quality)
-// appears as a short list; failures say what happened and keep the list.
+// Choose how to watch. One best match, stated in plain words (what you will
+// see and hear, and why it was picked), then other versions as short lines.
+// Release names, sizes and seeders stay out of the way until the viewer asks
+// (Right on any option). After OK: pairing if needed, then a short, cancellable
+// progress panel, and any question (which file, which quality) as a list.
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 
 #include "common.h"
 #include "log.h"
@@ -12,21 +14,40 @@
 
 namespace {
 
-constexpr int AX = 96, AW = 520;   // aside
-constexpr int MX = 700, MW = W - 96 - 700;  // main column
-constexpr int ROW = 76;
-constexpr int TABLE_TOP = 372;
-constexpr int VISIBLE_ROWS = 8;
-constexpr long long kPollMs = 700;
+using namespace theme;
 
-// Column positions inside the table.
-constexpr int C_QUALITY = 28, C_PICTURE = 200, C_AUDIO = 430, C_SIZE = 720, C_AVAIL = 860;
+constexpr long long kPollMs = 700;
+constexpr int LX = margin, LW = 600;           // title column
+constexpr int RX = 760, RW = W - margin - 760;  // options column
+constexpr int ROW = 84, ROW_GAP = 10;
+constexpr int LIST_TOP = 480;
+constexpr int VISIBLE = 5;
+
+// Plain words for a version's picture and how easy it is to get.
+std::string picture_words(const SourceOption &o) {
+  if (o.picture == "SDR" || o.picture.empty()) return "Standard picture";
+  return o.picture;
+}
+
+struct Availability {
+  std::string words;
+  Color dot;
+};
+
+Availability availability(const SourceOption &o) {
+  if (!o.cautions.empty()) return {o.cautions[0], caution};
+  if (o.availability == "Direct link") return {"Direct link", good};
+  int seeders = std::atoi(o.availability.c_str());
+  if (seeders >= 20) return {"Readily available", good};
+  if (seeders >= 5) return {"Available", good};
+  if (o.availability.find("seeders") != std::string::npos) return {"Slow to prepare", caution};
+  return {"Availability unknown", tertiary};
+}
 
 class SourcesScreen : public Screen {
  public:
   SourcesScreen(const PlayRequest &request, bool autostart) : req_(request), autostart_(autostart) {
-    focus_.rate = 16;
-    scroll_.rate = 12;
+    backdrop_.set(request.item.backdrop, true);
     load();
     refresh_account();
   }
@@ -47,7 +68,7 @@ class SourcesScreen : public Screen {
     refresh_account();
   }
 
-  // Called by the player when the viewer asks for another source.
+  // Set by the player when the viewer asks for another source.
   static bool &choose_another() {
     static bool flag = false;
     return flag;
@@ -57,6 +78,7 @@ class SourcesScreen : public Screen {
 
   void load() {
     state_ = State::Loading;
+    loading_since_ = ctx().now;
     std::string body = "{\"type\":" + Json::quote(req_.item.type) + ",\"videoId\":" + Json::quote(req_.video_id) +
                        ",\"language\":" + Json::quote(ctx().language) + "}";
     ctx().api.post("/api/sources/ranked", body, [this](const ApiResult &r) {
@@ -72,6 +94,8 @@ class SourcesScreen : public Screen {
         for (auto &o : g.items) options_.push_back(o);
       state_ = options_.empty() ? State::Empty : State::Ready;
       focus_index_ = 0;
+      lift_.snap(0);
+      lift_.to(1);
       logf("sources", "%d sources, recommended=%d", ranking_.total, ranking_.recommended ? 1 : 0);
       if (autostart_ && ranking_.recommended) {
         autostart_ = false;
@@ -107,6 +131,8 @@ class SourcesScreen : public Screen {
 
   void start_job() {
     modal_ = Modal::Resolving;
+    modal_since_ = ctx().now;
+    details_ = false;
     job_id_.clear();
     step_ = "starting";
     step_label_ = "Starting\xE2\x80\xA6";
@@ -215,6 +241,10 @@ class SourcesScreen : public Screen {
         if (key == Key::Ok && !repeat) {
           modal_ = Modal::None;
           if (fail_focus_ == 1) start_job();
+          else if (focus_index_ + 1 < static_cast<int>(options_.size())) {
+            move_to(focus_index_ + 1);  // the next best version, straight away
+            choose(focus_index_);
+          }
         }
         if (key == Key::Back) modal_ = Modal::None;
         return true;
@@ -228,33 +258,48 @@ class SourcesScreen : public Screen {
     }
     int n = static_cast<int>(options_.size());
     switch (key) {
-      case Key::Up: focus_index_ = std::max(0, focus_index_ - 1); break;
-      case Key::Down: focus_index_ = std::min(n - 1, focus_index_ + 1); break;
-      case Key::Ok:
-        if (!repeat) choose(focus_index_);
+      case Key::Up:
+        if (focus_index_ > 0) move_to(focus_index_ - 1);
         return true;
+      case Key::Down:
+        if (focus_index_ + 1 < n) move_to(focus_index_ + 1);
+        return true;
+      case Key::Right:
+        details_ = true;  // release details, on request
+        return true;
+      case Key::Left:
+        details_ = false;
+        return true;
+      case Key::Ok:
       case Key::Play:
       case Key::PlayPause:
-        choose(focus_index_);
+        if (!repeat) choose(focus_index_);
         return true;
       case Key::Back:
-        ctx().pop();
+        if (details_) details_ = false;
+        else ctx().pop();
         return true;
       default:
         return true;
     }
-    focus_.snap(0);
-    focus_.to(1);
-    int table_index = focus_index_ - (has_recommended() ? 1 : 0);
+  }
+
+  void move_to(int index) {
+    prev_index_ = focus_index_;
+    prev_lift_.snap(lift_.value);
+    prev_lift_.to(0);
+    focus_index_ = index;
+    lift_.snap(0);
+    lift_.to(1);
+    int list_index = focus_index_ - (has_recommended() ? 1 : 0);
     float target = scroll_.target;
-    if (table_index >= 0) {
-      if (table_index < target) target = static_cast<float>(table_index);
-      if (table_index >= target + VISIBLE_ROWS) target = static_cast<float>(table_index - VISIBLE_ROWS + 1);
+    if (list_index >= 0) {
+      if (list_index < target) target = static_cast<float>(list_index);
+      if (list_index >= target + VISIBLE) target = static_cast<float>(list_index - VISIBLE + 1);
     } else {
       target = 0;
     }
     scroll_.to(target);
-    return true;
   }
 
   // ---------------------------------------------------------------- frame
@@ -262,209 +307,244 @@ class SourcesScreen : public Screen {
   void update(double dt) override {
     Ctx &c = ctx();
     pairing_.update();
+    backdrop_.update(dt);
     if (modal_ == Modal::Resolving && !job_id_.empty() && c.now >= next_poll_) poll();
-    if (focus_.step(dt) | scroll_.step(dt)) c.animating = true;
-    if (modal_ == Modal::Resolving) c.animating = true;
+    if (modal_ == Modal::Resolving) c.redraw_at(next_poll_);
+    bool moving = lift_.step(dt) | prev_lift_.step(dt) | scroll_.step(dt);
+    details_anim_.to(details_ ? 1.0f : 0.0f);
+    moving |= details_anim_.step(dt);
+    modal_anim_.to(modal_ != Modal::None || pairing_.active() ? 1.0f : 0.0f);
+    moving |= modal_anim_.step(dt);
+    if (moving) c.animating = true;
   }
 
   void draw() override {
-    Ctx &c = ctx();
-    c.gfx.clear(theme::bg);
-    draw_aside();
+    backdrop_.draw(0.55f, 1.0f);
+    draw_scrims(0.6f, 600, 0.8f);
+    draw_title_column();
     switch (state_) {
       case State::Loading:
-        draw_spinner(MX + MW / 2, 420, 56);
-        draw_text_center(c.fonts.regular, "Finding sources\xE2\x80\xA6", MX + MW / 2, 480, 26, theme::text2);
+        draw_spinner(RX + RW / 2, 420, 56, secondary, loading_since_);
+        if (ctx().now - loading_since_ > spinner_delay_ms) text_center(Text::Callout, "Finding versions\xE2\x80\xA6", RX + RW / 2, 480, secondary);
         break;
       case State::Error:
       case State::Empty: {
-        std::string title = state_ == State::Empty ? "No sources found" : "Couldn\xE2\x80\x99t search for sources";
-        std::string body = state_ == State::Empty ? "Nothing is available for this yet. Try again later." : error_;
-        c.fonts.heavy.draw(title, MX, 120, 44, theme::text);
-        draw_paragraph(c.fonts.regular, body, MX, 190, 26, 38, theme::text2, MW, 3);
-        draw_button(MX, 320, "Try again", true, true);
+        text(Text::Title2, state_ == State::Empty ? "Nothing to play yet" : "Couldn\xE2\x80\x99t find versions", RX, 140, primary);
+        paragraph(Text::Body, state_ == State::Empty ? "No versions of this are available right now. Try again later." : error_, RX, 200,
+                  secondary, RW, 3);
+        ButtonSpec b{"Try again", -1, true};
+        draw_button(RX, 340, b);
         break;
       }
       case State::Ready:
         draw_options();
         break;
     }
+    draw_details();
     draw_modal();
     pairing_.draw();
   }
 
-  void draw_aside() {
+  void draw_title_column() {
     Ctx &c = ctx();
-    std::string art = !req_.episode_thumbnail.empty() ? req_.episode_thumbnail : req_.item.backdrop;
-    ImageRef img = c.images.get(art, AW, 292, 22, Fit::Cover);
-    c.gfx.fill_round(AX, 80, AW, 292, 22, theme::panel2);
-    if (img.texture) c.gfx.texture(img.texture, AX, 80, AW, 292, img.alpha);
-    int y = 404;
-    c.fonts.bold.draw(upper("Choose how to watch"), AX, y, 18, theme::text3);
+    int y = draw_title(req_.item, LX, 120, LW, 150);
+    y += 34;
+    text(Text::Eyebrow, upper("Choose how to watch"), LX, y, accent);
     y += 36;
-    auto lines = wrap(c.fonts.heavy, req_.item.name, 54, AW, 2);
-    for (auto &l : lines) {
-      c.fonts.heavy.draw(l, AX, y, 54, theme::text);
-      y += 60;
-    }
-    y += 8;
     if (req_.item.series()) {
-      draw_text(c.fonts.semibold, req_.label(), AX, y, 24, theme::text2, AW);
-      y += 40;
+      text(Text::Title2, episode_code(req_.season, req_.episode), LX, y, primary);
+      y += line_for(Text::Title2) + 4;
+      if (!req_.episode_title.empty()) y = paragraph(Text::Callout, req_.episode_title, LX, y, secondary, LW, 2);
+    } else {
+      text(Text::Callout, meta_line(req_.item), LX, y, secondary, LW);
+      y += line_for(Text::Callout);
     }
-    std::vector<std::string> facts;
-    if (!req_.item.series() && !req_.item.runtime.empty()) facts.push_back(runtime_text(req_.item.runtime));
-    if (!req_.item.year.empty()) facts.push_back(req_.item.year);
-    draw_text(c.fonts.regular, join(facts), AX, y, 21, theme::text3, AW);
-    y += 36;
-    if (req_.resume_ms > 0) {
-      c.fonts.regular.draw("Continues from " + clock_text(req_.resume_ms), AX, y, 21, theme::accent);
-      y += 36;
-    }
-    // Account status.
-    int ay = 940;
-    c.gfx.fill_round(AX, ay, AW, 60, 16, theme::panel);
-    bool paired = ctx().paired;
-    c.gfx.fill_circle(AX + 28, ay + 30, 6, !account_known_ ? theme::text4 : paired ? theme::ok : theme::warn);
-    std::string text = !account_known_ ? "Checking AllDebrid\xE2\x80\xA6"
-                       : paired ? (durable_ ? "AllDebrid connected \xC2\xB7 saved on this TV" : "AllDebrid connected \xC2\xB7 until restart")
-                                : "AllDebrid not connected \xC2\xB7 you\xE2\x80\x99ll pair on Play";
-    draw_text(c.fonts.regular, text, AX + 48, ay + 18, 20, theme::text2, AW - 64);
+    if (req_.resume_ms > 0) text(Text::Callout, "Continues from " + clock_text(req_.resume_ms), LX, y + 16, accent);
+    // AllDebrid connection, quietly.
+    int ay = H - 112;
+    bool paired = c.paired;
+    c.gfx.fill_circle(LX + 8, ay + 14, 6, !account_known_ ? tertiary : paired ? good : caution);
+    std::string status = !account_known_ ? "Checking AllDebrid\xE2\x80\xA6"
+                         : paired ? (durable_ ? "AllDebrid connected" : "AllDebrid connected until restart")
+                                  : "AllDebrid not connected. You\xE2\x80\x99ll pair once when you press Play.";
+    text(Text::Caption, status, LX + 28, ay, secondary, LW);
   }
 
   void draw_options() {
     Ctx &c = ctx();
     int index = 0;
-    int y = 80;
     if (has_recommended()) {
-      const SourceOption &r = *ranking_.recommended;
-      bool focused = focus_index_ == 0 && modal_ == Modal::None;
-      int h = 236;
-      Color bg = focused ? rgba(0xf4f5f7) : with_alpha(theme::white, 22);
-      Color fg = focused ? rgba(0x0b0d12) : theme::text;
-      Color fg2 = focused ? theme::ink2 : theme::text2;
-      if (focused) c.gfx.fill_round(MX - 6, y - 6, MW + 12, h + 12, 32, with_alpha(theme::white, 46));
-      c.gfx.fill_round(MX, y, MW, h, 26, bg);
-      c.fonts.heavy.draw(upper("Recommended"), MX + 40, y + 32, 17, with_alpha(fg, 150));
-      draw_text(c.fonts.heavy, r.headline, MX + 40, y + 62, 50, fg, MW - 340);
-      // Play pill.
-      int pw = 200, ph = 72, px = MX + MW - 40 - pw, py = y + 56;
-      c.gfx.fill_round(px, py, pw, ph, ph / 2, focused ? rgba(0x0b0d12) : with_alpha(theme::white, 40));
-      c.gfx.triangle_right(px + 40, py + 22, 28, theme::white);
-      c.fonts.heavy.draw("Play", px + 84, py + 20, 26, theme::white);
-      draw_text(c.fonts.regular, r.facts, MX + 40, y + 140, 22, fg2, MW - 80);
-      std::string why = ranking_.why;
-      if (!r.warnings.empty()) why += "  " + r.warnings[0];
-      draw_text(c.fonts.regular, why, MX + 40, y + 180, 20, focused ? with_alpha(fg, 150) : theme::text3, MW - 80);
-      y += h + 40;
+      draw_best(*ranking_.recommended, focus_index_ == 0);
       index = 1;
     }
-    // Table header.
-    int ty = has_recommended() ? TABLE_TOP : 80;
-    int rows_total = static_cast<int>(options_.size()) - index;
-    if (rows_total > 0) {
-      const char *heads[] = {"Quality", "Picture", "Audio", "Size", "Availability"};
-      const int cols[] = {C_QUALITY, C_PICTURE, C_AUDIO, C_SIZE, C_AVAIL};
-      for (int k = 0; k < 5; k++) c.fonts.bold.draw(upper(heads[k]), MX + cols[k], ty, 16, theme::text4);
+    int others = static_cast<int>(options_.size()) - index;
+    if (others > 0) {
+      text(Text::Eyebrow, upper(has_recommended() ? "Other versions" : "Versions"), RX, LIST_TOP - 40, tertiary);
+      float s = scroll_.value;
+      for (int i = 0; i < others; i++) {
+        float ry = LIST_TOP + (i - s) * (ROW + ROW_GAP);
+        if (ry < LIST_TOP - ROW / 2 || ry > LIST_TOP + VISIBLE * (ROW + ROW_GAP) - ROW / 2) continue;
+        int k = i + index;
+        draw_version(options_[static_cast<size_t>(k)], static_cast<int>(ry), k == focus_index_);
+      }
+      if (s + VISIBLE < others) c.icons.draw(Icon::ChevronDown, RX + RW / 2 - 18, LIST_TOP + VISIBLE * (ROW + ROW_GAP) - 4, 36, tertiary);
     }
-    int top = ty + 36;
-    float s = scroll_.value;
-    for (int i = 0; i < rows_total; i++) {
-      float ry = top + (i - s) * ROW;
-      if (ry < top - ROW / 2 || ry > H - ROW) continue;
-      const SourceOption &o = options_[static_cast<size_t>(i + index)];
-      bool focused = focus_index_ == i + index && modal_ == Modal::None;
-      int yy = static_cast<int>(ry);
-      if (focused) c.gfx.fill_round(MX, yy, MW, ROW - 4, 16, rgba(0xf4f5f7));
-      else c.gfx.fill_rect(MX + 28, yy, MW - 56, 1, theme::line);
-      Color fg = focused ? rgba(0x0b0d12) : (o.excluded ? theme::text4 : theme::text);
-      Color fg2 = focused ? theme::ink2 : (o.excluded ? theme::text4 : theme::text2);
-      int text_y = yy + (ROW - 4) / 2 - 15;
-      c.fonts.heavy.draw(o.resolution, MX + C_QUALITY, text_y - 1, 24, fg);
-      draw_text(c.fonts.regular, o.picture, MX + C_PICTURE, text_y, 21, fg2, C_AUDIO - C_PICTURE - 20);
-      draw_text(c.fonts.regular, o.audio, MX + C_AUDIO, text_y, 21, fg2, C_SIZE - C_AUDIO - 20);
-      draw_text(c.fonts.regular, o.size, MX + C_SIZE, text_y, 21, fg2, C_AVAIL - C_SIZE - 20);
-      std::string avail = o.availability;
-      bool warn = !o.cautions.empty();
-      if (warn) avail = o.cautions[0];
-      draw_text(c.fonts.regular, avail, MX + C_AVAIL, text_y, 21, warn ? (focused ? theme::warn_ink : theme::warn) : fg2, MW - C_AVAIL - 70);
-      c.icons.draw(Icon::ChevronRight, MX + MW - 56, yy + (ROW - 4) / 2 - 14, 28, with_alpha(fg, 120));
-    }
-    // The focused option's raw release name, for those who want it.
-    if (focus_index_ < static_cast<int>(options_.size())) {
-      draw_text(c.fonts.regular, options_[static_cast<size_t>(focus_index_)].release, MX + 28, H - 52, 18, theme::text4, MW - 56);
+    // What the keys do here.
+    int hx = RX;
+    hx += draw_hint(hx, H - 82, "OK", "Play") + 32;
+    draw_hint(hx, H - 82, "\xE2\x86\x92", details_ ? "Hide details" : "Release details");
+  }
+
+  void draw_best(const SourceOption &o, bool focused) {
+    Ctx &c = ctx();
+    int x = RX, y = 120, w = RW, h = 290;
+    float lift = focused ? lift_.value : 0;
+    if (focused) c.gfx.shadow(x, y, w, h, panel_radius, 30, 14, static_cast<Uint8>(150 * lift));
+    c.gfx.fill_round(x, y, w, h, panel_radius, focused ? focus : glass);
+    Color fg = focused ? ink : primary, fg2 = focused ? ink2 : secondary;
+    // "Best match" with a small amber mark.
+    c.gfx.fill_circle(x + 48, y + 54, 7, accent);
+    text(Text::Eyebrow, upper("Best match"), x + 66, y + 42, focused ? ink2 : accent);
+    text(Text::Title1, o.headline, x + 40, y + 80, fg, w - 260);
+    text(Text::Body, picture_words(o) + " \xC2\xB7 " + o.audio, x + 40, y + 150, fg2, w - 260);
+    paragraph(Text::Callout, ranking_.why, x + 40, y + 196, fg2, w - 260, 2);
+    // Play affordance.
+    int r = 52, cx = x + w - 40 - r, cy = y + h / 2;
+    c.gfx.fill_circle(cx, cy, r, focused ? ink : glass_light);
+    c.gfx.triangle_right(cx - 16, cy - 20, 40, focused ? focus : primary);
+    if (!o.cautions.empty()) {
+      c.icons.draw(Icon::Warning, x + 40, y + h - 46, 26, focused ? caution_ink : caution);
+      text(Text::Caption, o.warnings[0], x + 76, y + h - 46, focused ? caution_ink : caution, w - 360);
     }
   }
 
-  void draw_modal() {
-    if (modal_ == Modal::None) return;
+  void draw_version(const SourceOption &o, int y, bool focused) {
     Ctx &c = ctx();
-    c.gfx.fill_rect(0, 0, W, H, with_alpha(theme::bg, 215));
-    int w = 980, x = (W - w) / 2;
+    int x = RX, w = RW;
+    if (focused) draw_row_focus(x, y, w, ROW);
+    else c.gfx.fill_round(x, y, w, ROW, 16, with_alpha(raised, 150));
+    Color fg = focused ? ink : (o.excluded ? tertiary : primary);
+    Color fg2 = focused ? ink2 : (o.excluded ? tertiary : secondary);
+    int ty = y + (ROW - line_for(Text::Headline)) / 2;
+    text(Text::Headline, o.resolution, x + 28, ty, fg);
+    text(Text::Callout, picture_words(o) + " \xC2\xB7 " + o.audio, x + 170, y + (ROW - line_for(Text::Callout)) / 2, fg2, w - 170 - 330);
+    Availability a = availability(o);
+    int aw = measure(Text::Caption, a.words);
+    int ax = x + w - 28 - aw;
+    text(Text::Caption, a.words, ax, y + (ROW - line_for(Text::Caption)) / 2, focused && a.dot.r == caution.r ? caution_ink : fg2, 300);
+    c.gfx.fill_circle(ax - 18, y + ROW / 2, 6, a.dot);
+  }
+
+  // Release details for the focused version: everything technical, on request.
+  void draw_details() {
+    float a = details_anim_.value;
+    if (a <= 0.01f || state_ != State::Ready || options_.empty()) return;
+    Ctx &c = ctx();
+    const SourceOption &o = options_[static_cast<size_t>(focus_index_)];
+    int w = 640, x = W - margin - w + static_cast<int>((1.0f - a) * 60), y = 96, h = H - 192;
+    c.gfx.shadow(x, y, w, h, panel_radius, 36, 16, static_cast<Uint8>(170 * a));
+    c.gfx.fill_round(x, y, w, h, panel_radius, fade(rgba(0x1c1e23, 252), a));
+    int px = x + 44, pw = w - 88, py = y + 44;
+    text(Text::Eyebrow, upper("Release details"), px, py, fade(tertiary, a));
+    py += 34;
+    text(Text::Title2, o.headline, px, py, fade(primary, a), pw);
+    py += 62;
+    auto row = [&](const std::string &label, const std::string &value, int lines = 1) {
+      if (value.empty()) return;
+      text(Text::Footnote, upper(label), px, py, fade(tertiary, a));
+      py += 28;
+      py = paragraph(Text::Callout, value, px, py, fade(primary, a), pw, lines) + 18;
+    };
+    row("Picture", picture_words(o));
+    row("Sound", o.audio);
+    row("File", join({o.size, o.availability}));
+    row("Details", o.facts, 2);
+    row("Release name", o.release, 3);
+    for (auto &warning : o.warnings) {
+      c.icons.draw(Icon::Warning, px, py, 26, fade(caution, a));
+      py = paragraph(Text::Caption, warning, px + 38, py, fade(caution, a), pw - 38, 2) + 8;
+    }
+    paragraph(Text::Caption, "These details come from the release name, not from the file itself.", px, y + h - 92, fade(tertiary, a), pw, 2);
+  }
+
+  void draw_modal() {
+    float a = modal_anim_.value;
+    if (modal_ == Modal::None || a <= 0.01f) return;
+    Ctx &c = ctx();
+    c.gfx.fill_rect(0, 0, W, H, with_alpha(ground, static_cast<int>(200 * a)));
+    int w = 920, x = (W - w) / 2;
     if (modal_ == Modal::Resolving) {
       struct StepRow { const char *id; const char *label; };
-      std::vector<StepRow> steps = {{"adding", "Send to AllDebrid"}};
-      if (saw_caching_) steps.push_back({"caching", "AllDebrid downloads the release"});
-      steps.push_back({"files", "Find the video file"});
-      steps.push_back({"unlocking", "Get the stream"});
-      int h = 360 + static_cast<int>(steps.size()) * 56 + (saw_caching_ ? 30 : 0), y = (H - h) / 2;
-      c.gfx.fill_round(x, y, w, h, 32, theme::panel);
-      c.fonts.bold.draw(upper("Getting ready"), x + 64, y + 56, 18, theme::text3);
-      draw_text(c.fonts.heavy, chosen_.headline, x + 64, y + 88, 44, theme::text, w - 128);
+      std::vector<StepRow> steps = {{"adding", "Sending to AllDebrid"}};
+      if (saw_caching_) steps.push_back({"caching", "AllDebrid is fetching it"});
+      steps.push_back({"files", "Finding the right file"});
+      steps.push_back({"unlocking", "Getting the stream"});
+      int h = 330 + static_cast<int>(steps.size()) * 58 + (saw_caching_ ? 34 : 0), y = (H - h) / 2;
+      draw_panel(x, y, w, h, a);
+      text(Text::Eyebrow, upper("Starting"), x + 56, y + 52, fade(accent, a));
+      text(Text::Title2, chosen_.headline, x + 56, y + 84, fade(primary, a), w - 112);
       static const char *order[] = {"starting", "adding", "caching", "files", "unlocking", "preparing", "ready"};
       auto rank = [](const std::string &id) {
         for (int i = 0; i < 7; i++) if (id == order[i]) return i;
         return 0;
       };
       int now_rank = rank(step_);
-      int sy = y + 176;
+      int sy = y + 162;
       for (auto &st : steps) {
         std::string id = st.id;
         int r = rank(id);
         bool preparing = id == "unlocking" && step_ == "preparing";
         bool done = now_rank > r && !preparing;
         bool current = now_rank == r || preparing;
-        if (done) c.icons.draw(Icon::Check, x + 64, sy, 30, theme::ok);
-        else if (current) draw_spinner(x + 79, sy + 15, 30, theme::text);
-        else c.gfx.fill_circle(x + 79, sy + 15, 6, theme::text4);
-        c.fonts.regular.draw(st.label, x + 116, sy, 26, done ? theme::text2 : current ? theme::text : theme::text4);
+        if (done) c.icons.draw(Icon::Check, x + 56, sy, 30, fade(good, a));
+        else if (current) draw_spinner(x + 71, sy + 15, 30, primary);
+        else c.gfx.fill_circle(x + 71, sy + 15, 5, fade(tertiary, a));
+        text(Text::Body, st.label, x + 108, sy - 2, fade(done ? secondary : current ? primary : tertiary, a));
         if (id == "caching" && fraction_ >= 0 && current) {
-          draw_progress(x + 116, sy + 44, 520, 8, fraction_);
-          c.fonts.regular.draw(std::to_string(static_cast<int>(fraction_ * 100)) + "%", x + 656, sy + 34, 22, theme::text2);
+          draw_progress(x + 108, sy + 44, 520, 8, fraction_);
+          text(Text::Callout, std::to_string(static_cast<int>(fraction_ * 100)) + "%", x + 648, sy + 32, fade(secondary, a));
         }
-        sy += id == "caching" ? 86 : 56;
+        sy += id == "caching" ? 92 : 58;
       }
-      if (!step_label_.empty()) draw_text(c.fonts.regular, step_label_, x + 64, sy + 8, 21, theme::text3, w - 128);
-      draw_button(x + 64, y + h - 96, "Cancel", true, false, -1, 60);
+      ButtonSpec cancel{"Cancel", -1, true};
+      cancel.h = 64;
+      cancel.alpha = a;
+      draw_button(x + 56, y + h - 100, cancel);
       return;
     }
     if (modal_ == Modal::ChooseFile || modal_ == Modal::ChooseQuality) {
       int n = static_cast<int>(choices_.size());
       int shown = std::min(n, 7);
-      int h = 200 + shown * 72, y = (H - h) / 2;
-      c.gfx.fill_round(x, y, w, h, 32, theme::panel);
-      c.fonts.heavy.draw(modal_ == Modal::ChooseFile ? "Which file?" : "Which quality?", x + 64, y + 52, 40, theme::text);
-      c.fonts.regular.draw(modal_ == Modal::ChooseFile ? "This release has several videos." : "AllDebrid offers these versions.", x + 64, y + 104, 22, theme::text3);
+      int h = 210 + shown * 76, y = (H - h) / 2;
+      draw_panel(x, y, w, h, a);
+      text(Text::Title2, modal_ == Modal::ChooseFile ? "Which file?" : "Which quality?", x + 56, y + 50, fade(primary, a));
+      text(Text::Callout, modal_ == Modal::ChooseFile ? "This release holds several videos." : "AllDebrid offers these versions.", x + 56, y + 104,
+           fade(secondary, a));
       int first = std::max(0, std::min(choice_ - 3, n - shown));
-      int ry = y + 150;
+      int ry = y + 160;
       for (int i = first; i < first + shown; i++) {
         bool f = i == choice_;
-        if (f) c.gfx.fill_round(x + 40, ry, w - 80, 64, 16, rgba(0xf4f5f7));
-        draw_text(c.fonts.regular, choices_[static_cast<size_t>(i)].label, x + 64, ry + 17, 22, f ? theme::ink : theme::text, w - 300);
-        draw_text_right(c.fonts.regular, choices_[static_cast<size_t>(i)].detail, x + w - 64, ry + 17, 22, f ? theme::ink2 : theme::text3);
-        ry += 72;
+        if (f) draw_row_focus(x + 32, ry, w - 64, 66);
+        text(Text::Callout, choices_[static_cast<size_t>(i)].label, x + 56, ry + 17, f ? ink : primary, w - 320);
+        text_right(Text::Callout, choices_[static_cast<size_t>(i)].detail, x + w - 56, ry + 17, f ? ink2 : secondary);
+        ry += 76;
       }
       return;
     }
     if (modal_ == Modal::Failed) {
-      int h = 400, y = (H - h) / 2;
-      c.gfx.fill_round(x, y, w, h, 32, theme::panel);
-      c.icons.draw(Icon::Warning, x + 64, y + 56, 44, theme::warn);
-      c.fonts.heavy.draw("That source didn\xE2\x80\x99t work", x + 128, y + 56, 40, theme::text);
-      draw_paragraph(c.fonts.regular, failure_, x + 64, y + 140, 24, 36, theme::text2, w - 128, 3);
-      int bx = x + 64;
-      bx += draw_button(bx, y + h - 110, "Choose another", fail_focus_ == 0, true, -1, 64) + 16;
-      draw_button(bx, y + h - 110, "Try again", fail_focus_ == 1, false, -1, 64);
+      int h = 420, y = (H - h) / 2;
+      draw_panel(x, y, w, h, a);
+      c.icons.draw(Icon::Warning, x + 56, y + 56, 40, fade(caution, a));
+      text(Text::Title2, "That version didn\xE2\x80\x99t work", x + 112, y + 54, fade(primary, a));
+      paragraph(Text::Body, failure_, x + 56, y + 130, fade(secondary, a), w - 112, 3);
+      int bx = x + 56;
+      bool has_next = focus_index_ + 1 < static_cast<int>(options_.size());
+      ButtonSpec next{has_next ? "Try the next best" : "Back to versions", -1, fail_focus_ == 0};
+      next.alpha = a;
+      bx += draw_button(bx, y + h - 112, next) + 20;
+      ButtonSpec again{"Try again", -1, fail_focus_ == 1};
+      again.alpha = a;
+      draw_button(bx, y + h - 112, again);
     }
   }
 
@@ -477,15 +557,19 @@ class SourcesScreen : public Screen {
 
   PlayRequest req_;
   bool autostart_;
+  Backdrop backdrop_;
   State state_ = State::Loading;
   std::string error_;
+  long long loading_since_ = 0;
   Ranking ranking_;
   std::vector<SourceOption> options_;
-  int focus_index_ = 0;
-  Anim focus_, scroll_;
+  int focus_index_ = 0, prev_index_ = -1;
+  Anim lift_{focus_rate, 1}, prev_lift_{focus_rate}, scroll_{scroll_rate}, details_anim_{fade_rate}, modal_anim_{fade_rate};
+  bool details_ = false;
   bool account_known_ = false, durable_ = false;
   Pairing pairing_;
   Modal modal_ = Modal::None;
+  long long modal_since_ = 0;
   SourceOption chosen_;
   std::string job_id_, step_, step_label_;
   double fraction_ = -1;

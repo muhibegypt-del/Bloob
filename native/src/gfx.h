@@ -29,8 +29,9 @@ class Font {
 
  private:
   struct Glyph {
-    SDL_Rect src;
-    float xoff, yoff, advance;
+    SDL_Rect src;                   // in the (horizontally oversampled) atlas
+    float xoff, yoff, xoff2, yoff2;  // destination box relative to the pen, in pixels
+    float advance;
   };
   struct Atlas {
     SDL_Texture *texture = nullptr;
@@ -67,6 +68,8 @@ class Gfx {
   void fill_circle(int cx, int cy, int radius, Color color);
   void triangle_right(int x, int y, int size, Color color);
   void bars(int x, int y, int size, Color color);
+  // Soft drop shadow for a rounded box: `blur` px of falloff, offset by (dx, dy).
+  void shadow(int x, int y, int w, int h, int radius, int blur, int dy, Uint8 alpha);
   // Colour with alpha running from a0 to a1, left→right or top→bottom.
   void gradient_h(int x, int y, int w, int h, Color color, Uint8 a0, Uint8 a1);
   void gradient_v(int x, int y, int w, int h, Color color, Uint8 a0, Uint8 a1);
@@ -74,18 +77,28 @@ class Gfx {
   void texture(SDL_Texture *texture, int x, int y, int w, int h, Uint8 alpha = 255);
   void clip(int x, int y, int w, int h);
   void unclip();
+  // Draw into an offscreen layer, then composite it with alpha and a vertical
+  // offset (screen transitions). Returns false if layers are unavailable.
+  bool begin_layer();
+  void end_layer(float alpha, int dy);
 
  private:
   SDL_Renderer *renderer_ = nullptr;
-  SDL_Texture *circle_ = nullptr;    // anti-aliased disc used for corners
-  SDL_Texture *triangle_ = nullptr;  // anti-aliased play glyph
+  // Shapes are rasterised at the exact size they are drawn: scaling one large
+  // texture down without mipmaps aliases (jagged corners on the TV).
+  std::map<int, SDL_Texture *> discs_;      // radius -> disc
+  std::map<int, SDL_Texture *> triangles_;  // size -> play glyph
+  std::map<std::pair<int, int>, SDL_Texture *> shadows_;  // (radius, blur) -> 9-slice source
+  SDL_Texture *disc(int radius);
+  SDL_Texture *triangle(int size);
+  SDL_Texture *shadow_texture(int radius, int blur);
   SDL_Texture *ramp_h_ = nullptr;    // 256×1 alpha ramp
   SDL_Texture *ramp_v_ = nullptr;    // 1×256 alpha ramp
   SDL_Texture *canvas_ = nullptr;
+  SDL_Texture *layer_ = nullptr;
   std::map<std::pair<int, int>, SDL_Texture *> rings_;  // (radius, width) -> anti-aliased annulus
   SDL_Texture *ring(int radius, int width);
   int w_ = 1920, h_ = 1080;
-  static constexpr int kCircle = 256;
 };
 
 // UTF-8 → code points.

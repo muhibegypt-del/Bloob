@@ -92,3 +92,13 @@ describe('service resolver', () => {
     expect(resolver.status(job.id)).toBeNull();
   });
 });
+
+describe('service catalogue', () => {
+  it('quietens shouting episode titles but keeps acronyms and mixed case', async () => {
+    const { calmTitle } = (await import('../../service/catalog.js')).default;
+    expect(calmTitle('THE ONE WHERE MONICA GETS A ROOMMATE')).toBe('The One Where Monica Gets a Roommate');
+    expect(calmTitle('OUT OF THE PAST')).toBe('Out of the Past');
+    expect(calmTitle('NCIS')).toBe('NCIS');
+    expect(calmTitle('iCarly Saves TV')).toBe('iCarly Saves TV');
+  });
+});
