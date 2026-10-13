@@ -1,5 +1,13 @@
 # Bloob and Buna: complete project handoff
 
+## Current branch work (13 October 2026)
+
+`bloob-v1` builds on the prior 0.2 branch. Read `docs/Bloob-v1-implementation-plan.md` before continuing. Buna now opens a `PlaybackHost` rather than receiving a DOM element; `webVideoHost()` creates the existing web backend. `src/buna/backends/webos-media-tracks.ts` subscribes to source metadata for the active video `mediaId` and tries indexed native audio or progressive-file subtitle selection only when the TV lists tracks. The selection waits for a service success response, and the player shows failure instead of silently closing its menu. Embedded HLS subtitle switching is held off because it is unverified and may disrupt playback on some firmware. None of this new TV service behavior has been validated on the owner's set yet.
+
+`App.tsx` now numbers watch attempts so late source results cannot open an old episode. `Sources.tsx` aborts or discards stale search, pairing, and resolve replies. `Details.tsx` passes episode order through the watch flow; the player has an end panel with next episode, replay, source change, and exit. Tiles load lazily and the source cache holds at most 40 titles. Source selection and current playback still use the 0.2 service and LG-backed web video route. Do not claim final UX or native track support until the TV acceptance pass.
+
+Local typecheck, 64 unit tests, and production build passed on this branch. `npm run check` reached and passed those stages, then stopped before its browser run because `ffmpeg` is unavailable on this Windows host; the E2E script also defaults to a Linux Chromium path. No files or packages on the TV were touched during this branch work. Remaining priorities are one TV pass for track exposure/selection, PIN persistence, seek and exit; then address any observed gaps, polish the remote UI, and package a release candidate. Never print a paired key or resolved URL.
+
 Read this file before changing the application. This repository contains an independent LG webOS TV streaming prototype, research notes about a reference app called **Elements of A**, and a plan for **Buna**, our own playback and UI runtime. The user wants a polished television experience with excellent browsing, source choice, reliable playback, accurate seeking, working audio/subtitle controls, and efficient use of the LG media pipeline. The user explicitly wants no protected-content investigation. Do not present static code analysis as a live trace.
 
 ## The user's actual goal

@@ -2,7 +2,14 @@ import {
   fail, ok,
   type BackendCapabilities, type BackendEvent, type BackendSnapshot, type BunaBackend,
   type BunaError, type CommandResult, type ResolvedSource, type Track,
+  type PlaybackHost,
 } from '../types';
+import { WebosMediaTracks } from './webos-media-tracks';
+
+/** Bind a rendered video surface to Buna without making the runtime DOM-specific. */
+export function webVideoHost(video: HTMLVideoElement): PlaybackHost {
+  return { createBackend: () => new WebVideoBackend(video) };
+}
 
 type AudioTrackLike = { id?: string; label?: string; language?: string; enabled: boolean };
 type TrackListLike<T> = { length: number; [index: number]: T } & Partial<EventTarget>;
@@ -32,9 +39,12 @@ export class WebVideoBackend implements BunaBackend {
   private firstFrameSent = false;
   private frameHandle: number | undefined;
   private disposed = false;
+  private readonly nativeTracks: WebosMediaTracks;
+  private transport: ResolvedSource['transport'] = 'progressive';
 
   constructor(video: HTMLVideoElement) {
     this.video = video as TrackVideo;
+    this.nativeTracks = new WebosMediaTracks(video, () => this.emit({ type: 'tracks' }));
     this.video.preload = 'auto';
     this.video.playsInline = true;
     for (const name of MEDIA_EVENTS) this.listen(this.video, name, () => this.onMediaEvent(name));
@@ -54,8 +64,11 @@ export class WebVideoBackend implements BunaBackend {
     this.cancelFrameCallback();
     this.firstFrameSent = false;
     this.pendingStart = startPosition > 0 ? startPosition : 0;
+    this.nativeTracks.stop();
+    this.transport = source.transport;
     this.video.src = source.url;
     this.video.load();
+    this.nativeTracks.start();
     return ok;
   }
 
@@ -87,7 +100,8 @@ export class WebVideoBackend implements BunaBackend {
     return ok;
   }
 
-  selectAudio(id: string): CommandResult {
+  selectAudio(id: string): Promise<CommandResult> | CommandResult {
+    if (id.startsWith('native-a#')) return this.nativeTracks.selectAudio(id);
     const tracks = this.video.audioTracks;
     if (!tracks || tracks.length < 2) return fail('unsupported', 'No alternative audio tracks are exposed');
     let found = false;
@@ -99,17 +113,21 @@ export class WebVideoBackend implements BunaBackend {
     return ok;
   }
 
-  selectSubtitle(id: string | null): CommandResult {
+  selectSubtitle(id: string | null): Promise<CommandResult> | CommandResult {
+    if (id?.startsWith('native-t#') || (id === null && this.nativeTracks.canSelectText() && !this.domTextTracks().length)) {
+      if (this.transport === 'hls') return fail('unsupported', 'This TV cannot reliably switch embedded HLS subtitles.');
+      return this.nativeTracks.selectText(id);
+    }
     const tracks = this.video.textTracks;
-    let found = id === null;
+    const found = id === null || this.domTextTracks().some(track => track.id === id);
+    if (!found) return fail('failed', 'Subtitle track not found');
     for (let i = 0; i < tracks.length; i++) {
       const track = tracks[i];
       if (!SUBTITLE_KINDS.has(track.kind)) continue;
       const match = trackId(track.id, 't', i) === id;
-      if (match) found = true;
       track.mode = match ? 'showing' : 'disabled';
     }
-    return found ? ok : fail('failed', 'Subtitle track not found');
+    return ok;
   }
 
   snapshot(): BackendSnapshot {
@@ -129,16 +147,23 @@ export class WebVideoBackend implements BunaBackend {
 
   audioTracks(): Track[] {
     const tracks = this.video.audioTracks;
-    if (!tracks) return [];
-    return Array.from({ length: tracks.length }, (_, i) => ({
+    const dom = tracks ? Array.from({ length: tracks.length }, (_, i) => ({
       id: trackId(tracks[i].id, 'a', i),
       label: tracks[i].label || '',
       language: tracks[i].language || '',
       selected: !!tracks[i].enabled,
-    }));
+    })) : [];
+    const native = this.nativeTracks.audioTracks();
+    return native.length > dom.length ? native : dom;
   }
 
   textTracks(): Track[] {
+    const dom = this.domTextTracks();
+    const native = this.nativeTracks.textTracks();
+    return this.transport !== 'hls' && native.length > dom.length ? native : dom;
+  }
+
+  private domTextTracks(): Track[] {
     const tracks = this.video.textTracks;
     const result: Track[] = [];
     for (let i = 0; i < tracks.length; i++) {
@@ -152,8 +177,10 @@ export class WebVideoBackend implements BunaBackend {
     const v = this.video;
     const loaded = v.readyState >= 1;
     const seekable = v.seekable.length > 0 && Number.isFinite(v.seekable.end(v.seekable.length - 1)) && v.seekable.end(v.seekable.length - 1) > 0;
-    const audioCount = v.audioTracks ? v.audioTracks.length : -1;
+    const audioCount = this.audioTracks().length;
     const textCount = this.textTracks().length;
+    const nativeAudio = this.nativeTracks.canSelectAudio() && this.nativeTracks.audioTracks().length > (v.audioTracks?.length || 0);
+    const nativeText = this.nativeTracks.canSelectText() && this.transport !== 'hls' && this.nativeTracks.textTracks().length > this.domTextTracks().length;
     return {
       seek: {
         supported: seekable,
@@ -161,15 +188,17 @@ export class WebVideoBackend implements BunaBackend {
         tv: 'unverified',
       },
       audioTrackSelection: {
-        supported: audioCount > 1,
-        reason: audioCount < 0
-          ? "The TV's web video player doesn't list audio tracks for this file. It plays the file's default track."
+        supported: nativeAudio || (!!v.audioTracks && audioCount > 1),
+        reason: audioCount === 0
+          ? "The TV hasn't exposed audio tracks for this file. It plays the default track."
           : audioCount <= 1 ? 'This file has one audio track.' : undefined,
         tv: 'unverified',
       },
       textTrackSelection: {
-        supported: textCount > 0,
-        reason: textCount ? undefined : "The TV's web video player doesn't list subtitles for this file.",
+        supported: nativeText || this.domTextTracks().length > 0,
+        reason: textCount ? this.transport === 'hls' && !this.domTextTracks().length
+          ? 'Embedded HLS subtitle switching is unreliable on this TV.' : undefined
+          : "The TV hasn't exposed selectable subtitles for this file.",
         tv: 'unverified',
       },
       externalSubtitles: { supported: false, reason: 'External subtitles are not implemented yet.', tv: 'unverified' },
@@ -186,6 +215,7 @@ export class WebVideoBackend implements BunaBackend {
 
   stop(): void {
     this.cancelFrameCallback();
+    this.nativeTracks.stop();
     this.pendingStart = 0;
     try {
       this.video.pause();
@@ -199,6 +229,7 @@ export class WebVideoBackend implements BunaBackend {
     this.disposed = true;
     this.listeners.clear();
     this.stop();
+    this.nativeTracks.dispose();
     this.detach.splice(0).forEach(remove => remove());
   }
 

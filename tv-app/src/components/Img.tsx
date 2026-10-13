@@ -14,6 +14,7 @@ export function Img(props: { src?: string; class?: string; alt?: string; onError
       classList={{ loaded: loaded() }}
       src={props.src}
       alt={props.alt ?? ''}
+      loading="lazy"
       decoding="async"
       onLoad={() => setLoaded(true)}
       onError={() => props.onError?.()}

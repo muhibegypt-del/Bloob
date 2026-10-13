@@ -16,7 +16,7 @@ export function Details(props: {
   item: MetaPreview;
   active: boolean;
   onBack: () => void;
-  onPlay: (video?: Video) => void;
+  onPlay: (video?: Video, episodeOrder?: Video[]) => void;
 }) {
   const [meta] = createResource(() => props.item, (item) => props.source.meta(item.type, item.id));
   const [zone, setZone] = createSignal<Zone>('buttons');
@@ -35,6 +35,12 @@ export function Details(props: {
       .sort((a, b) => (a.episode ?? 0) - (b.episode ?? 0)),
   );
   const isSeries = () => props.item.type === 'series' && seasons().length > 0;
+  const episodeOrder = createMemo(() => [...(meta()?.videos ?? [])].sort((a, b) => {
+    const aSeason = a.season || Number.MAX_SAFE_INTEGER;
+    const bSeason = b.season || Number.MAX_SAFE_INTEGER;
+    return aSeason - bSeason || (a.episode ?? 0) - (b.episode ?? 0);
+  }));
+  const play = (video?: Video) => props.onPlay(video, isSeries() ? episodeOrder() : undefined);
   // The main Play button starts the first episode of the selected season.
   const playLabel = () => {
     const first = episodes()[0];
@@ -46,8 +52,8 @@ export function Details(props: {
     if (!props.active) return;
     if (key === 'back') return props.onBack();
     if (key === 'enter') {
-      if (zone() === 'buttons' && button() === 0) return props.onPlay(isSeries() ? episodes()[0] : undefined);
-      if (zone() === 'episodes') return props.onPlay(episodes()[episode()]);
+      if (zone() === 'buttons' && button() === 0) return play(isSeries() ? episodes()[0] : undefined);
+      if (zone() === 'episodes') return play(episodes()[episode()]);
     }
     switch (zone()) {
       case 'buttons':
@@ -85,7 +91,7 @@ export function Details(props: {
         <div class="details-info" style={{ bottom: isSeries() ? '420px' : '150px' }}>
           <MetaInfo item={meta() ?? props.item} lines={isSeries() ? 2 : 4} />
           <div class="details-buttons">
-            <div class="btn" classList={{ focused: zone() === 'buttons' && button() === 0 }} onClick={() => props.onPlay(isSeries() ? episodes()[0] : undefined)}>
+            <div class="btn" classList={{ focused: zone() === 'buttons' && button() === 0 }} onClick={() => play(isSeries() ? episodes()[0] : undefined)}>
               <PlayIcon /> {playLabel()}
             </div>
             <div class="btn" classList={{ focused: zone() === 'buttons' && button() === 1 }}>
@@ -124,7 +130,7 @@ export function Details(props: {
             </div>
             <Row items={episodes()} focusedIndex={episode()} active={zone() === 'episodes'}>
               {(v, focused) => (
-                <div class="tile" classList={{ focused: focused() }} onClick={() => props.onPlay(v)}>
+                <div class="tile" classList={{ focused: focused() }} onClick={() => play(v)}>
                   <div class="tile-art">
                     <Img class="bg" src={v.thumbnail} />
                   </div>

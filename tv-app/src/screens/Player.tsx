@@ -1,5 +1,7 @@
 import { createEffect, createMemo, createSignal, For, on, onCleanup, onMount, Show, type JSX } from 'solid-js';
 import { buna, useBunaState, type BunaSession, type PlayIntent, type ResolvedSource, type Track } from '../buna';
+import { webVideoHost } from '../buna/backends/web-video';
+import type { Video } from '../data/types';
 import { clock, delta, timeOfDay } from '../format';
 import { useKeys, type Key } from '../keys';
 
@@ -10,15 +12,19 @@ export type PlayerExit = 'back' | 'choose-source';
  * Everything about media comes from the Buna session's state, and every
  * media action is a session command.
  */
-export function Player(props: { intent: PlayIntent; source: ResolvedSource; onExit: (reason: PlayerExit) => void }) {
+export function Player(props: {
+  intent: PlayIntent; source: ResolvedSource; nextEpisode?: Video;
+  onNextEpisode: (video: Video) => void; onExit: (reason: PlayerExit) => void;
+}) {
   let video!: HTMLVideoElement;
   const [session, setSession] = createSignal<BunaSession | null>(null);
-  onMount(() => setSession(buna.open({ intent: props.intent, source: props.source, video })));
+  onMount(() => setSession(buna.open({ intent: props.intent, source: props.source, host: webVideoHost(video) })));
   onCleanup(() => session()?.dispose());
 
   return <div class="player-screen">
     <video ref={video} playsinline />
-    <Show when={session()} keyed>{active => <PlayerChrome session={active} intent={props.intent} onExit={props.onExit} />}</Show>
+    <Show when={session()} keyed>{active => <PlayerChrome session={active} intent={props.intent}
+      nextEpisode={props.nextEpisode} onNextEpisode={props.onNextEpisode} onExit={props.onExit} />}</Show>
   </div>;
 }
 
@@ -29,7 +35,10 @@ type Control = { id: string; label: string; icon: () => JSX.Element; run: () => 
 const HUD_TIMEOUT_MS = 6000;
 const BUFFERING_DELAY_MS = 500;
 
-function PlayerChrome(props: { session: BunaSession; intent: PlayIntent; onExit: (reason: PlayerExit) => void }) {
+function PlayerChrome(props: {
+  session: BunaSession; intent: PlayIntent; nextEpisode?: Video;
+  onNextEpisode: (video: Video) => void; onExit: (reason: PlayerExit) => void;
+}) {
   const session = props.session;
   const state = useBunaState(session);
   const [hud, setHud] = createSignal<'hidden' | 'scrub' | 'full'>('full');
@@ -38,8 +47,10 @@ function PlayerChrome(props: { session: BunaSession; intent: PlayIntent; onExit:
   const [menu, setMenu] = createSignal<Menu>(null);
   const [menuIndex, setMenuIndex] = createSignal(0);
   const [errorIndex, setErrorIndex] = createSignal(0);
+  const [endIndex, setEndIndex] = createSignal(0);
   const [showSpinner, setShowSpinner] = createSignal(false);
   const [showResume, setShowResume] = createSignal(false);
+  const [controlNotice, setControlNotice] = createSignal<string | null>(null);
   const [now, setNow] = createSignal(Date.now());
   let hideTimer: number | undefined;
   let spinnerTimer: number | undefined;
@@ -126,16 +137,26 @@ function PlayerChrome(props: { session: BunaSession; intent: PlayIntent; onExit:
     setMenuIndex(Math.max(0, rows.findIndex(row => (row ? row.selected : !state.textTracks.some(t => t.selected)))));
   }
 
-  function chooseMenuRow(index: number) {
+  async function chooseMenuRow(index: number) {
     const row = menuRows()[index];
-    if (menu() === 'audio' && row) session.selectAudio(row.id);
-    if (menu() === 'subtitles') session.selectSubtitle(row ? row.id : null);
+    const result = menu() === 'audio' && row
+      ? await session.selectAudio(row.id)
+      : menu() === 'subtitles' ? await session.selectSubtitle(row ? row.id : null) : null;
+    if (!result) return;
+    if (!result.ok) { setControlNotice(result.message); return; }
+    setControlNotice(null);
     setMenu(null);
     reveal();
   }
 
   const errorActions = () => [
     ...(state.error?.retryable ? [{ label: 'Try again', run: () => void session.retry() }] : []),
+    { label: 'Choose another source', run: () => props.onExit('choose-source') },
+    { label: 'Exit player', run: () => props.onExit('back') },
+  ];
+  const endActions = () => [
+    ...(props.nextEpisode ? [{ label: 'Next episode', run: () => props.onNextEpisode(props.nextEpisode!) }] : []),
+    { label: 'Watch again', run: () => { if (session.restart().ok) void session.play(); } },
     { label: 'Choose another source', run: () => props.onExit('choose-source') },
     { label: 'Exit player', run: () => props.onExit('back') },
   ];
@@ -165,12 +186,20 @@ function PlayerChrome(props: { session: BunaSession; intent: PlayIntent; onExit:
       if (key === 'back' || key === 'stop') props.onExit('back');
       return;
     }
+    if (state.phase === 'ended') {
+      const actions = endActions();
+      if (key === 'left' || key === 'up') setEndIndex(i => Math.max(0, i - 1));
+      if (key === 'right' || key === 'down') setEndIndex(i => Math.min(actions.length - 1, i + 1));
+      if (key === 'enter') actions[Math.min(endIndex(), actions.length - 1)].run();
+      if (key === 'back' || key === 'stop') props.onExit('back');
+      return;
+    }
     if (menu()) {
       const count = menuRows().length;
       if (key === 'up') setMenuIndex(i => Math.max(0, i - 1));
       if (key === 'down') setMenuIndex(i => Math.min(Math.max(0, count - 1), i + 1));
-      if (key === 'enter' && count) chooseMenuRow(menuIndex());
-      if (key === 'back' || key === 'left') { setMenu(null); reveal(); }
+      if (key === 'enter' && count) void chooseMenuRow(menuIndex());
+      if (key === 'back' || key === 'left') { setControlNotice(null); setMenu(null); reveal(); }
       return;
     }
     if (onTransportKey(key)) return;
@@ -238,7 +267,20 @@ function PlayerChrome(props: { session: BunaSession; intent: PlayIntent; onExit:
       </div>
     </div>}</Show>
 
-    <div class="player-hud" classList={{ visible: hud() !== 'hidden' && state.phase !== 'error' && !(state.phase === 'loading' && state.firstFrameMs === null), scrub: hud() === 'scrub' }}>
+    <Show when={state.phase === 'ended'}>
+      <div class="player-ended">
+        <div class="player-ended-kicker">Finished watching</div>
+        <h2>{props.intent.title}</h2>
+        <Show when={props.nextEpisode}>{episode => <p>Up next: {episode().title}</p>}</Show>
+        <div class="player-ended-actions">
+          <For each={endActions()}>{(action, index) =>
+            <button classList={{ focused: endIndex() === index() }} onClick={action.run}>{action.label}</button>
+          }</For>
+        </div>
+      </div>
+    </Show>
+
+    <div class="player-hud" classList={{ visible: hud() !== 'hidden' && state.phase !== 'error' && state.phase !== 'ended' && !(state.phase === 'loading' && state.firstFrameMs === null), scrub: hud() === 'scrub' }}>
       <div class="player-top">
         <div>
           <div class="player-title">{props.intent.title}</div>
@@ -305,6 +347,7 @@ function PlayerChrome(props: { session: BunaSession; intent: PlayIntent; onExit:
           </button>
         }</For>
       </Show>
+      <Show when={controlNotice()}>{notice => <p class="player-menu-note" role="alert">{notice()}</p>}</Show>
       <p class="player-menu-hint">Back to close</p>
     </div>}</Show>
   </>;

@@ -232,22 +232,28 @@ export class BunaSession {
     return result;
   }
 
-  selectAudio(id: string): CommandResult {
+  async selectAudio(id: string): Promise<CommandResult> {
     const blocked = this.guard();
     if (blocked) return blocked;
     const capability = this.backend.capabilities().audioTrackSelection;
     if (!capability.supported) return fail('unsupported', capability.reason || 'Audio track selection is unavailable');
-    const result = this.backend.selectAudio(id);
+    let result: CommandResult;
+    try { result = await this.backend.selectAudio(id); }
+    catch { result = fail('failed', 'The TV could not change audio tracks'); }
+    if (this.disposed) return fail('disposed', 'Playback has ended');
     this.refreshTracks();
     return result;
   }
 
-  selectSubtitle(id: string | null): CommandResult {
+  async selectSubtitle(id: string | null): Promise<CommandResult> {
     const blocked = this.guard();
     if (blocked) return blocked;
     const capability = this.backend.capabilities().textTrackSelection;
     if (!capability.supported) return fail('unsupported', capability.reason || 'Subtitle selection is unavailable');
-    const result = this.backend.selectSubtitle(id);
+    let result: CommandResult;
+    try { result = await this.backend.selectSubtitle(id); }
+    catch { result = fail('failed', 'The TV could not change subtitles'); }
+    if (this.disposed) return fail('disposed', 'Playback has ended');
     this.refreshTracks();
     return result;
   }

@@ -212,9 +212,9 @@ export interface BunaBackend {
   pause(): CommandResult;
   /** Request a position. The backend later emits `seeked`; the session waits for it. */
   seek(seconds: number): CommandResult;
-  selectAudio(id: string): CommandResult;
+  selectAudio(id: string): Promise<CommandResult> | CommandResult;
   /** `null` turns subtitles off. */
-  selectSubtitle(id: string | null): CommandResult;
+  selectSubtitle(id: string | null): Promise<CommandResult> | CommandResult;
   snapshot(): BackendSnapshot;
   audioTracks(): Track[];
   textTracks(): Track[];
@@ -224,6 +224,11 @@ export interface BunaBackend {
   stop(): void;
   /** Release the decoder and every listener. Idempotent. */
   dispose(): void;
+}
+
+/** A playback surface supplies its own backend without exposing its UI or DOM to BunaRuntime. */
+export interface PlaybackHost {
+  createBackend(source: ResolvedSource): BunaBackend;
 }
 
 // ---------------------------------------------------------------------------

@@ -18,11 +18,30 @@ export function App() {
     catalog.homeRows().then(setRows).catch((error) => console.warn('Catalog unavailable:', error));
   });
   const [title, setTitle] = createSignal<MetaPreview | null>(null);
-  const [sourcesFor, setSourcesFor] = createSignal<{ video?: Video } | null>(null);
+  const [sourcesFor, setSourcesFor] = createSignal<{ attemptId: number; video?: Video; episodeOrder?: Video[] } | null>(null);
   const [playback, setPlayback] = createSignal<Playback | null>(null);
+  let nextAttemptId = 0;
 
-  const closeDetails = () => { setSourcesFor(null); setTitle(null); };
-  const openSources = (video?: Video) => setSourcesFor({ video });
+  const closeDetails = () => { setSourcesFor(null); setPlayback(null); setTitle(null); };
+  const openSources = (video?: Video, episodeOrder?: Video[]) => setSourcesFor({ attemptId: ++nextAttemptId, video, episodeOrder });
+  const closeSources = (attemptId: number) => {
+    if (sourcesFor()?.attemptId === attemptId) setSourcesFor(null);
+  };
+  const acceptSource = (attemptId: number, intent: PlayIntent, source: ResolvedSource) => {
+    if (sourcesFor()?.attemptId !== attemptId || playback()) return;
+    setPlayback({ intent, source });
+  };
+  const nextEpisode = () => {
+    const current = sourcesFor();
+    const index = current?.episodeOrder?.findIndex(video => video.id === current.video?.id) ?? -1;
+    return index >= 0 ? current?.episodeOrder?.[index + 1] : undefined;
+  };
+  const openNextEpisode = (video: Video) => {
+    const current = sourcesFor();
+    if (!current?.episodeOrder?.some(episode => episode.id === video.id)) return;
+    setPlayback(null);
+    setSourcesFor({ attemptId: ++nextAttemptId, video, episodeOrder: current.episodeOrder });
+  };
 
   return (
     <>
@@ -36,17 +55,18 @@ export function App() {
           </div>
         )}
       </Show>
-      <Show when={title() && sourcesFor() ? { item: title()!, video: sourcesFor()!.video } : null} keyed>
+      <Show when={title() && sourcesFor() ? { item: title()!, ...sourcesFor()! } : null} keyed>
         {(target) => (
           <div class="screen" classList={{ hidden: !!playback() }}>
             <Sources item={target.item} video={target.video} active={!playback()}
-              onBack={() => setSourcesFor(null)}
-              onPlay={(intent, source) => setPlayback({ intent, source })} />
+              onBack={() => closeSources(target.attemptId)}
+              onPlay={(intent, source) => acceptSource(target.attemptId, intent, source)} />
           </div>
         )}
       </Show>
       <Show when={playback()} keyed>
-        {(session) => <Player intent={session.intent} source={session.source} onExit={() => setPlayback(null)} />}
+        {(session) => <Player intent={session.intent} source={session.source} nextEpisode={nextEpisode()}
+          onNextEpisode={openNextEpisode} onExit={() => setPlayback(null)} />}
       </Show>
     </>
   );

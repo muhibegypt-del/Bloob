@@ -17,6 +17,7 @@ const TEST_SOURCE: ResolvedSource = {
 };
 const GROUP_PREVIEW = 3;
 const SEARCH_TTL_MS = 10 * 60 * 1000;
+const SEARCH_CACHE_LIMIT = 40;
 const searchCache = new Map<string, { at: number; candidates: SourceCandidate[] }>();
 
 type Mode = 'list' | 'pairing' | 'resolving' | 'files' | 'qualities' | 'manual';
@@ -46,6 +47,9 @@ export function Sources(props: {
   const [qualities, setQualities] = createSignal<{ linkId: string; options: QualityOption[] }>({ linkId: '', options: [] });
   const [manualValue, setManualValue] = createSignal('');
   let operation: AbortController | null = null;
+  let searchOperation: AbortController | null = null;
+  let pairGeneration = 0;
+  let alive = true;
   let pairTimer: number | undefined;
   let tickTimer: number | undefined;
   let afterPairing: ResolvableSource | null = null;
@@ -71,14 +75,24 @@ export function Sources(props: {
   // ---------------------------------------------------------------- data
 
   async function refreshAccount() {
-    try { setAccount(await api<AccountStatus>('account')); }
-    catch { setBanner({ tone: 'error', text: "Bloob's local service isn't responding. Restart the app." }); }
+    try {
+      const status = await api<AccountStatus>('account');
+      if (alive) setAccount(status);
+    } catch {
+      if (alive) setBanner({ tone: 'error', text: "Bloob's local service isn't responding. Restart the app." });
+    }
   }
 
   async function search() {
+    searchOperation?.abort();
+    const controller = new AbortController();
+    searchOperation = controller;
     const key = searchKey();
     const cached = searchCache.get(key);
     if (cached && Date.now() - cached.at < SEARCH_TTL_MS) {
+      searchOperation = null;
+      searchCache.delete(key);
+      searchCache.set(key, cached);
       setCandidates(cached.candidates);
       setSearching(false);
       return;
@@ -86,19 +100,27 @@ export function Sources(props: {
     setSearching(true);
     setSearchError('');
     try {
-      const result = await api<{ sources: SourceCandidate[] }>('sources/search', { type: props.item.type, id: props.item.id, videoId: props.video?.id });
+      const result = await api<{ sources: SourceCandidate[] }>('sources/search', { type: props.item.type, id: props.item.id, videoId: props.video?.id }, controller.signal);
+      if (controller.signal.aborted || searchOperation !== controller) return;
       searchCache.set(key, { at: Date.now(), candidates: result.sources });
+      if (searchCache.size > SEARCH_CACHE_LIMIT) searchCache.delete(searchCache.keys().next().value!);
       setCandidates(result.sources);
     } catch (error) {
+      if (controller.signal.aborted || searchOperation !== controller) return;
       setSearchError((error as Error).message);
     } finally {
-      setSearching(false);
+      if (searchOperation === controller) { searchOperation = null; setSearching(false); }
     }
   }
 
   onMount(() => { void refreshAccount(); void search(); });
   onCleanup(() => {
+    alive = false;
     operation?.abort();
+    operation = null;
+    searchOperation?.abort();
+    searchOperation = null;
+    pairGeneration++;
     window.clearInterval(pairTimer);
     window.clearInterval(tickTimer);
   });
@@ -162,6 +184,8 @@ export function Sources(props: {
   // ---------------------------------------------------------------- pairing
 
   async function startPairing(then?: ResolvableSource) {
+    if (!alive) return;
+    const generation = ++pairGeneration;
     if (then) afterPairing = then;
     window.clearInterval(pairTimer);
     setPinExpired(false);
@@ -169,8 +193,10 @@ export function Sources(props: {
     setMode('pairing');
     try {
       const started = await api<{ pin: string; url: string; expiresIn: number }>('pin/start', {});
+      if (generation !== pairGeneration) return;
       setPin({ code: started.pin, url: started.url, expiresAt: Date.now() + (started.expiresIn || 600) * 1000 });
     } catch (error) {
+      if (generation !== pairGeneration) return;
       setMode('list');
       setBanner({ tone: 'error', text: `Couldn't start pairing: ${(error as Error).message}` });
       return;
@@ -183,6 +209,7 @@ export function Sources(props: {
     pairTimer = window.setInterval(async () => {
       try {
         const status = await api<AccountStatus>('pin/check', {});
+        if (generation !== pairGeneration) return;
         if (!status.paired) return;
         window.clearInterval(pairTimer);
         window.clearInterval(tickTimer);
@@ -194,6 +221,7 @@ export function Sources(props: {
         afterPairing = null;
         if (next) void choose(next as SourceCandidate);
       } catch (error) {
+        if (generation !== pairGeneration) return;
         if (error instanceof ApiError && error.status === 400) return; // not started yet
         setBanner({ tone: 'error', text: (error as Error).message });
       }
@@ -201,6 +229,7 @@ export function Sources(props: {
   }
 
   function cancelPairing() {
+    pairGeneration++;
     window.clearInterval(pairTimer);
     window.clearInterval(tickTimer);
     afterPairing = null;
@@ -231,6 +260,7 @@ export function Sources(props: {
   async function choose(source: ResolvableSource) {
     if (mode() === 'resolving') return;
     if (!account()) await refreshAccount();
+    if (!alive) return;
     if (!account()?.paired) return void startPairing(source);
     operationStarted = performance.now();
     setResolving(source);
@@ -251,8 +281,11 @@ export function Sources(props: {
     setProgress({ step: 'adding', label: 'Starting…' });
     setMode('resolving');
     try {
-      const outcome = await step({ season: props.video?.season, episode: props.video?.episode, signal: controller.signal, onProgress: setProgress });
-      if (controller.signal.aborted) return;
+      const outcome = await step({
+        season: props.video?.season, episode: props.video?.episode, signal: controller.signal,
+        onProgress: progress => { if (operation === controller && !controller.signal.aborted) setProgress(progress); },
+      });
+      if (controller.signal.aborted || operation !== controller) return;
       const ms = Math.round(performance.now() - operationStarted);
       if (outcome.kind === 'ready') {
         metrics.record({ name: 'resolve', at: Date.now(), ms, kind, outcome: 'ready' });
@@ -270,6 +303,7 @@ export function Sources(props: {
         setFocusKey('quality:0');
       }
     } catch (error) {
+      if (operation !== controller) return;
       if (isAbort(error)) {
         metrics.record({ name: 'resolve', at: Date.now(), ms: Math.round(performance.now() - operationStarted), kind, outcome: 'cancelled' });
         return;
@@ -283,14 +317,14 @@ export function Sources(props: {
       }
       setBanner({ tone: 'error', text: `${(error as Error).message} Pick another source below.` });
     } finally {
-      if (operation === controller) operation = null;
-      setProgress(null);
+      if (operation === controller) { operation = null; setProgress(null); }
     }
   }
 
   function cancelResolve() {
     operation?.abort();
     operation = null;
+    setProgress(null);
     setMode('list');
     setBanner({ tone: 'info', text: 'Cancelled.' });
   }

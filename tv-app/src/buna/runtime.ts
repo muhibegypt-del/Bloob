@@ -1,14 +1,13 @@
-import { WebVideoBackend } from './backends/web-video';
 import { metrics } from './metrics';
 import { localPositionStore, type PositionStore } from './positions';
 import { BunaSession, type SessionConfig } from './session';
-import type { BunaBackend, PlayIntent, ResolvedSource } from './types';
+import type { PlaybackHost, PlayIntent, ResolvedSource } from './types';
 
 export interface OpenOptions {
   intent: PlayIntent;
   source: ResolvedSource;
-  /** The element the view renders video into. */
-  video: HTMLVideoElement;
+  /** The playback owner supplies a backend; the runtime does not depend on a DOM element. */
+  host: PlaybackHost;
   config?: Partial<SessionConfig>;
 }
 
@@ -23,7 +22,6 @@ export class BunaRuntime {
 
   constructor(
     private readonly positions: PositionStore = localPositionStore(),
-    private readonly createBackend: (source: ResolvedSource, video: HTMLVideoElement) => BunaBackend = defaultBackend,
   ) {}
 
   get current(): BunaSession | null { return this.session; }
@@ -33,7 +31,7 @@ export class BunaRuntime {
     this.installLifecycle();
     this.session?.dispose();
     const session = new BunaSession({
-      backend: this.createBackend(options.source, options.video),
+      backend: options.host.createBackend(options.source),
       source: options.source,
       intent: options.intent,
       positions: this.positions,
@@ -59,14 +57,6 @@ export class BunaRuntime {
     });
     window.addEventListener('pagehide', () => this.session?.dispose());
   }
-}
-
-/**
- * Backend selection. The web video element is the only backend today; an
- * HLS/MSE or native backend plugs in here when a measured gap justifies it.
- */
-function defaultBackend(_source: ResolvedSource, video: HTMLVideoElement): BunaBackend {
-  return new WebVideoBackend(video);
 }
 
 export const buna = new BunaRuntime();

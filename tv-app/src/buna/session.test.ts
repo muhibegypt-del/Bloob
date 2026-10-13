@@ -318,7 +318,7 @@ describe('seeking', () => {
 describe('tracks', () => {
   it('reports unsupported audio selection honestly', async () => {
     const { session } = await playing();
-    expect(session.selectAudio('a#0')).toMatchObject({ ok: false, reason: 'unsupported' });
+    expect(await session.selectAudio('a#0')).toMatchObject({ ok: false, reason: 'unsupported' });
   });
 
   it('switches audio and subtitles when the backend exposes them', async () => {
@@ -327,11 +327,11 @@ describe('tracks', () => {
     backend.text = [{ id: 't#0', label: 'English', language: 'en', selected: false }];
     backend.emit({ type: 'tracks' });
     expect(session.state.capabilities.audioTrackSelection.supported).toBe(true);
-    expect(session.selectAudio('a#1').ok).toBe(true);
+    expect((await session.selectAudio('a#1')).ok).toBe(true);
     expect(session.state.audioTracks.find(t => t.selected)?.id).toBe('a#1');
-    expect(session.selectSubtitle('t#0').ok).toBe(true);
+    expect((await session.selectSubtitle('t#0')).ok).toBe(true);
     expect(session.state.textTracks[0].selected).toBe(true);
-    expect(session.selectSubtitle(null).ok).toBe(true);
+    expect((await session.selectSubtitle(null)).ok).toBe(true);
     expect(session.state.textTracks[0].selected).toBe(false);
   });
 });
@@ -394,10 +394,10 @@ describe('lifecycle', () => {
 
   it('runtime keeps exactly one live session', () => {
     const backends: FakeBackend[] = [];
-    const runtime = new BunaRuntime(memoryPositionStore(), () => { const b = new FakeBackend(); backends.push(b); return b; });
-    const video = {} as HTMLVideoElement;
-    const first = runtime.open({ intent: intent(), source: testSource(), video });
-    const second = runtime.open({ intent: intent(), source: testSource(), video });
+    const runtime = new BunaRuntime(memoryPositionStore());
+    const host = { createBackend: () => { const b = new FakeBackend(); backends.push(b); return b; } };
+    const first = runtime.open({ intent: intent(), source: testSource(), host });
+    const second = runtime.open({ intent: intent(), source: testSource(), host });
     expect(first.isDisposed).toBe(true);
     expect(backends[0].disposed).toBe(true);
     expect(runtime.current).toBe(second);
