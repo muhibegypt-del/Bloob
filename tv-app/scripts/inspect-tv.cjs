@@ -2,10 +2,13 @@
 const http = require('http');
 
 const port = Number(process.argv[2] || 3600);
-// Modes: probe | state | media | tracks | buna | account | (default page summary).
+// Modes: probe | state | media | tracks | buna | trace | follow | account | (default page summary).
 // `buna` returns playback state and timing metrics (no URLs). `account` reports
 // AllDebrid pairing and where it is saved, never the key.
-const expression = process.argv[3] === 'buna'
+const mode = process.argv[3];
+const expression = mode === 'trace'
+  ? 'JSON.stringify(window.__buna&&window.__buna.trace?window.__buna.trace.list():[])'
+  : mode === 'buna'
   ? 'JSON.stringify({state:window.__buna&&window.__buna.state(),metrics:window.__buna&&window.__buna.metrics()})'
   : process.argv[3] === 'account'
   ? '(async()=>JSON.stringify(await (await fetch("/api/account")).json()))()'
@@ -24,23 +27,45 @@ http.get(`http://localhost:${port}/json/list`, response => {
   response.on('end', () => {
     const target = JSON.parse(body)[0];
     const ws = new WebSocket(target.webSocketDebuggerUrl);
-    ws.onopen = () => ws.send(JSON.stringify({
-      id: 1,
-      method: 'Runtime.evaluate',
-      params: {
-        expression,
-        returnByValue: true,
-        awaitPromise: true,
-      },
-    }));
+    let lastSeq = 0;
+    let nextId = 0;
+    let timer;
+    const evaluate = () => {
+      if (ws.readyState !== WebSocket.OPEN) return;
+      ws.send(JSON.stringify({
+        id: ++nextId,
+        method: 'Runtime.evaluate',
+        params: {
+          expression: mode === 'follow'
+            ? `JSON.stringify(window.__buna&&window.__buna.trace?window.__buna.trace.since(${lastSeq}):[])`
+            : expression,
+          returnByValue: true,
+          awaitPromise: true,
+        },
+      }));
+    };
+    ws.onopen = () => {
+      evaluate();
+      if (mode === 'follow') timer = setInterval(evaluate, 1000);
+    };
     ws.onmessage = event => {
       const message = JSON.parse(event.data);
-      if (message.id === 1) {
+      if (message.id && mode === 'follow') {
+        try {
+          const entries = JSON.parse(message.result?.result?.value || '[]');
+          for (const entry of entries) {
+            if (entry.seq <= lastSeq) continue;
+            process.stdout.write(JSON.stringify(entry) + '\n');
+            lastSeq = entry.seq;
+          }
+        } catch (error) { console.error('Trace read failed:', error.message); }
+      } else if (message.id === 1) {
         process.stdout.write(String(message.result?.result?.value || message.error || 'No result') + '\n');
         ws.close();
         setTimeout(() => process.exit(), 100);
       }
     };
+    ws.onclose = () => clearInterval(timer);
     ws.onerror = error => { console.error(error); process.exitCode = 1; };
   });
 }).on('error', error => { console.error(error); process.exitCode = 1; });

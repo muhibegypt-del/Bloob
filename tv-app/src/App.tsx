@@ -1,5 +1,6 @@
 import { createSignal, onMount, Show } from 'solid-js';
 import type { PlayIntent, ResolvedSource } from './buna';
+import { trace } from './buna/trace';
 import { cinemeta, demoRow } from './data/cinemeta';
 import type { MetaPreview, Row, Video } from './data/types';
 import { Details } from './screens/Details';
@@ -22,13 +23,17 @@ export function App() {
   const [playback, setPlayback] = createSignal<Playback | null>(null);
   let nextAttemptId = 0;
 
-  const closeDetails = () => { setSourcesFor(null); setPlayback(null); setTitle(null); };
-  const openSources = (video?: Video, episodeOrder?: Video[]) => setSourcesFor({ attemptId: ++nextAttemptId, video, episodeOrder });
+  const closeDetails = () => { trace.record('app', 'close-details'); setSourcesFor(null); setPlayback(null); setTitle(null); };
+  const openSources = (video?: Video, episodeOrder?: Video[]) => {
+    trace.record('app', 'open-sources', { episode: !!video });
+    setSourcesFor({ attemptId: ++nextAttemptId, video, episodeOrder });
+  };
   const closeSources = (attemptId: number) => {
-    if (sourcesFor()?.attemptId === attemptId) setSourcesFor(null);
+    if (sourcesFor()?.attemptId === attemptId) { trace.record('app', 'close-sources'); setSourcesFor(null); }
   };
   const acceptSource = (attemptId: number, intent: PlayIntent, source: ResolvedSource) => {
     if (sourcesFor()?.attemptId !== attemptId || playback()) return;
+    trace.record('app', 'source-accepted');
     setPlayback({ intent, source });
   };
   const nextEpisode = () => {
@@ -39,6 +44,7 @@ export function App() {
   const openNextEpisode = (video: Video) => {
     const current = sourcesFor();
     if (!current?.episodeOrder?.some(episode => episode.id === video.id)) return;
+    trace.record('app', 'next-episode');
     setPlayback(null);
     setSourcesFor({ attemptId: ++nextAttemptId, video, episodeOrder: current.episodeOrder });
   };
@@ -46,7 +52,7 @@ export function App() {
   return (
     <>
       <div class="screen" classList={{ hidden: !!title() || !!playback() }}>
-        <Home rows={rows()} active={!title()} onOpen={setTitle} />
+        <Home rows={rows()} active={!title()} onOpen={item => { trace.record('app', 'open-details'); setTitle(item); }} />
       </div>
       <Show when={title()} keyed>
         {(item) => (
@@ -66,7 +72,7 @@ export function App() {
       </Show>
       <Show when={playback()} keyed>
         {(session) => <Player intent={session.intent} source={session.source} nextEpisode={nextEpisode()}
-          onNextEpisode={openNextEpisode} onExit={() => setPlayback(null)} />}
+          onNextEpisode={openNextEpisode} onExit={() => { trace.record('app', 'exit-player'); setPlayback(null); }} />}
       </Show>
     </>
   );

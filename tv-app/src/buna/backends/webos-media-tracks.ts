@@ -1,4 +1,5 @@
 import { fail, ok, type CommandResult, type Track } from '../types';
+import { trace } from '../trace';
 
 // A webOS video element can expose the native media pipeline even when its DOM
 // audioTracks/textTracks lists are empty. This adapter only observes the mediaId
@@ -70,21 +71,25 @@ export class WebosMediaTracks {
     this.video = video as NativeVideo;
     this.changed = changed;
     this.Constructor = bridgeConstructor();
+    trace.record('native', 'bridge', { available: !!this.Constructor });
   }
 
   start(): void {
     this.stop();
     if (!this.Constructor || this.disposed) return;
+    trace.record('native', 'await-media-id');
     let attempts = 0;
     const check = () => {
       if (this.disposed) return;
       if (VALID_MEDIA_ID(this.video.mediaId)) {
         window.clearInterval(this.poll);
         this.poll = undefined;
+        trace.record('native', 'media-id-ready', { attempts });
         this.subscribe(this.video.mediaId);
       } else if (++attempts >= 100) { // Do not poll forever on unsupported firmware.
         window.clearInterval(this.poll);
         this.poll = undefined;
+        trace.record('native', 'media-id-timeout');
       }
     };
     check();
@@ -128,6 +133,7 @@ export class WebosMediaTracks {
   }
 
   stop(): void {
+    if (this.mediaId || this.poll !== undefined) trace.record('native', 'stop');
     this.requestBridge?.cancel();
     this.finishRequest?.(fail('not-ready', 'The video source changed'));
     window.clearInterval(this.poll);
@@ -150,41 +156,45 @@ export class WebosMediaTracks {
   private subscribe(mediaId: string): void {
     if (!this.Constructor || this.disposed) return;
     this.mediaId = mediaId;
+    trace.record('native', 'subscribe-call');
     const bridge = new this.Constructor();
     this.subscription = bridge;
     bridge.onservicecallback = raw => {
       if (this.disposed || this.subscription !== bridge || this.video.mediaId !== mediaId) return;
       let event: unknown;
-      try { event = JSON.parse(raw); } catch { return; }
+      try { event = JSON.parse(raw); } catch { trace.record('native', 'subscribe-malformed'); return; }
       const response = record(event);
-      if (response?.returnValue === false) { this.stop(); this.changed(); return; }
+      if (response?.returnValue === false) { trace.record('native', 'subscribe-rejected'); this.stop(); this.changed(); return; }
       const tracks = parseSourceTracks(event);
       if (!tracks) return;
+      trace.record('native', 'source-info', { audio: tracks.audio.length, subtitles: tracks.text.length });
       this.audio = tracks.audio;
       this.text = tracks.text;
       this.changed();
     };
     try { bridge.call(`${MEDIA_SERVICE}subscribe`, JSON.stringify({ mediaId, subscribe: true })); }
-    catch { this.stop(); }
+    catch { trace.record('native', 'subscribe-call-failed'); this.stop(); }
   }
 
   private request(method: string, parameters: Record<string, unknown>): Promise<CommandResult> {
     if (!this.Constructor || this.disposed || !this.mediaId) return Promise.resolve(fail('unsupported', 'The TV media service is unavailable'));
     if (this.requestBridge) return Promise.resolve(fail('not-ready', 'A track change is still in progress'));
     return new Promise(resolve => {
+      trace.record('native', `call-${method}`);
       const bridge = new this.Constructor!();
       this.requestBridge = bridge;
       let settled = false;
       const finish = (result: CommandResult) => {
         if (settled) return;
         settled = true;
+        trace.record('native', `result-${method}`, { ok: result.ok });
         window.clearTimeout(timeout);
         if (this.requestBridge === bridge) this.requestBridge = null;
         if (this.finishRequest === finish) this.finishRequest = null;
         resolve(this.disposed ? fail('disposed', 'Playback has ended') : result);
       };
       this.finishRequest = finish;
-      const timeout = window.setTimeout(() => { bridge.cancel(); finish(fail('failed', 'The TV did not confirm the track change')); }, 4000);
+      const timeout = window.setTimeout(() => { trace.record('native', `timeout-${method}`); bridge.cancel(); finish(fail('failed', 'The TV did not confirm the track change')); }, 4000);
       bridge.onservicecallback = raw => {
         let response: Record<string, unknown> | null = null;
         try { response = record(JSON.parse(raw)); } catch { /* malformed service reply */ }

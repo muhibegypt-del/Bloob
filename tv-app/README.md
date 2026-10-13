@@ -29,6 +29,7 @@ Player:   buna.open() → BunaSession (state machine, clock, seek, stalls, track
 | `positions.ts` | Resume positions (content ID and seconds only) |
 | `solid.ts` | Mirrors session state into a Solid store |
 | `metrics.ts` | In-memory timing ring, readable on the TV as `window.__buna.metrics()` |
+| `trace.ts` | Bounded event timeline for remote, source, session, media and webOS track-service activity; no URLs, titles, PINs, keys or raw replies |
 
 Guarantees, each covered by tests:
 
@@ -63,7 +64,7 @@ For a local UI session: `node service/server.js`, then `npm run dev`. Vite forwa
 
 ```sh
 npm run package     # build → stage dist into service/www (old bundles removed) → artifacts/*.ipk
-ares-install -d rootedTV artifacts/com.muhib.tvprototype_0.2.0_all.ipk
+ares-install -d rootedTV artifacts/com.muhib.tvprototype_0.2.2_all.ipk
 ```
 
 It installs as a separate app (`com.muhib.tvprototype`, titled Bloob).
@@ -73,3 +74,9 @@ It installs as a separate app (`com.muhib.tvprototype`, titled Bloob).
 1. **Pairing persistence.** Pair once. The account row on the Sources screen says where the key was saved. "Saved on this TV" is the goal. Restart the app, then run `node scripts/inspect-tv.cjs <inspector-port> account`. It should report `paired: true`, `persistent: true`, `durable: true` without a new PIN. If it says "refused to save it", the row lists each location's error code, so report those.
 2. **Test clip.** Start it, pause and resume with OK and with the remote's ▶/❚❚ keys, hold → to seek, then Back. `node scripts/inspect-tv.cjs <port> buna` prints the state and timing metrics (`first-frame`, `seek` with `settleMs` and `landed`, `stall`, `dispose`).
 3. **Real source.** Take the recommended option on a title you're authorized to watch. Check first frame, seek accuracy (`landed` vs `to`), the audio and subtitle menus (do they list tracks on this TV?), Back, and memory after exit.
+
+### Live playback trace
+
+The app records the latest 600 diagnostic events in memory automatically. It samples the media clock at most once per second. The TV inspector can read `window.__buna.trace.list()`, `window.__buna.trace.since(sequence)`, or `window.__buna.trace.clear()`. The trace contains timestamps, remote key names, navigation transitions, search/resolve timing, player commands, media state, track counts and webOS media-service call outcomes. It does not include stream links, account data, titles, media IDs, or raw service responses.
+
+After forwarding the app inspector with `ares-inspect`, run `node scripts/inspect-tv.cjs <inspector-port> follow` to print one JSON event per line as playback happens. Use `trace` instead of `follow` for a one-time snapshot. Stop the live reader with Ctrl+C. The inspector must remain connected; the trace ring is lost when the app process exits.

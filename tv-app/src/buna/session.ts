@@ -1,6 +1,7 @@
 import { metrics } from './metrics';
 import type { PositionStore } from './positions';
 import { browserScheduler, type Scheduler } from './scheduler';
+import { trace } from './trace';
 import {
   fail, ok,
   type BackendEvent, type BunaBackend, type BunaError, type CommandResult,
@@ -89,6 +90,7 @@ export class BunaSession {
   private lastSampledTime = -1;
   private stallStartedAt = 0;
   private lastSavedAt = 0;
+  private lastTraceAt = -Infinity;
 
   constructor(options: SessionOptions) {
     this.backend = options.backend;
@@ -145,6 +147,7 @@ export class BunaSession {
   async start(): Promise<CommandResult> {
     if (this.disposed) return fail('disposed', 'Playback has ended');
     if (this.isExpired()) return this.expire();
+    trace.record('session', 'start');
     metrics.record({ name: 'session-start', at: Date.now(), backend: this.backend.kind, transport: this.source.transport });
     const saved = this.intent.startPosition ?? this.positions?.get(this.positionKey) ?? 0;
     const resume = saved > 0 ? saved : 0;
@@ -153,11 +156,13 @@ export class BunaSession {
   }
 
   async play(): Promise<CommandResult> {
+    trace.record('session', 'play-request');
     const blocked = this.guard();
     if (blocked) return blocked;
     if (this.ended) this.ended = false;
     this.commit({ intent: 'play' });
     const result = await this.backend.play();
+    trace.record('session', 'play-result', { ok: result.ok });
     if (this.disposed) return fail('disposed', 'Playback has ended');
     if (!result.ok && result.reason !== 'not-ready') {
       // `not-ready` means a later pause/seek/load interrupted this request: not an error.
@@ -168,6 +173,7 @@ export class BunaSession {
   }
 
   pause(): CommandResult {
+    trace.record('session', 'pause-request');
     const blocked = this.guard();
     if (blocked) return blocked;
     this.commit({ intent: 'pause' });
@@ -190,6 +196,7 @@ export class BunaSession {
     this.burstDirection = direction;
     const base = s.previewTarget ?? s.pendingTarget ?? s.position;
     const target = this.clampSeek(base + direction * nudgeStep(this.burst));
+    trace.record('session', 'seek-preview', { target, direction });
     this.scheduler.clearTimeout(this.seekTimer);
     this.seekTimer = this.scheduler.setTimeout(() => {
       this.seekTimer = undefined;
@@ -206,7 +213,9 @@ export class BunaSession {
     if (blocked) return blocked;
     this.scheduler.clearTimeout(this.seekTimer);
     this.seekTimer = undefined;
-    return this.commitSeek(this.clampSeek(seconds));
+    const target = this.clampSeek(seconds);
+    trace.record('session', 'seek-request', { target });
+    return this.commitSeek(target);
   }
 
   /** Commit a pending preview now instead of waiting for the debounce. */
@@ -233,6 +242,7 @@ export class BunaSession {
   }
 
   async selectAudio(id: string): Promise<CommandResult> {
+    trace.record('session', 'audio-select-request');
     const blocked = this.guard();
     if (blocked) return blocked;
     const capability = this.backend.capabilities().audioTrackSelection;
@@ -242,10 +252,12 @@ export class BunaSession {
     catch { result = fail('failed', 'The TV could not change audio tracks'); }
     if (this.disposed) return fail('disposed', 'Playback has ended');
     this.refreshTracks();
+    trace.record('session', 'audio-select-result', { ok: result.ok });
     return result;
   }
 
   async selectSubtitle(id: string | null): Promise<CommandResult> {
+    trace.record('session', 'subtitle-select-request', { off: id === null });
     const blocked = this.guard();
     if (blocked) return blocked;
     const capability = this.backend.capabilities().textTrackSelection;
@@ -255,11 +267,13 @@ export class BunaSession {
     catch { result = fail('failed', 'The TV could not change subtitles'); }
     if (this.disposed) return fail('disposed', 'Playback has ended');
     this.refreshTracks();
+    trace.record('session', 'subtitle-select-result', { ok: result.ok });
     return result;
   }
 
   /** Reload the same source at the last known position. */
   async retry(): Promise<CommandResult> {
+    trace.record('session', 'retry-request');
     if (this.disposed) return fail('disposed', 'Playback has ended');
     if (this.isExpired()) return this.expire();
     const at = this.current.pendingTarget ?? this.current.position;
@@ -271,6 +285,7 @@ export class BunaSession {
   /** Stop playback, release the decoder, and drop every timer and listener. Idempotent. */
   dispose(): void {
     if (this.disposed) return;
+    trace.record('session', 'dispose');
     this.savePosition();
     metrics.record({ name: 'dispose', at: Date.now(), position: Math.round(this.current.position), watchedMs: Math.round(this.scheduler.now() - this.startedAt) });
     this.disposed = true;
@@ -325,6 +340,7 @@ export class BunaSession {
 
   private onBackend(event: BackendEvent) {
     if (this.disposed) return;
+    if (event.type !== 'time' && event.type !== 'progress') trace.record('session', `backend-${event.type}`);
     switch (event.type) {
       case 'metadata':
         if (!this.metadata) {
@@ -394,6 +410,14 @@ export class BunaSession {
     const snap = this.backend.snapshot();
     const s = this.current;
     const now = this.scheduler.now();
+    if (now - this.lastTraceAt >= 1000) {
+      this.lastTraceAt = now;
+      trace.record('session', 'clock', {
+        position: snap.currentTime, duration: snap.duration, bufferedEnd: snap.bufferedEnd,
+        seekableStart: snap.seekable?.start ?? null, seekableEnd: snap.seekable?.end ?? null,
+        ready: snap.readyState, seeking: snap.seeking, paused: snap.paused,
+      });
+    }
     const patch: Partial<PlaybackState> = { bufferedEnd: finite(snap.bufferedEnd) ? snap.bufferedEnd : 0 };
 
     if (finite(snap.duration) && snap.duration > 0) {
@@ -451,6 +475,9 @@ export class BunaSession {
     const textTracks = this.backend.textTracks();
     const capabilities = this.backend.capabilities();
     const s = this.current;
+    if (!sameJson(audioTracks, s.audioTracks) || !sameJson(textTracks, s.textTracks)) {
+      trace.record('session', 'tracks', { audio: audioTracks.length, subtitles: textTracks.length });
+    }
     this.commit({
       ...(sameJson(audioTracks, s.audioTracks) ? {} : { audioTracks }),
       ...(sameJson(textTracks, s.textTracks) ? {} : { textTracks }),
@@ -555,6 +582,7 @@ export class BunaSession {
     if (this.disposed) return;
     const next = { ...this.current, ...patch };
     next.phase = this.derivePhase(next);
+    if (next.phase !== this.current.phase) trace.record('session', `phase-${next.phase}`);
     let changed = false;
     for (const key in next) {
       if (next[key as keyof PlaybackState] !== this.current[key as keyof PlaybackState]) { changed = true; break; }

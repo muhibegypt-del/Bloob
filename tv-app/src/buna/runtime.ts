@@ -1,6 +1,7 @@
 import { metrics } from './metrics';
 import { localPositionStore, type PositionStore } from './positions';
 import { BunaSession, type SessionConfig } from './session';
+import { trace } from './trace';
 import type { PlaybackHost, PlayIntent, ResolvedSource } from './types';
 
 export interface OpenOptions {
@@ -30,6 +31,7 @@ export class BunaRuntime {
   open(options: OpenOptions): BunaSession {
     this.installLifecycle();
     this.session?.dispose();
+    trace.record('app', 'open-player');
     const session = new BunaSession({
       backend: options.host.createBackend(options.source),
       source: options.source,
@@ -45,6 +47,7 @@ export class BunaRuntime {
 
   /** Dispose the active session, if any. */
   close(): void {
+    trace.record('app', 'close-player');
     this.session?.dispose();
   }
 
@@ -52,10 +55,11 @@ export class BunaRuntime {
     if (this.lifecycleInstalled || typeof document === 'undefined') return;
     this.lifecycleInstalled = true;
     document.addEventListener('visibilitychange', () => {
+      trace.record('app', 'visibility', { hidden: document.hidden });
       // The app went to the background (Home button, input switch): pause and save.
       if (document.hidden && this.session?.state.intent === 'play') this.session.pause();
     });
-    window.addEventListener('pagehide', () => this.session?.dispose());
+    window.addEventListener('pagehide', () => { trace.record('app', 'pagehide'); this.session?.dispose(); });
   }
 }
 
@@ -67,5 +71,10 @@ if (typeof window !== 'undefined') {
   (window as unknown as { __buna: object }).__buna = {
     metrics: () => metrics.list(),
     state: () => buna.current?.state ?? null,
+    trace: {
+      list: () => trace.list(),
+      since: (seq?: number) => trace.since(seq),
+      clear: () => trace.clear(),
+    },
   };
 }

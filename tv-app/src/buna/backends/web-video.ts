@@ -5,6 +5,7 @@ import {
   type PlaybackHost,
 } from '../types';
 import { WebosMediaTracks } from './webos-media-tracks';
+import { trace } from '../trace';
 
 /** Bind a rendered video surface to Buna without making the runtime DOM-specific. */
 export function webVideoHost(video: HTMLVideoElement): PlaybackHost {
@@ -20,8 +21,9 @@ type TrackVideo = HTMLVideoElement & {
 };
 
 const MEDIA_EVENTS = [
-  'loadedmetadata', 'durationchange', 'canplay', 'playing', 'waiting', 'pause',
-  'seeking', 'seeked', 'ended', 'timeupdate', 'progress', 'error',
+  'loadstart', 'loadedmetadata', 'loadeddata', 'durationchange', 'canplay',
+  'playing', 'waiting', 'stalled', 'suspend', 'pause', 'seeking', 'seeked',
+  'ended', 'timeupdate', 'progress', 'error', 'abort', 'emptied',
 ] as const;
 
 const SUBTITLE_KINDS = new Set(['subtitles', 'captions']);
@@ -56,6 +58,7 @@ export class WebVideoBackend implements BunaBackend {
   }
 
   async prepare(source: ResolvedSource, startPosition = 0): Promise<CommandResult> {
+    trace.record('media', `prepare-${source.transport}`, { resume: startPosition > 0 });
     if (this.disposed) return fail('disposed', 'Backend released');
     if (source.transport === 'dash') return fail('unsupported', 'DASH streams need a different Buna backend.');
     if (source.transport === 'hls' && !this.video.canPlayType('application/vnd.apple.mpegurl')) {
@@ -214,6 +217,7 @@ export class WebVideoBackend implements BunaBackend {
   }
 
   stop(): void {
+    trace.record('media', 'stop');
     this.cancelFrameCallback();
     this.nativeTracks.stop();
     this.pendingStart = 0;
@@ -246,6 +250,16 @@ export class WebVideoBackend implements BunaBackend {
   }
 
   private onMediaEvent(name: (typeof MEDIA_EVENTS)[number]) {
+    if (name !== 'timeupdate' && name !== 'progress') {
+      const v = this.video;
+      trace.record('media', name, {
+        position: v.currentTime, duration: v.duration, ready: v.readyState,
+        network: v.networkState, paused: v.paused, seeking: v.seeking,
+        seekableRanges: v.seekable.length, bufferedRanges: v.buffered.length,
+        domAudio: v.audioTracks?.length ?? 0, domText: v.textTracks.length,
+        mediaIdPresent: !!(v as TrackVideo & { mediaId?: string }).mediaId,
+      });
+    }
     switch (name) {
       case 'loadedmetadata':
         if (this.pendingStart > 0 && Number.isFinite(this.video.duration)) {

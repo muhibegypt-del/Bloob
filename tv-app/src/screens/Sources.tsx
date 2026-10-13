@@ -1,5 +1,6 @@
 import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show } from 'solid-js';
 import { metrics, type PlayIntent, type ResolvedSource, type SourceCandidate } from '../buna';
+import { trace } from '../buna/trace';
 import { api, ApiError, type AccountStatus } from '../data/api';
 import { art, demo } from '../data/cinemeta';
 import type { MetaPreview, Video } from '../data/types';
@@ -88,12 +89,15 @@ export function Sources(props: {
     const controller = new AbortController();
     searchOperation = controller;
     const key = searchKey();
+    const searchStarted = performance.now();
+    trace.record('sources', 'search-start');
     const cached = searchCache.get(key);
     if (cached && Date.now() - cached.at < SEARCH_TTL_MS) {
       searchOperation = null;
       searchCache.delete(key);
       searchCache.set(key, cached);
       setCandidates(cached.candidates);
+      trace.record('sources', 'search-cache', { count: cached.candidates.length });
       setSearching(false);
       return;
     }
@@ -105,9 +109,11 @@ export function Sources(props: {
       searchCache.set(key, { at: Date.now(), candidates: result.sources });
       if (searchCache.size > SEARCH_CACHE_LIMIT) searchCache.delete(searchCache.keys().next().value!);
       setCandidates(result.sources);
+      trace.record('sources', 'search-ready', { count: result.sources.length, ms: performance.now() - searchStarted });
     } catch (error) {
       if (controller.signal.aborted || searchOperation !== controller) return;
       setSearchError((error as Error).message);
+      trace.record('sources', 'search-failed', { ms: performance.now() - searchStarted });
     } finally {
       if (searchOperation === controller) { searchOperation = null; setSearching(false); }
     }
@@ -253,6 +259,7 @@ export function Sources(props: {
 
   function playTest() {
     operationStarted = performance.now();
+    trace.record('sources', 'test-source');
     metrics.record({ name: 'resolve', at: Date.now(), ms: 0, kind: 'test', outcome: 'ready' });
     props.onPlay({ ...intent(), origin: 'test' }, { ...TEST_SOURCE, resolvedAt: Date.now() });
   }
@@ -262,6 +269,7 @@ export function Sources(props: {
     if (!account()) await refreshAccount();
     if (!alive) return;
     if (!account()?.paired) return void startPairing(source);
+    trace.record('sources', `resolve-${source.kind}`);
     operationStarted = performance.now();
     setResolving(source);
     await run(ctx => resolveSource(source, ctx));

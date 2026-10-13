@@ -1,3 +1,11 @@
+import { trace } from '../buna/trace';
+
+const TRACE_PATHS = new Set([
+  'sources/search', 'account', 'pin/start', 'pin/check',
+  'link/unlock', 'link/quality', 'link/delayed',
+  'magnet/add', 'magnet/status', 'magnet/files',
+]);
+
 export interface ResolveResult {
   state: 'ready' | 'waiting' | 'qualities' | 'error';
   url?: string | null;
@@ -25,15 +33,25 @@ export class ApiError extends Error {
 
 /** Call the local service. Rejects with ApiError; aborts with the signal's DOMException. */
 export async function api<T>(path: string, body?: object, signal?: AbortSignal): Promise<T> {
-  const response = await fetch('/api/' + path, {
-    method: body ? 'POST' : 'GET',
-    headers: body ? { 'Content-Type': 'application/json' } : undefined,
-    body: body ? JSON.stringify(body) : undefined,
-    signal,
-  });
+  const name = TRACE_PATHS.has(path) ? path.replace('/', '-') : 'other';
+  const started = performance.now();
+  trace.record('api', `${name}-start`);
+  let response: Response;
+  try {
+    response = await fetch('/api/' + path, {
+      method: body ? 'POST' : 'GET',
+      headers: body ? { 'Content-Type': 'application/json' } : undefined,
+      body: body ? JSON.stringify(body) : undefined,
+      signal,
+    });
+  } catch (error) {
+    trace.record('api', `${name}-request-failed`, { ms: performance.now() - started, aborted: signal?.aborted ?? false });
+    throw error;
+  }
+  trace.record('api', `${name}-response`, { status: response.status, ms: performance.now() - started });
   let result: { error?: string } & Record<string, unknown>;
   try { result = await response.json(); }
-  catch { throw new ApiError(`The local service returned an unreadable response (${response.status})`, response.status); }
+  catch { trace.record('api', `${name}-bad-json`); throw new ApiError(`The local service returned an unreadable response (${response.status})`, response.status); }
   if (!response.ok) throw new ApiError(result.error || `Request failed (${response.status})`, response.status);
   return result as T;
 }

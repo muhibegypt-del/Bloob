@@ -1,4 +1,5 @@
 import { onCleanup } from 'solid-js';
+import { trace } from './buna/trace';
 
 export type Key =
   | 'up' | 'down' | 'left' | 'right' | 'enter' | 'back'
@@ -40,6 +41,7 @@ window.addEventListener('keydown', (event) => {
   if (!key || !handlers.length) return;
   if (isEditable(event.target) && EDITING_CODES.has(event.keyCode)) return;
   event.preventDefault();
+  trace.record('remote', key);
   handlers[handlers.length - 1](key, event);
 });
 
