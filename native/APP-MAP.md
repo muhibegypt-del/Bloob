@@ -4,6 +4,8 @@ Bloob, split into its actual layers. For each layer this file records what the l
 
 Snapshot: **1.1.0**, 13 October 2026, branch `claude/sleepy-ptolemy-o87vgv`.
 
+How good each layer is, against a researched definition of quality, is in [`QUALITY.md`](QUALITY.md). Re-score a layer there when you change it.
+
 ## How to read the state
 
 | Mark | Meaning |
@@ -92,6 +94,7 @@ Snapshot: **1.1.0**, 13 October 2026, branch `claude/sleepy-ptolemy-o87vgv`.
 - **1.1** Run `TV-TEST.md` §1 with someone who has not seen Bloob. Turn every hesitation into an increment on the right layer.
 - **1.2** Remove from Continue watching: a long press or a colour key on the card, with a confirmation toast.
 - **1.3** My list: an Add button on details and a row on Home. Needs **19.3**.
+- **1.4** Decide on exit gating. Android TV guidance says Back on the root should leave the app without confirmation, but Bloob asks for a second Back. Keep the toast or drop it, deliberately.
 
 ### 2. UI: visual system
 
@@ -119,6 +122,7 @@ Snapshot: **1.1.0**, 13 October 2026, branch `claude/sleepy-ptolemy-o87vgv`.
 - **2.1** TV legibility pass (`TV-TEST.md` §2). Adjust `secondary`/`tertiary` alpha and the type floor from what is seen.
 - **2.2** Redraw the settings gear and check every icon at 32 px on the TV.
 - **2.3** Larger-text setting: scale the type table by 1.15. Layouts already wrap and ellipsise.
+- **2.4** Raise the type floor to about 22 px. TV guidance puts reading at 3 m at roughly that; Footnote and Eyebrow are 19 px and Caption is 21 px today. Check the layouts still fit.
 
 ### 3. Home and browse
 
@@ -687,7 +691,7 @@ Snapshot: **1.1.0**, 13 October 2026, branch `claude/sleepy-ptolemy-o87vgv`.
 - No memory, CPU or frame-time sampling for our own app.
 
 **Next:**
-- **22.1** End-of-session summary line: first frame, seeks and their landing error, stalls, reloads, duration watched.
+- **22.1** End-of-session summary line: first frame, seeks and their landing error, stalls, reloads, duration watched. Include the streaming quality metrics that predict abandonment: startup time (target under 2 s), **rebuffering ratio** (time stalled divided by time watched; target under 1%), and whether the start failed.
 - **22.2** Sampling script for the native app, read-only over SSH, like `research/live-episode-study.md`: threads, resident memory and CPU during browse, play, pause and after exit.
 
 ### 23. External services
