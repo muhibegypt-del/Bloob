@@ -19,7 +19,7 @@
   --tile-gap: 40px;
   --radius: 14px;
   --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
-  --focus-ms: 260ms;
+  --focus-ms: 170ms;
 }
 
 * { box-sizing: border-box; }
@@ -46,6 +46,7 @@ html, body {
 /* Hidden layers stay mounted (focus and scroll survive Back) but stop painting
    once faded, so nothing underneath competes with video playback. */
 .screen.hidden { opacity: 0; pointer-events: none; visibility: hidden; transition: opacity 300ms var(--ease), visibility 0s linear 300ms; }
+.route-loading { position: absolute; inset: 0; display: grid; place-items: center; background: #07090d; color: var(--text-2); font-size: 26px; }
 
 /* Images fade in once decoded instead of popping. */
 .img { opacity: 0; transition: opacity 500ms var(--ease); }
@@ -61,17 +62,12 @@ html, body {
 .backdrop-layer {
   position: absolute;
   inset: 0;
-  transition: opacity 900ms var(--ease);
+  transition: opacity 320ms var(--ease);
 }
 .backdrop-layer img {
   width: 100%;
   height: 100%;
   object-fit: cover;
-  animation: drift 24s linear infinite alternate;
-}
-@keyframes drift {
-  from { transform: scale(1.02) translate3d(0, 0, 0); }
-  to { transform: scale(1.08) translate3d(-1.5%, -1%, 0); }
 }
 .backdrop-scrim {
   position: absolute;
@@ -168,7 +164,7 @@ html, body {
 .home-scroll {
   position: absolute;
   inset: 0;
-  transition: transform 520ms var(--ease);
+  transition: transform 280ms var(--ease);
   will-change: transform;
 }
 
@@ -219,12 +215,13 @@ html, body {
   transition: opacity 300ms;
 }
 .row-track {
-  display: flex;
-  gap: var(--tile-gap);
-  padding-left: var(--edge);
-  transition: transform 420ms var(--ease);
+  position: relative;
+  height: var(--tile-h);
+  margin-left: var(--edge);
+  transition: transform 220ms var(--ease);
   will-change: transform;
 }
+.row-slot { position: absolute; top: 0; width: var(--tile-w); height: var(--tile-h); }
 
 /* ---------- Tiles ---------- */
 
@@ -338,7 +335,7 @@ html, body {
   right: 0;
   top: 760px;
 }
-.episodes .row-track { padding-left: 0; }
+.episodes .row-track { margin-left: 0; }
 .episode-meta {
   position: absolute;
   top: calc(100% + 16px);
@@ -378,7 +375,7 @@ html, body {
 .sources-screen { position: absolute; inset: 0; overflow: hidden; background: #07090d; color: var(--text); }
 .sources-backdrop {
   position: absolute; inset: -40px; background-position: center; background-size: cover;
-  filter: blur(28px) saturate(1.1); opacity: .22; transform: scale(1.05); pointer-events: none;
+  opacity: .16; pointer-events: none;
 }
 .sources-screen::before {
   content: ''; position: absolute; inset: 0; pointer-events: none; z-index: 1;

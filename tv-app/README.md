@@ -2,6 +2,14 @@
 
 LG webOS app: SolidJS interface, a local webOS service for sources and AllDebrid, and **Buna**, Bloob's own playback runtime. It does not use any Stremio bundle or streaming server.
 
+## UI responsiveness in 0.2.4
+
+- Home and episode shelves mount only tiles near the current focus. Home also mounts only nearby vertical rows while preserving their positions for Back navigation.
+- Backdrop artwork is preloaded through a bounded eight-image cache, then crossfaded only after it is ready. The full-screen idle drift and Sources blur were removed.
+- Remote focus scrolling on Sources is coalesced to one pending frame and only scrolls when focus is outside the useful viewport.
+- Sources and Player load as separate chunks while the preceding screen is visible. Buna's Solid adapter no longer serializes the full playback state at each clock sample.
+- Focus and navigation transitions settle faster. The media backend and resolution path remain the same.
+
 ## Architecture
 
 ```text
@@ -52,7 +60,7 @@ Guarantees, each covered by tests:
 ```sh
 npm install
 npm run typecheck
-npm test            # Buna session, ranker, resolver, release parser, account store (62 tests)
+npm test            # Buna session, ranker, resolver, release parser, account store (65 tests)
 npm run test:e2e    # real app + service + Buna in Chromium, driven by remote keys (26 checks)
 ```
 
@@ -64,7 +72,7 @@ For a local UI session: `node service/server.js`, then `npm run dev`. Vite forwa
 
 ```sh
 npm run package     # build → stage dist into service/www (old bundles removed) → artifacts/*.ipk
-ares-install -d rootedTV artifacts/com.muhib.tvprototype_0.2.2_all.ipk
+ares-install -d rootedTV artifacts/com.muhib.tvprototype_0.2.4_all.ipk
 ```
 
 It installs as a separate app (`com.muhib.tvprototype`, titled Bloob).

@@ -61,7 +61,7 @@ export class WebVideoBackend implements BunaBackend {
     trace.record('media', `prepare-${source.transport}`, { resume: startPosition > 0 });
     if (this.disposed) return fail('disposed', 'Backend released');
     if (source.transport === 'dash') return fail('unsupported', 'DASH streams need a different Buna backend.');
-    if (source.transport === 'hls' && !this.video.canPlayType('application/vnd.apple.mpegurl')) {
+    if (source.transport === 'hls' && !this.video.canPlayType('application/x-mpegURL')) {
       return fail('unsupported', 'This TV does not play HLS through its web video element.');
     }
     this.cancelFrameCallback();

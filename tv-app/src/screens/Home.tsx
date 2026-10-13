@@ -4,6 +4,7 @@ import { Backdrop } from '../components/Backdrop';
 import { MetaInfo } from '../components/MetaInfo';
 import { Row } from '../components/Row';
 import { Tile } from '../components/Tile';
+import { preloadImage } from '../components/image-cache';
 import { PlayIcon } from '../components/icons';
 import { art } from '../data/cinemeta';
 import type { MetaPreview, Row as RowData } from '../data/types';
@@ -60,7 +61,7 @@ export function Home(props: {
   createEffect(() => {
     if (!props.active) return;
     const next = hero()[(s.hero + 1) % Math.max(1, hero().length)];
-    if (next) new Image().src = art.backdrop(next.id);
+    if (next) void preloadImage(art.backdrop(next.id));
   });
 
   // A hidden screen has no active rotation timer.
@@ -105,6 +106,9 @@ export function Home(props: {
     const item = s.zone === 'rows' ? focusedItem() : hero()[s.hero];
     return item && art.backdrop(item.id);
   };
+  const renderRow = (index: number) => s.zone === 'rows'
+    ? index >= s.row - 1 && index <= s.row + 3
+    : index < 2;
 
   return (
     <>
@@ -149,14 +153,16 @@ export function Home(props: {
         <div class="rows">
           <For each={visibleRows()}>
             {(row, r) => (
-              <Row
-                title={row.title}
-                items={row.items}
-                focusedIndex={col(r())}
-                active={s.zone === 'rows' && s.row === r()}
-              >
-                {(item, focused) => <Tile item={item} focused={focused()} />}
-              </Row>
+              <Show when={renderRow(r())} fallback={<section class="row" aria-hidden="true" />}>
+                <Row
+                  title={row.title}
+                  items={row.items}
+                  focusedIndex={col(r())}
+                  active={s.zone === 'rows' && s.row === r()}
+                >
+                  {(item, focused) => <Tile item={item} focused={focused()} />}
+                </Row>
+              </Show>
             )}
           </For>
         </div>

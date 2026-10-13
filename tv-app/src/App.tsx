@@ -1,12 +1,15 @@
-import { createSignal, onMount, Show } from 'solid-js';
+import { createSignal, lazy, onMount, Show, Suspense } from 'solid-js';
 import type { PlayIntent, ResolvedSource } from './buna';
 import { trace } from './buna/trace';
 import { cinemeta, demoRow } from './data/cinemeta';
 import type { MetaPreview, Row, Video } from './data/types';
 import { Details } from './screens/Details';
 import { Home } from './screens/Home';
-import { Player } from './screens/Player';
-import { Sources } from './screens/Sources';
+
+const loadSources = () => import('./screens/Sources');
+const loadPlayer = () => import('./screens/Player');
+const Sources = lazy(() => loadSources().then(module => ({ default: module.Sources })));
+const Player = lazy(() => loadPlayer().then(module => ({ default: module.Player })));
 
 const catalog = cinemeta;
 
@@ -26,6 +29,7 @@ export function App() {
   const closeDetails = () => { trace.record('app', 'close-details'); setSourcesFor(null); setPlayback(null); setTitle(null); };
   const openSources = (video?: Video, episodeOrder?: Video[]) => {
     trace.record('app', 'open-sources', { episode: !!video });
+    void loadPlayer();
     setSourcesFor({ attemptId: ++nextAttemptId, video, episodeOrder });
   };
   const closeSources = (attemptId: number) => {
@@ -52,7 +56,7 @@ export function App() {
   return (
     <>
       <div class="screen" classList={{ hidden: !!title() || !!playback() }}>
-        <Home rows={rows()} active={!title()} onOpen={item => { trace.record('app', 'open-details'); setTitle(item); }} />
+        <Home rows={rows()} active={!title()} onOpen={item => { trace.record('app', 'open-details'); void loadSources(); setTitle(item); }} />
       </div>
       <Show when={title()} keyed>
         {(item) => (
@@ -64,16 +68,24 @@ export function App() {
       <Show when={title() && sourcesFor() ? { item: title()!, ...sourcesFor()! } : null} keyed>
         {(target) => (
           <div class="screen" classList={{ hidden: !!playback() }}>
-            <Sources item={target.item} video={target.video} active={!playback()}
-              onBack={() => closeSources(target.attemptId)}
-              onPlay={(intent, source) => acceptSource(target.attemptId, intent, source)} />
+            <Suspense fallback={<RouteLoading />}>
+              <Sources item={target.item} video={target.video} active={!playback()}
+                onBack={() => closeSources(target.attemptId)}
+                onPlay={(intent, source) => acceptSource(target.attemptId, intent, source)} />
+            </Suspense>
           </div>
         )}
       </Show>
       <Show when={playback()} keyed>
-        {(session) => <Player intent={session.intent} source={session.source} nextEpisode={nextEpisode()}
-          onNextEpisode={openNextEpisode} onExit={() => { trace.record('app', 'exit-player'); setPlayback(null); }} />}
+        {(session) => <Suspense fallback={<RouteLoading />}>
+          <Player intent={session.intent} source={session.source} nextEpisode={nextEpisode()}
+            onNextEpisode={openNextEpisode} onExit={() => { trace.record('app', 'exit-player'); setPlayback(null); }} />
+        </Suspense>}
       </Show>
     </>
   );
+}
+
+function RouteLoading() {
+  return <div class="route-loading"><span>Opening…</span></div>;
 }

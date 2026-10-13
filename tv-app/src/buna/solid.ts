@@ -1,20 +1,16 @@
 import { onCleanup } from 'solid-js';
-import { createStore, reconcile } from 'solid-js/store';
+import { createStore } from 'solid-js/store';
 import type { BunaSession } from './session';
 import type { PlaybackState } from './types';
 
 /**
  * Mirror a session's state into a Solid store. Views read this store and
- * nothing else; fine-grained reconciliation means only changed fields re-render.
+ * nothing else. Buna publishes immutable snapshots and reuses unchanged track
+ * arrays, so Solid can patch changed fields without serializing the whole state.
  */
 export function useBunaState(session: BunaSession): PlaybackState {
-  const [state, setState] = createStore<PlaybackState>(structuredCloneState(session.state));
-  const unsubscribe = session.subscribe(next => setState(reconcile(structuredCloneState(next))));
+  const [state, setState] = createStore<PlaybackState>({ ...session.state });
+  const unsubscribe = session.subscribe(next => setState(next));
   onCleanup(unsubscribe);
   return state;
-}
-
-// The session's snapshots are immutable; copying keeps the store from aliasing them.
-function structuredCloneState(state: PlaybackState): PlaybackState {
-  return JSON.parse(JSON.stringify(state)) as PlaybackState;
 }

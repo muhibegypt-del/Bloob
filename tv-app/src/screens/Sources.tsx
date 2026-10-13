@@ -56,6 +56,8 @@ export function Sources(props: {
   let afterPairing: ResolvableSource | null = null;
   let operationStarted = 0;
   let manualInput: HTMLInputElement | undefined;
+  let layout: HTMLDivElement | undefined;
+  let focusFrame = 0;
 
   const isDemo = () => props.item.id === demo.id;
   const searchKey = () => `${props.item.type}:${props.video?.id || props.item.id}`;
@@ -129,6 +131,7 @@ export function Sources(props: {
     pairGeneration++;
     window.clearInterval(pairTimer);
     window.clearInterval(tickTimer);
+    window.cancelAnimationFrame(focusFrame);
   });
 
   // ---------------------------------------------------------------- focus model
@@ -168,8 +171,19 @@ export function Sources(props: {
   });
   createEffect(() => {
     const key = focusKey();
-    if (!props.active) return;
-    window.requestAnimationFrame(() => document.querySelector(`.sources-screen [data-key="${CSS.escape(key)}"]`)?.scrollIntoView({ block: 'nearest' }));
+    window.cancelAnimationFrame(focusFrame);
+    if (!props.active || !key || !layout) return;
+    focusFrame = window.requestAnimationFrame(() => {
+      focusFrame = 0;
+      const target = layout?.querySelector<HTMLElement>(`[data-key="${CSS.escape(key)}"]`);
+      if (!target || !layout) return;
+      const item = target.getBoundingClientRect();
+      const viewport = layout.getBoundingClientRect();
+      const top = viewport.top + 120;
+      const bottom = viewport.bottom - 100;
+      if (item.top < top) layout.scrollTop += item.top - top;
+      else if (item.bottom > bottom) layout.scrollTop += item.bottom - bottom;
+    });
   });
 
   function moveFocus(step: number) {
@@ -375,7 +389,7 @@ export function Sources(props: {
 
   return <div class="sources-screen">
     <div class="sources-backdrop" style={{ 'background-image': `url("${art.backdrop(props.item.id)}")` }} />
-    <div class="sources-layout">
+    <div class="sources-layout" ref={layout}>
       <header class="sources-header">
         <div>
           <div class="sources-kicker">Choose how to watch</div>
