@@ -32,6 +32,7 @@ struct Fonts {
 };
 
 class Screen;
+struct GlassSpec;
 
 // Eases toward a target; exponential approach, frame-rate independent.
 struct Anim {
@@ -132,6 +133,7 @@ struct Ctx {
   std::function<void()> quit;
   std::function<void()> focus_tabs;   // root screens hand focus up to the tab bar
   std::function<void(bool)> show_tabs;  // root screens hide the bar when scrolled
+  std::function<void(const GlassSpec &)> glass;  // a glass panel over the top screen's artwork
 };
 
 Ctx &ctx();

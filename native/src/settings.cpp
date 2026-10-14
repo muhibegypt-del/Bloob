@@ -49,12 +49,13 @@ class SettingsScreen : public Screen {
     }, alive_);
   }
 
-  enum class Row { Account, Disconnect, Audio, Subtitles, Autoplay, Motion, About, Diagnostics };
+  enum class Row { Account, Disconnect, Audio, Subtitles, Autoplay, Motion, Transparency, Contrast, About, Diagnostics };
 
   std::vector<Row> rows() const {
     std::vector<Row> list = {Row::Account};
     if (ctx().paired) list.push_back(Row::Disconnect);
-    for (Row r : {Row::Audio, Row::Subtitles, Row::Autoplay, Row::Motion, Row::About, Row::Diagnostics}) list.push_back(r);
+    for (Row r : {Row::Audio, Row::Subtitles, Row::Autoplay, Row::Motion, Row::Transparency, Row::Contrast, Row::About, Row::Diagnostics})
+      list.push_back(r);
     return list;
   }
 
@@ -95,6 +96,8 @@ class SettingsScreen : public Screen {
     else if (r == Row::Subtitles) c.subtitle_language = step(c.subtitle_language, d, true);
     else if (r == Row::Autoplay) c.autoplay_next = !c.autoplay_next;
     else if (r == Row::Motion) c.reduce_motion = !c.reduce_motion;
+    else if (r == Row::Transparency) c.reduce_transparency = !c.reduce_transparency;
+    else if (r == Row::Contrast) c.high_contrast = !c.high_contrast;
     else return;
     c.save_settings();
   }
@@ -142,25 +145,31 @@ class SettingsScreen : public Screen {
     if (scroll_.step(dt)) ctx().animating = true;
   }
 
-  static constexpr int kRowH = 112, kGap = 16;
+  static constexpr int kRowH = 112, kGap = 14;
   static int row_top(int i) { return 270 + i * (kRowH + kGap); }
 
   void draw() override {
     Ctx &c = ctx();
     using namespace theme;
-    c.gfx.clear(ground);
-    int x = margin, w = 1180;
+    c.gfx.clear(plain);
+    int x = safe_x, w = 1180;
     int off = static_cast<int>(std::lround(scroll_.value));
-    text(Text::Title1, "Settings", x, 170 - off, primary);
+    text(Text::TVTitle2, "Settings", x, 172 - off, label(Label::Primary));
     auto list = rows();
     for (size_t i = 0; i < list.size(); i++) {
       int y = row_top(static_cast<int>(i)) - off;
       if (y + kRowH < 0 || y > H) continue;
       bool f = row_ == static_cast<int>(i) && !tabs_ && !pairing_.active();
-      if (f) draw_row_focus(x, y, w, kRowH);
-      else c.gfx.fill_round(x, y, w, kRowH, 18, raised);
+      // Glass rows: white with a soft lift when focused, a faint white fill at rest.
+      if (f) {
+        c.gfx.shadow(x, y, w, kRowH, 24, 24, 10, 130);
+        c.gfx.fill_round(x, y, w, kRowH, 24, rgba(0xffffff));
+      } else {
+        c.gfx.fill_round(x, y, w, kRowH, 24, rgba(0xffffff, 20));
+      }
       std::string title, value, action;
       bool choice = false;
+      int toggle = -1;  // a switch: 0 off, 1 on
       switch (list[i]) {
         case Row::Account:
           title = "AllDebrid";
@@ -184,13 +193,23 @@ class SettingsScreen : public Screen {
           break;
         case Row::Autoplay:
           title = "Play the next episode automatically";
-          value = c.autoplay_next ? "On \xC2\xB7 starts after a 10 second countdown" : "Off";
-          choice = true;
+          value = c.autoplay_next ? "Starts after a 10 second countdown" : "Off";
+          toggle = c.autoplay_next;
           break;
         case Row::Motion:
           title = "Reduce motion";
-          value = c.reduce_motion ? "On \xC2\xB7 no sliding, zooming or slideshow" : "Off";
-          choice = true;
+          value = c.reduce_motion ? "No sliding, zooming or slideshow" : "Off";
+          toggle = c.reduce_motion;
+          break;
+        case Row::Transparency:
+          title = "Reduce transparency";
+          value = c.reduce_transparency ? "Panels are solid instead of frosted glass" : "Off";
+          toggle = c.reduce_transparency;
+          break;
+        case Row::Contrast:
+          title = "Increase contrast";
+          value = c.high_contrast ? "Secondary text is brighter" : "Off";
+          toggle = c.high_contrast;
           break;
         case Row::About:
           title = "About Bloob";
@@ -203,20 +222,30 @@ class SettingsScreen : public Screen {
           action = "Open";
           break;
       }
-      text(Text::Headline, title, x + 40, y + 20, f ? ink : primary);
-      text(Text::Callout, value, x + 40, y + 62, f ? ink2 : secondary, 860);
-      if (choice) {
-        c.icons.draw(Icon::ChevronLeft, x + w - 150, y + 38, 36, f ? ink : tertiary);
-        c.icons.draw(Icon::ChevronRight, x + w - 76, y + 38, 36, f ? ink : tertiary);
+      Color fg = f ? rgba(0x000000) : label(Label::Primary);
+      Color fg2 = f ? rgba(0x000000, 166) : label(Label::Secondary);
+      text(Text::TVHeadline, title, x + 40, y + 16, fg);
+      text(Text::TVCallout, value, x + 40, y + 64, fg2, 860);
+      if (toggle >= 0) {
+        // A switch: white knob, filled track when on.
+        int sw = 84, sh = 48, sx = x + w - 40 - sw, sy = y + (kRowH - sh) / 2;
+        Color track = toggle ? (f ? rgba(0x000000) : rgba(0xffffff)) : (f ? rgba(0x000000, 40) : rgba(0xffffff, 50));
+        c.gfx.fill_round(sx, sy, sw, sh, sh / 2, track);
+        int kx = toggle ? sx + sw - sh / 2 : sx + sh / 2;
+        Color knob = toggle ? (f ? rgba(0xffffff) : rgba(0x000000)) : rgba(0xffffff);
+        c.gfx.fill_circle(kx, sy + sh / 2, sh / 2 - 5, knob);
+      } else if (choice) {
+        c.icons.draw(Icon::ChevronLeft, x + w - 150, y + 38, 36, f ? fg : label(Label::Tertiary));
+        c.icons.draw(Icon::ChevronRight, x + w - 76, y + 38, 36, f ? fg : label(Label::Tertiary));
       } else {
-        text_right(Text::Headline, action, x + w - 40, y + 38, f ? ink : tertiary);
+        text_right(Text::TVCallout, action, x + w - 40, y + (kRowH - line_for(Text::TVCallout)) / 2, f ? fg : label(Label::Tertiary));
       }
     }
     int y = row_top(static_cast<int>(list.size())) - off;
-    text(Text::Caption, "The preferred language decides which versions are recommended first and which sound track starts.", x, y + 8,
-         tertiary, w);
+    text(Text::TVCaption1, "The preferred language decides which versions are recommended first and which sound track starts.", x, y + 8,
+         label(Label::Tertiary), w);
     if (!ctx().paired && !attempts_.empty())
-      text(Text::Caption, "Where the pairing could not be saved: " + attempts_, x, y + 48, tertiary, w);
+      text(Text::TVCaption1, "Where the pairing could not be saved: " + attempts_, x, y + 48, label(Label::Tertiary), w);
     pairing_.draw();
   }
 
@@ -239,16 +268,16 @@ class AboutScreen : public Screen {
   void draw() override {
     Ctx &c = ctx();
     using namespace theme;
-    c.gfx.clear(ground);
-    int x = margin, w = W - 2 * margin;
-    text(Text::Title1, "Bloob", x, 120, primary);
-    text(Text::Callout, std::string("Version ") + BLOOB_VERSION + " \xC2\xB7 " + c.tv_model, x, 196, secondary);
-    int y = 270;
-    y = paragraph(Text::Body,
+    c.gfx.clear(plain);
+    int x = safe_x, w = W - 2 * safe_x;
+    text(Text::TVTitle1, "Bloob", x, 110, label(Label::Primary));
+    text(Text::TVCallout, std::string("Version ") + BLOOB_VERSION + " \xC2\xB7 " + c.tv_model, x, 210, label(Label::Secondary));
+    int y = 280;
+    y = paragraph(Text::TVBody,
                    "Bloob is an independent app. It is not made or endorsed by LG, AllDebrid or any catalogue it shows. "
                    "Play only what you have the right to watch.",
-                   x, y, secondary, w, 3) + 36;
-    text(Text::Headline, "Credits and licences", x, y, primary);
+                   x, y, label(Label::Secondary), w, 3) + 36;
+    text(Text::TVHeadline, "Credits and licences", x, y, label(Label::Primary));
     y += 56;
     const std::pair<const char *, const char *> credits[] = {
         {"Inter typeface", "Rasmus Andersson and contributors \xC2\xB7 SIL Open Font License 1.1"},
@@ -259,11 +288,11 @@ class AboutScreen : public Screen {
         {"Sources", "Found by a public indexer and prepared by your own AllDebrid account"},
     };
     for (auto &cr : credits) {
-      text(Text::Callout, cr.first, x, y, primary, 560);
-      text(Text::Callout, cr.second, x + 600, y, secondary, w - 600);
+      text(Text::TVCallout, cr.first, x, y, label(Label::Primary), 560);
+      text(Text::TVCallout, cr.second, x + 600, y, label(Label::Secondary), w - 600);
       y += 52;
     }
-    text(Text::Caption, "Back returns", x, H - 90, tertiary);
+    text(Text::TVCaption1, "Back returns", x, H - safe_y - 32, label(Label::Tertiary));
   }
 };
 
@@ -276,8 +305,8 @@ class DiagnosticsScreen : public Screen {
   }
   void draw() override {
     Ctx &c = ctx();
-    c.gfx.clear(theme::ground);
-    text(Text::Title1, "Diagnostics", 96, 72, theme::primary);
+    c.gfx.clear(theme::plain);
+    text(Text::TVTitle2, "Diagnostics", theme::safe_x, 72, label(Label::Primary));
     SDL_DisplayMode mode{};
     SDL_GetCurrentDisplayMode(0, &mode);
     SDL_RendererInfo info{};
@@ -301,24 +330,25 @@ class DiagnosticsScreen : public Screen {
         {"LG SDL extensions", missing.empty() ? "all present" : "missing: " + missing},
         {"Artwork", mem},
         {"Rendering", std::string(c.lite() ? "Lite effects (measured slow)" : "Full effects") +
-                          (c.perf_line.empty() ? "" : "  Â·  " + c.perf_line)},
+                          (c.reduce_transparency ? " \xC2\xB7 solid glass" : "") +
+                          (c.perf_line.empty() ? "" : "  \xC2\xB7  " + c.perf_line)},
         {"Network", !c.online ? "offline" : c.network.empty() ? "connected" : c.network},
         {"App", c.app_id + "  \xC2\xB7  " + c.dir},
         {"Last key", c.last_key},
     };
     int y = 170;
     for (auto &row : rows) {
-      text(Text::Callout, row.first, 96, y, theme::tertiary);
-      text(Text::Callout, row.second, 520, y, theme::primary, W - 620);
+      text(Text::TVCaption1, row.first, theme::safe_x, y, label(Label::Tertiary));
+      text(Text::TVCaption1, row.second, 520, y, label(Label::Primary), W - 600);
       y += 44;
     }
-    text(Text::Headline, "Recent log", 96, y + 16, theme::secondary);
-    y += 60;
+    text(Text::TVHeadline, "Recent log", theme::safe_x, y + 12, label(Label::Secondary));
+    y += 64;
     for (auto &line : log_tail(8)) {
-      text(Text::Footnote, line, 96, y, theme::tertiary, W - 192);
-      y += 28;
+      text(Text::TVCaption2, line, theme::safe_x, y, label(Label::Tertiary), W - 2 * theme::safe_x);
+      y += 30;
     }
-    text(Text::Caption, "Press any remote key to see its code  \xC2\xB7  Back returns", 96, 1024, theme::tertiary);
+    text(Text::TVCaption1, "Press any remote key to see its code  \xC2\xB7  Back returns", theme::safe_x, 1010, label(Label::Tertiary));
     c.redraw_at(c.now + 1000);
   }
 };

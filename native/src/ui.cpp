@@ -23,6 +23,8 @@ void Ctx::save_settings() {
   api.post("/api/settings", "{\"language\":" + Json::quote(language) + ",\"subtitleLanguage\":" + Json::quote(subtitle_language) +
                                 ",\"autoplayNext\":" + (autoplay_next ? "true" : "false") +
                                 ",\"reduceMotion\":" + (reduce_motion ? "true" : "false") +
+                                ",\"reduceTransparency\":" + (reduce_transparency ? "true" : "false") +
+                                ",\"highContrast\":" + (high_contrast ? "true" : "false") +
                                 ",\"welcomeSeen\":" + (welcome_seen ? "true" : "false") + ",\"recentSearches\":[" + list + "]}");
 }
 
@@ -305,15 +307,23 @@ void draw_row_focus(int x, int y, int w, int h) {
   c.gfx.fill_round(x, y, w, h, 16, theme::focus);
 }
 
+// A sheet on glass over the top screen's artwork (solid where it has none).
 void draw_panel(int x, int y, int w, int h, float alpha) {
-  ctx().gfx.fill_round(x, y, w, h, theme::panel_radius, fade(theme::glass, alpha));
+  GlassSpec g;
+  g.x = x;
+  g.y = y;
+  g.w = w;
+  g.h = h;
+  g.alpha = alpha;
+  if (ctx().glass) ctx().glass(g);
+  else draw_glass(g);
 }
 
 void draw_glass(const GlassSpec &g) {
   Ctx &c = ctx();
   if (g.w <= 0 || g.h <= 0 || g.alpha <= 0.01f) return;
   if (g.shadow) c.gfx.shadow(g.x, g.y, g.w, g.h, g.radius, 40, 18, static_cast<Uint8>(90 * g.alpha));
-  if (g.kind == GlassKind::Smoke) {
+  if (g.kind == GlassKind::Smoke && !c.reduce_transparency) {
     c.gfx.fill_round(g.x, g.y, g.w, g.h, g.radius, fade(theme::smoke, g.alpha));
     c.gfx.stroke_round(g.x, g.y, g.w, g.h, g.radius, 1, fade(theme::smoke_hairline, g.alpha));
     return;

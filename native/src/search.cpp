@@ -15,11 +15,11 @@ namespace {
 
 using namespace theme;
 
-constexpr int KX = margin, KW = 640;
+constexpr int KX = safe_x, KW = 640;
 constexpr int KCOLS = 6;
 constexpr int KEY_H = 66, KEY_GAP = 10;
 constexpr int RX = 840;
-constexpr int RGAP = 32;
+constexpr int RGAP = g_card_gap;
 constexpr int TOP = 170;
 constexpr long long kDebounceMs = 450;
 
@@ -36,12 +36,13 @@ class SearchScreen : public Screen {
   enum class Zone { Keys, Recent, Results };
 
   // Results layout follows the keyboard: beside it in 3 columns, full width in 4.
-  int results_x() const { return static_cast<int>(lerp(static_cast<float>(margin), static_cast<float>(RX), kb_.value)); }
-  int results_w() const { return W - margin - results_x(); }
-  int results_cols() const { return kb_.target > 0.5f ? 3 : 4; }
+  // Beside the keyboard in 3 columns; on its own in the tvOS 5-column grid.
+  int results_x() const { return static_cast<int>(lerp(static_cast<float>(safe_x), static_cast<float>(RX), kb_.value)); }
+  int results_w() const { return W - safe_x - results_x(); }
+  int results_cols() const { return kb_.target > 0.5f ? 3 : 5; }
   int tile_w() const { return (results_w() - (results_cols() - 1) * RGAP) / results_cols(); }
   int tile_h() const { return tile_w() * 9 / 16; }
-  int row_h() const { return tile_h() + 90; }
+  int row_h() const { return tile_h() + 96; }
 
   void set_zone(Zone z) {
     zone_ = z;
@@ -243,70 +244,89 @@ class SearchScreen : public Screen {
 
   void draw() override {
     Ctx &c = ctx();
-    c.gfx.clear(ground);
+    c.gfx.clear(plain);
     float k = kb_.value;
-    int kx = KX - static_cast<int>((1.0f - k) * (KW + 80));
+    int kx = KX - static_cast<int>((1.0f - k) * (KW + 120));
     if (k > 0.02f) draw_keyboard(kx, k);
-    // Browsing results: the query stays in view as a compact chip.
+    // Browsing results: the query stays in view as a compact glass chip.
     if (k < 0.98f) {
-      float a = 1.0f - k;
-      int w = std::min(640, measure(Text::Headline, query_) + 96);
-      c.gfx.fill_round(margin, TOP - 84, w, 60, 30, fade(raised, a));
-      c.icons.draw(Icon::Search, margin + 20, TOP - 70, 32, fade(tertiary, a));
-      text(Text::Headline, query_, margin + 64, TOP - 72, fade(primary, a), w - 84);
+      GlassButton chip;
+      chip.label = query_;
+      chip.icon = static_cast<int>(Icon::Search);
+      chip.h = 60;
+      chip.style = Text::TVCallout;
+      chip.alpha = 1.0f - k;
+      draw_glass_button(safe_x, TOP - 84, chip);
     }
     draw_results();
   }
 
   void draw_keyboard(int x0, float a) {
     Ctx &c = ctx();
-    // Field.
-    int iy = TOP;
-    c.gfx.fill_round(x0, iy, KW, 84, 20, fade(raised, a));
-    c.icons.draw(Icon::Search, x0 + 26, iy + 25, 34, fade(tertiary, a));
-    int qx = x0 + 80;
-    int qw = text(Text::Title2, query_, qx, iy + 21, fade(primary, a), KW - 110);
-    if (query_.empty()) text(Text::Title2, "Films and series", qx, iy + 21, fade(tertiary, a));
-    if (zone_ == Zone::Keys && !tabs_ && caret_) c.gfx.fill_rect(qx + qw + 4, iy + 22, 3, 42, fade(accent, a));
-
-    // Keyboard.
+    // The keyboard sits on one solid glass panel.
+    int pad = 28, iy = TOP;
     int kw = (KW - (KCOLS - 1) * KEY_GAP) / KCOLS;
     int ky = iy + 120;
+    int ay = ky + key_rows() * (KEY_H + KEY_GAP);
+    GlassSpec g;
+    g.x = x0 - pad;
+    g.y = iy - pad;
+    g.w = KW + 2 * pad;
+    g.h = ay + KEY_H + pad - g.y;
+    g.kind = GlassKind::Solid;
+    g.alpha = a;
+    draw_glass(g);
+    // Field.
+    c.gfx.fill_round(x0, iy, KW, 84, 42, fade(rgba(0xffffff, 26), a));
+    c.icons.draw(Icon::Search, x0 + 26, iy + 25, 34, label(Label::Secondary, a));
+    int qx = x0 + 80;
+    int qy = iy + (84 - line_for(Text::TVTitle3)) / 2;
+    int qw = text(Text::TVTitle3, query_, qx, qy, label(Label::Primary, a), KW - 110);
+    if (query_.empty()) text(Text::TVTitle3, "Films and series", qx, qy, label(Label::Tertiary, a));
+    if (zone_ == Zone::Keys && !tabs_ && caret_) c.gfx.fill_rect(qx + qw + 4, iy + 20, 3, 44, fade(rgba(0xffffff), a));
+
+    // Keys.
     for (int r = 0; r < key_rows(); r++)
       for (int k = 0; k < row_length(r); k++) {
         bool f = zone_ == Zone::Keys && !tabs_ && krow_ == r && kcol_ == k;
         draw_key(x0 + k * (kw + KEY_GAP), ky + r * (KEY_H + KEY_GAP), kw, std::string(1, kKeys[r * KCOLS + k]), f, false, a);
       }
-    int ay = ky + key_rows() * (KEY_H + KEY_GAP);
     int aw = (KW - 2 * KEY_GAP) / 3;
     const char *actions[3] = {"Space", "Delete", "Clear"};
     for (int k = 0; k < 3; k++) {
       bool f = zone_ == Zone::Keys && !tabs_ && krow_ == key_rows() && kcol_ == k;
       draw_key(x0 + k * (aw + KEY_GAP), ay, aw, actions[k], f, true, a);
     }
-    // Recent searches.
+    // Recent searches, under the panel.
     auto &list = ctx().recent_searches;
     if (!list.empty()) {
-      int ry = ay + KEY_H + 40;
-      text(Text::Eyebrow, upper("Recent"), x0, ry, fade(tertiary, a));
+      int ry = ay + KEY_H + pad + 36;
+      text(Text::TVCaption1, "Recent", x0, ry, label(Label::Secondary, a));
       int rx = x0;
       for (size_t i = 0; i < list.size(); i++) {
-        int w = pill_width(list[i]);
+        GlassButton b;
+        b.label = list[i];
+        b.h = 60;
+        b.style = Text::TVCallout;
+        b.focused = zone_ == Zone::Recent && static_cast<int>(i) == recent_index_ && !tabs_;
+        b.lift = lift_.value;
+        b.alpha = a;
+        int w = glass_button_width(b);
         if (rx + w > x0 + KW + 40) break;
-        rx += draw_pill(rx, ry + 34, list[i], zone_ == Zone::Recent && static_cast<int>(i) == recent_index_ && !tabs_, false, -1, a) + 12;
+        rx += draw_glass_button(rx, ry + 40, b) + 12;
       }
     }
   }
 
-  void draw_key(int x, int y, int w, const std::string &label, bool focused, bool small = false, float a = 1.0f) {
+  void draw_key(int x, int y, int w, const std::string &name, bool focused, bool small = false, float a = 1.0f) {
     Ctx &c = ctx();
-    float s = focused ? 1.0f + 0.08f * lift_.value : 1.0f;
+    float s = focused && !c.reduce_motion ? 1.0f + 0.08f * lift_.value : 1.0f;
     int gw = static_cast<int>(w * s), gh = static_cast<int>(KEY_H * s);
     int gx = x - (gw - w) / 2, gy = y - (gh - KEY_H) / 2;
-    if (focused) c.gfx.shadow(gx, gy, gw, gh, 14, 16, 8, static_cast<Uint8>(140 * a));
-    c.gfx.fill_round(gx, gy, gw, gh, 14, fade(focused ? focus : raised, a));
-    Text style = small ? Text::Callout : Text::Title2;
-    text_center(style, label, gx + gw / 2, gy + (gh - line_for(style)) / 2, fade(focused ? ink : primary, a));
+    if (focused) c.gfx.shadow(gx, gy, gw, gh, 16, 16, 8, static_cast<Uint8>(140 * a));
+    c.gfx.fill_round(gx, gy, gw, gh, 16, fade(focused ? rgba(0xffffff) : rgba(0xffffff, 20), a));
+    Text style = small ? Text::TVCallout : Text::TVTitle3;
+    text_center(style, name, gx + gw / 2, gy + (gh - line_for(style)) / 2, focused ? fade(rgba(0x000000), a) : label(Label::Primary, a));
   }
 
   // Four states: landing (type something), waiting (old results dimmed),
@@ -316,23 +336,23 @@ class SearchScreen : public Screen {
     std::string q = current_query();
     int rx = results_x(), rw = results_w(), cols = results_cols(), tw = tile_w(), th = tile_h(), rh = row_h();
     if (q.size() < 2) {
-      text(Text::Title1, "Find something to watch", rx, TOP + 4, primary);
-      paragraph(Text::Body, "Type a few letters of a film or series. Results appear as you type.", rx, TOP + 76, secondary, rw, 2);
+      text(Text::TVTitle2, "Find something to watch", rx, TOP + 4, label(Label::Primary));
+      paragraph(Text::TVBody, "Type a few letters of a film or series. Results appear as you type.", rx, TOP + 84, label(Label::Secondary), rw, 2);
       if (!ctx().recent_searches.empty())
-        paragraph(Text::Callout, "Or press Down from the keyboard to search again for something recent.", rx, TOP + 172, tertiary, rw, 2);
+        paragraph(Text::TVCallout, "Or press Down from the keyboard to search again for something recent.", rx, TOP + 172, label(Label::Tertiary), rw, 2);
       return;
     }
     bool waiting = searching_ || due_at_;
-    text(Text::Title2, "Results for \xE2\x80\x9C" + q + "\xE2\x80\x9D", rx, TOP + 18, primary, rw - 80);
-    if (waiting) draw_spinner(rx + rw - 24, TOP + 40, 34, secondary, searching_ ? searching_since_ : 0);
+    text(Text::TVTitle3, "Results for \xE2\x80\x9C" + q + "\xE2\x80\x9D", rx, TOP + 14, label(Label::Primary), rw - 80);
+    if (waiting) draw_spinner(rx + rw - 24, TOP + 40, 34, label(Label::Secondary), searching_ ? searching_since_ : 0);
     if (!error_.empty()) {
-      paragraph(Text::Body, error_, rx, TOP + 90, problem, rw, 3);
+      paragraph(Text::TVBody, error_, rx, TOP + 90, problem, rw, 3);
       return;
     }
     if (results_.empty()) {
       if (!waiting && searched_ == q) {
-        paragraph(Text::Body, "No titles match \xE2\x80\x98" + q + "\xE2\x80\x99.", rx, TOP + 90, secondary, rw, 2);
-        text(Text::Callout, "Try fewer letters, or another spelling.", rx, TOP + 140, tertiary, rw);
+        paragraph(Text::TVBody, "No titles match \xE2\x80\x98" + q + "\xE2\x80\x99.", rx, TOP + 90, label(Label::Secondary), rw, 2);
+        text(Text::TVCallout, "Try fewer letters, or another spelling.", rx, TOP + 140, label(Label::Tertiary), rw);
       }
       return;
     }
@@ -356,13 +376,14 @@ class SearchScreen : public Screen {
       cs.h = th;
       cs.focus = f ? lift_.value : 0;
       cs.focused = f;
+      cs.glass = true;
       draw_card(x, static_cast<int>(y), cs);
-      int ly = static_cast<int>(y) + th + (f ? 20 : 14);
-      text(Text::Caption, it.name, x, ly, f ? primary : secondary, tw);
-      text(Text::Footnote, join({it.series() ? "Series" : "Film", it.year}), x, ly + 32, tertiary, tw);
+      int ly = static_cast<int>(y) + th + (f ? 22 : 14);
+      text(Text::TVCaption1, it.name, x, ly, label(f ? Label::Primary : Label::Secondary), tw);
+      text(Text::TVCaption2, join({it.series() ? "Series" : "Film", it.year}), x, ly + 34, label(Label::Tertiary), tw);
     }
     // Still showing the previous query's results while the new ones come.
-    if (waiting && searched_ != q) c.gfx.fill_rect(rx - 20, top - 20, rw + 40, H - top + 20, with_alpha(ground, 130));
+    if (waiting && searched_ != q) c.gfx.fill_rect(rx - 20, top - 20, rw + 40, H - top + 20, with_alpha(plain, 130));
   }
 
  private:
@@ -377,7 +398,7 @@ class SearchScreen : public Screen {
   int recent_index_ = 0;
   bool tabs_ = false;
   bool caret_ = true;
-  Anim lift_{focus_rate, 1}, scroll_{scroll_rate};
+  Anim lift_{focus_in_rate, 1}, scroll_{scroll_rate};
   Anim kb_{page_rate, 1};  // 1 = keyboard open, 0 = browsing results
 };
 

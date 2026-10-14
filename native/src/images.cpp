@@ -233,11 +233,10 @@ Pixels frost_image(const unsigned char *rgba, int sw, int sh, int screen_w, int 
     return static_cast<float>(src[(static_cast<size_t>(y) * full.w + x) * 4 + c]);
   };
   const float r = static_cast<float>(std::min(radius / 2, std::min(out.w, out.h) / 2));
-  for (int y = 0; y < out.h; y++) {
-    // Light gathers along the top edge, as on a pane of glass.
-    float ty = static_cast<float>(y) / out.h;
-    float light = ty < 0.35f ? 0.10f * (1 - ty / 0.35f) * (1 - ty / 0.35f) : 0.0f;
-    float tint = 0.14f + light;
+  // First the blurred, slightly richer colour under each pixel, and how bright it is overall.
+  std::vector<float> col(static_cast<size_t>(out.w) * out.h * 3);
+  double luma_sum = 0;
+  for (int y = 0; y < out.h; y++)
     for (int x = 0; x < out.w; x++) {
       float u = (rect.x + (x + 0.5f) * 2) / 4.0f - 0.5f, v = (rect.y + (y + 0.5f) * 2) / 4.0f - 0.5f;
       int x0 = static_cast<int>(std::floor(u)), y0 = static_cast<int>(std::floor(v));
@@ -246,10 +245,28 @@ Pixels frost_image(const unsigned char *rgba, int sw, int sh, int screen_w, int 
       for (int k = 0; k < 3; k++)
         c[k] = (at(x0, y0, k) * (1 - fx) + at(x0 + 1, y0, k) * fx) * (1 - fy) + (at(x0, y0 + 1, k) * (1 - fx) + at(x0 + 1, y0 + 1, k) * fx) * fy;
       float l = 0.2126f * c[0] + 0.7152f * c[1] + 0.0722f * c[2];
+      float *o = &col[(static_cast<size_t>(y) * out.w + x) * 3];
+      for (int k = 0; k < 3; k++) o[k] = std::max(0.0f, std::min(255.0f, l + (c[k] - l) * 1.3f));  // a little richer
+      luma_sum += l;
+    }
+  // White text must stay readable on it: bright areas are pressed down towards a
+  // mid tone (a soft knee on brightness) and get less white wash, so bright art
+  // makes darker glass, as Apple's materials do.
+  (void)luma_sum;
+  const float kKnee = 84.0f;
+  for (int y = 0; y < out.h; y++) {
+    // Light gathers along the top edge, as on a pane of glass.
+    float ty = static_cast<float>(y) / out.h;
+    float light = ty < 0.35f ? 0.10f * (1 - ty / 0.35f) * (1 - ty / 0.35f) : 0.0f;
+    for (int x = 0; x < out.w; x++) {
+      const float *c = &col[(static_cast<size_t>(y) * out.w + x) * 3];
       unsigned char *p = reinterpret_cast<unsigned char *>(&out.data[(static_cast<size_t>(y) * out.w + x) * 4]);
+      float l = 0.2126f * c[0] + 0.7152f * c[1] + 0.0722f * c[2];
+      float dim = l > kKnee ? (kKnee + (l - kKnee) * 0.2f) / l : 1.0f;
+      float bright = std::min(1.0f, std::max(0.0f, (l - kKnee) / 120.0f));
+      float tint = (0.14f + light) * (1.0f - 0.6f * bright);
       for (int k = 0; k < 3; k++) {
-        float sat = l + (c[k] - l) * 1.3f;          // a little richer
-        float v2 = sat * (1 - tint) + 255.0f * tint;  // frosted white
+        float v2 = c[k] * dim * (1 - tint) + 255.0f * tint;  // frosted white
         p[k] = static_cast<unsigned char>(std::max(0.0f, std::min(255.0f, v2 + 0.5f)));
       }
       float coverage = 1.0f;

@@ -84,34 +84,36 @@ void Pairing::draw() {
   if (!active_) return;
   Ctx &c = ctx();
   using namespace theme;
-  c.gfx.fill_rect(0, 0, W, H, with_alpha(ground, 215));
+  c.gfx.fill_rect(0, 0, W, H, with_alpha(black, 170));
   int w = 1000, h = 560, x = (W - w) / 2, y = (H - h) / 2;
   draw_panel(x, y, w, h);
-  text(Text::Eyebrow, upper("Connect AllDebrid"), x + 64, y + 56, accent);
-  text(Text::Title1, "Pair this TV once", x + 64, y + 88, primary);
-  paragraph(Text::Body, "On your phone or computer, open the address below and enter the code. Bloob remembers the connection.",
-            x + 64, y + 164, secondary, w - 128, 2);
+  text(Text::TVCaption1, "Connect AllDebrid", x + 64, y + 52, label(Label::Secondary));
+  text(Text::TVTitle2, "Pair this TV once", x + 64, y + 88, label(Label::Primary));
+  paragraph(Text::TVBody, "On your phone or computer, open the address below and enter the code. Bloob remembers the connection.",
+            x + 64, y + 164, label(Label::Secondary), w - 128, 2);
   int by = y + 266;
-  c.gfx.fill_round(x + 64, by, w - 128, 160, 22, with_alpha(raised2, 230));
-  text(Text::Title2, "alldebrid.com/pin", x + 104, by + 36, primary);
+  c.gfx.fill_round(x + 64, by, w - 128, 160, 24, rgba(0xffffff, 26));
+  text(Text::TVTitle3, "alldebrid.com/pin", x + 104, by + 36, label(Label::Primary));
   if (pin_.empty()) {
-    if (error_.empty()) draw_spinner(x + w - 180, by + 80, 44);
+    if (error_.empty()) draw_spinner(x + w - 180, by + 80, 44, label(Label::Primary));
   } else {
     Font &f = c.fonts.bold;
     int pw = f.measure(pin_, 84);
-    f.draw(pin_, x + w - 104 - pw, by + 30, 84, accent);
+    f.draw(pin_, x + w - 104 - pw, by + 30, 84, rgba(0xffffff));
     long long left = std::max(0LL, (expires_at_ - c.now) / 1000);
-    text(Text::Caption, "New code in " + std::to_string(left / 60) + ":" + (left % 60 < 10 ? "0" : "") + std::to_string(left % 60),
-         x + 104, by + 96, tertiary);
+    text(Text::TVCaption1, "New code in " + std::to_string(left / 60) + ":" + (left % 60 < 10 ? "0" : "") + std::to_string(left % 60),
+         x + 104, by + 98, label(Label::Tertiary));
     c.redraw_at((c.now / 1000 + 1) * 1000);
   }
   if (!error_.empty()) {
-    paragraph(Text::Callout, error_, x + 64, by + 186, problem, w - 128, 2);
+    paragraph(Text::TVCallout, error_, x + 64, by + 186, problem, w - 128, 2);
   } else if (!pin_.empty()) {
-    draw_spinner(x + 80, by + 202, 24, tertiary);
-    text(Text::Callout, "Waiting for the code\xE2\x80\xA6", x + 106, by + 186, secondary);
+    draw_spinner(x + 80, by + 204, 24, label(Label::Tertiary));
+    text(Text::TVCallout, "Waiting for the code\xE2\x80\xA6", x + 106, by + 186, label(Label::Secondary));
   }
-  ButtonSpec cancel{"Cancel", -1, true};
+  GlassButton cancel;
+  cancel.label = "Cancel";
+  cancel.focused = true;
   cancel.h = 64;
-  draw_button(x + w - 64 - button_width(cancel), y + h - 100, cancel);
+  draw_glass_button(x + w - 64 - glass_button_width(cancel), y + h - 100, cancel);
 }

@@ -120,6 +120,7 @@ class App {
 
     c.push = [this](std::unique_ptr<Screen> s) { ops_.push_back({Op::Push, std::move(s)}); };
     c.pop = [this] { ops_.push_back({Op::Pop, nullptr}); };
+    c.glass = [this](const GlassSpec &g) { top()->shell_glass(g); };
     c.replace = [this](std::unique_ptr<Screen> s) { ops_.push_back({Op::Replace, std::move(s)}); };
     c.toast = [this](const std::string &text) {
       toast_ = text;
@@ -194,6 +195,8 @@ class App {
           x.subtitle_language = r.json["subtitleLanguage"].as_string("Off");
           x.autoplay_next = r.json["autoplayNext"].as_bool(true);
           x.reduce_motion = r.json["reduceMotion"].as_bool(false);
+          x.reduce_transparency = r.json["reduceTransparency"].as_bool(false);
+          x.high_contrast = r.json["highContrast"].as_bool(false);
           x.welcome_seen = r.json["welcomeSeen"].as_bool(false);
           x.settings_loaded = true;
           x.recent_searches.clear();
