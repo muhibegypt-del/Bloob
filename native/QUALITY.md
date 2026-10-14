@@ -99,7 +99,23 @@ Layers 23 (external services) and 24 (the legacy web app) are not scored. One is
 | 17 | Sources and ranking (service) | C 2→3 | TV profile table; parser claims for 3D, disc images, samples | 2.20 → **2.40** |
 | 14 | Data, workers and bus | R 2→3 | Chunk overflow closed; timeout and not-responding errors told apart | 2.40 → **2.60** |
 
-Unchanged: **21 Testing and tooling (1.33)** is now the clear weakest layer, because the QA items were deliberately skipped. **A** is still the weakest dimension (no CJK font, no text size, no voice or pointer), and **E** cannot move until `TV-TEST.md` §7 is run.
+## Re-score after 2.0.0, Glass (14 October 2026)
+
+Glass changed the experience layers and added a spoken interface. **E** stays at 1 for every changed layer, because nothing in 2.0 has run on the TV (`TV-TEST.md` §8). Scores follow the same rubric.
+
+| # | Layer | Changed dimensions | Why | 1.2 → **2.0** |
+| --- | --- | --- | --- | --- |
+| 1 | UX: journeys and remote rules | C 2→3, A 2→3 | Play reaches the picture without the chooser; alternatives one press away; spoken focus (untested on the TV) | 2.14 → **2.43** |
+| 2 | UI: visual system | A 2→3 | tvOS type scale (floor 23), label roles with Increase contrast, Reduce transparency, adaptive scrims; old type names and components removed | 2.33 → **2.50** |
+| 5 | Details, seasons, episodes | C 2→3, I 2→3 | How to watch on the title page; direct Play; glass seasons and episodes | 1.86 → **2.14** |
+| 6 | Sources and pairing | A 1→2 | Direct start shows only progress; spoken versions and pairing PIN | 2.14 → **2.29** |
+| 7 | Player screen | A 1→2 | Smoked bar, 5/8 s timers, 400 ms seek commit; controls and tracks spoken | 2.14 → **2.29** |
+| 8 | Settings and diagnostics | A 1→2 | Reduce transparency and Increase contrast; switches spoken | 2.00 → **2.17** |
+| 4 | Search | A 1→2 | Keys and results spoken; 5-column grid | 1.86 → **2.00** |
+
+New risk, not yet scored: **P** for Rendering (12) and Artwork (13). Frost bakes and full-bleed art add work on the TV; the Lite step-down covers it, but it is unmeasured.
+
+Unchanged in 1.2: **21 Testing and tooling (1.33)** is now the clear weakest layer, because the QA items were deliberately skipped. **A** is still the weakest dimension (no CJK font, no text size, no voice or pointer), and **E** cannot move until `TV-TEST.md` §7 is run.
 
 ## Ranking, weakest first
 

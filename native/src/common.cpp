@@ -55,7 +55,7 @@ void Backdrop::draw(float dim, float blur) {
     dim = std::max(dim, 0.45f * blur);
     blur = 0;
   }
-  c.gfx.fill_rect(0, 0, W, H, theme::ground);
+  c.gfx.fill_rect(0, 0, W, H, theme::black);
   auto layer = [&](const std::string &url, float alpha) {
     if (url.empty() || alpha <= 0.01f) return;
     if (blur < 0.99f) {
@@ -69,7 +69,7 @@ void Backdrop::draw(float dim, float blur) {
   };
   layer(previous_, 1.0f);
   if (!current_.empty() && c.images.settled(current_, W, H)) layer(current_, fade_.value);
-  if (dim > 0) c.gfx.fill_rect(0, 0, W, H, with_alpha(theme::ground, static_cast<int>(dim * 200)));
+  if (dim > 0) c.gfx.fill_rect(0, 0, W, H, with_alpha(theme::black, static_cast<int>(dim * 200)));
 }
 
 void Backdrop::glass(GlassSpec g) const {
@@ -106,11 +106,11 @@ void draw_scrims(float left, int bottom_from, float bottom) {
   auto a = [](float v) { return static_cast<Uint8>(std::max(0.0f, std::min(255.0f, v))); };
   if (left > 0) {
     // Dense where the text sits, gone by two-thirds across.
-    g.gradient_h(0, 0, 420, H, theme::ground, a(240 * left), a(200 * left));
-    g.gradient_h(420, 0, 520, H, theme::ground, a(200 * left), a(70 * left));
-    g.gradient_h(940, 0, 360, H, theme::ground, a(70 * left), 0);
+    g.gradient_h(0, 0, 420, H, theme::black, a(240 * left), a(200 * left));
+    g.gradient_h(420, 0, 520, H, theme::black, a(200 * left), a(70 * left));
+    g.gradient_h(940, 0, 360, H, theme::black, a(70 * left), 0);
   }
-  if (bottom > 0 && bottom_from < H) g.gradient_v(0, bottom_from, W, H - bottom_from, theme::ground, 0, a(255 * bottom));
+  if (bottom > 0 && bottom_from < H) g.gradient_v(0, bottom_from, W, H - bottom_from, theme::black, 0, a(255 * bottom));
 }
 
 int draw_title(const Item &item, int x, int top, int box_w, int box_h, float alpha, bool centred) {
@@ -140,7 +140,7 @@ int draw_title(const Item &item, int x, int top, int box_w, int box_h, float alp
   int y = top + box_h - static_cast<int>(lines.size()) * line;
   for (auto &l : lines) {
     int lx = centred ? x + (box_w - f.measure(l, size)) / 2 : x;
-    f.draw(l, lx, y, size, fade(theme::primary, alpha));
+    f.draw(l, lx, y, size, fade(rgba(0xffffff), alpha));
     y += line;
   }
   return top + box_h;

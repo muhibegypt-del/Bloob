@@ -53,27 +53,17 @@ struct Spec {
 };
 Spec spec(Text style) {
   switch (style) {
-    case Text::Display: return {3, 76, 84};
-    case Text::Title1: return {3, 48, 56};
-    case Text::Title2: return {2, 34, 42};
-    case Text::Headline: return {2, 28, 36};
-    case Text::Body: return {0, 26, 38};
-    case Text::Callout: return {1, 24, 32};
     // Nothing below 22 px: the smallest size that stays readable at three metres.
-    case Text::Caption: return {1, 23, 30};
-    case Text::Footnote: return {1, 22, 28};
-    case Text::Eyebrow: return {2, 22, 28};
-    case Text::Button: return {2, 26, 32};
-    case Text::TVDisplay: return {3, 104, 112};
-    case Text::TVTitle1: return {3, 76, 96};
-    case Text::TVTitle2: return {3, 57, 66};
-    case Text::TVTitle3: return {2, 48, 56};
-    case Text::TVHeadline: return {2, 38, 46};
-    case Text::TVCallout: return {1, 31, 38};
-    case Text::TVBody: return {1, 29, 36};
-    case Text::TVCaption1: return {1, 25, 32};
-    case Text::TVCaption2: return {1, 23, 30};
-    case Text::TVButton: return {2, 29, 36};
+    case Text::Display: return {3, 104, 112};
+    case Text::Title1: return {3, 76, 96};
+    case Text::Title2: return {3, 57, 66};
+    case Text::Title3: return {2, 48, 56};
+    case Text::Headline: return {2, 38, 46};
+    case Text::Callout: return {1, 31, 38};
+    case Text::Body: return {1, 29, 36};
+    case Text::Caption1: return {1, 25, 32};
+    case Text::Caption2: return {1, 23, 30};
+    case Text::Button: return {2, 29, 36};
   }
   return {0, 24, 32};
 }
@@ -186,38 +176,6 @@ std::string upper(std::string s) {
 
 // ---------------------------------------------------------------- components
 
-int button_width(const ButtonSpec &b) {
-  int w = measure(Text::Button, b.label) + 72;
-  if (b.icon >= 0) w += 38;
-  return w;
-}
-
-int draw_button(int x, int y, const ButtonSpec &b) {
-  Ctx &c = ctx();
-  int w = button_width(b), h = b.h;
-  // Reduce motion keeps the white fill but drops the zoom.
-  float s = b.focused && !c.reduce_motion ? 1.0f + 0.05f * b.lift : 1.0f;
-  int gw = static_cast<int>(w * s), gh = static_cast<int>(h * s);
-  int gx = x - (gw - w) / 2, gy = y - (gh - h) / 2;
-  if (b.focused) {
-    c.gfx.shadow(gx, gy, gw, gh, gh / 2, 22, 10, static_cast<Uint8>(150 * b.lift * b.alpha));
-    c.gfx.fill_round(gx, gy, gw, gh, gh / 2, fade(theme::focus, b.alpha));
-  } else {
-    c.gfx.fill_round(gx, gy, gw, gh, gh / 2, fade(theme::glass_light, b.alpha));
-  }
-  Color fg = fade(b.focused ? theme::ink : theme::primary, b.alpha);
-  int tx = gx + (gw - (w - 72)) / 2;
-  if (b.icon >= 0) {
-    int is = 28;
-    int iy = gy + (gh - is) / 2;
-    if (b.icon == kPlayIcon) c.gfx.triangle_right(tx - 2, iy, is, fg);
-    else c.icons.draw(static_cast<Icon>(b.icon), tx - 2, iy, is, fg);
-    tx += 38;
-  }
-  text(Text::Button, b.label, tx, gy + (gh - line_for(Text::Button)) / 2, fg);
-  return w;
-}
-
 void draw_missing_art(int x, int y, int w, int h, int radius, const std::string &title, float alpha) {
   Ctx &c = ctx();
   // A quiet, title-specific tone instead of an empty box.
@@ -230,14 +188,10 @@ void draw_missing_art(int x, int y, int w, int h, int radius, const std::string 
     auto lines = wrap(c.fonts.semibold, title, 26, w - 48, 2);
     int ty = y + h - 24 - static_cast<int>(lines.size()) * 32;
     for (auto &l : lines) {
-      c.fonts.semibold.draw(l, x + 24, ty, 26, fade(theme::secondary, alpha));
+      c.fonts.semibold.draw(l, x + 24, ty, 26, label(Label::Secondary, alpha));
       ty += 32;
     }
   }
-}
-
-void draw_focus_frame(int x, int y, int w, int h, int radius, float alpha) {
-  ctx().gfx.stroke_round(x - 1, y - 1, w + 2, h + 2, radius + 1, 4, fade(theme::focus, alpha));
 }
 
 SDL_Rect draw_card(int x, int y, const CardSpec &cs) {
@@ -253,58 +207,24 @@ SDL_Rect draw_card(int x, int y, const CardSpec &cs) {
   if (missing) {
     draw_missing_art(cx, cy, w, h, cs.radius, cs.title, cs.alpha);
   } else {
-    if (img.alpha < 255) c.gfx.fill_round(cx, cy, w, h, cs.radius, fade(theme::raised, cs.alpha));
+    if (img.alpha < 255) c.gfx.fill_round(cx, cy, w, h, cs.radius, fade(rgba(0xffffff, 18), cs.alpha));
     if (img.texture) c.gfx.texture(img.texture, cx, cy, w, h, static_cast<Uint8>(img.alpha * cs.alpha));
-    if (cs.title_on_art && !cs.title.empty() && cs.glass) {
-      int ty = cy + h - (cs.progress >= 0 ? 30 : 16) - line_for(Text::TVCaption2);
-      int sw = cs.sub.empty() ? 0 : measure(Text::TVCaption2, cs.sub);
-      if (sw) text(Text::TVCaption2, cs.sub, cx + w - 16 - sw, ty, label(Label::Secondary, cs.alpha * 1.2f));
-      text(Text::TVCaption2, cs.title, cx + 16, ty, label(Label::Primary, cs.alpha), w - 44 - sw);
-    } else if (cs.title_on_art && !cs.title.empty()) {
-      text(Text::Headline, cs.title, cx + 22, cy + h - 22 - line_for(Text::Headline), fade(theme::primary, cs.alpha), w - 44);
+    if (cs.title_on_art && !cs.title.empty()) {
+      int ty = cy + h - (cs.progress >= 0 ? 30 : 16) - line_for(Text::Caption2);
+      int sw = cs.sub.empty() ? 0 : measure(Text::Caption2, cs.sub);
+      if (sw) text(Text::Caption2, cs.sub, cx + w - 16 - sw, ty, label(Label::Secondary, cs.alpha * 1.2f));
+      text(Text::Caption2, cs.title, cx + 16, ty, label(Label::Primary, cs.alpha), w - 44 - sw);
     }
   }
-  if (cs.progress >= 0 && cs.glass) {
+  if (cs.progress >= 0) {
     int pw = w - 32;
     c.gfx.fill_round(cx + 16, cy + h - 18, pw, 5, 2, fade(with_alpha(rgba(0xffffff), 72), cs.alpha));
     int fw = static_cast<int>(pw * std::max(0.0, std::min(1.0, cs.progress)));
     if (fw > 0) c.gfx.fill_round(cx + 16, cy + h - 18, std::max(5, fw), 5, 2, fade(rgba(0xffffff), cs.alpha));
-  } else if (cs.progress >= 0) {
-    int pw = w - 36;
-    c.gfx.fill_round(cx + 18, cy + h - 20, pw, 6, 3, fade(with_alpha(theme::focus, 70), cs.alpha));
-    int fw = static_cast<int>(pw * std::max(0.0, std::min(1.0, cs.progress)));
-    if (fw > 0) c.gfx.fill_round(cx + 18, cy + h - 20, std::max(6, fw), 6, 3, fade(theme::accent, cs.alpha));
   }
-  if (cs.glass) {
-    if (cs.focus > 0.01f && !missing) c.gfx.sheen(cx, cy, w, h, cs.radius, cs.w, cs.h, static_cast<Uint8>(56 * cs.focus * cs.alpha));
-  } else if (cs.focused) {
-    draw_focus_frame(cx, cy, w, h, cs.radius, cs.alpha);
-  }
+  // Focus: the lift and shadow above, plus a diagonal sheen across the art.
+  if (cs.focus > 0.01f && !missing) c.gfx.sheen(cx, cy, w, h, cs.radius, cs.w, cs.h, static_cast<Uint8>(56 * cs.focus * cs.alpha));
   return SDL_Rect{cx, cy, w, h};
-}
-
-int pill_width(const std::string &label, int icon) { return measure(Text::Callout, label) + 52 + (icon >= 0 ? 36 : 0); }
-
-int draw_pill(int x, int y, const std::string &label, bool focused, bool selected, int icon, float alpha) {
-  Ctx &c = ctx();
-  int w = pill_width(label, icon), h = 56;
-  if (focused) c.gfx.shadow(x, y, w, h, h / 2, 16, 8, static_cast<Uint8>(130 * alpha));
-  Color bg = focused ? theme::focus : selected ? with_alpha(theme::focus, 58) : theme::glass_light;
-  c.gfx.fill_round(x, y, w, h, h / 2, fade(bg, alpha));
-  Color fg = fade(focused ? theme::ink : theme::primary, alpha);
-  int tx = x + 26;
-  if (icon >= 0) {
-    c.icons.draw(static_cast<Icon>(icon), tx - 4, y + 13, 30, fg);
-    tx += 36;
-  }
-  text(Text::Callout, label, tx, y + (h - line_for(Text::Callout)) / 2, fg);
-  return w;
-}
-
-void draw_row_focus(int x, int y, int w, int h) {
-  Ctx &c = ctx();
-  c.gfx.shadow(x, y, w, h, 16, 18, 8, 120);
-  c.gfx.fill_round(x, y, w, h, 16, theme::focus);
 }
 
 // A sheet on glass over the top screen's artwork (solid where it has none).
@@ -385,10 +305,10 @@ int draw_glass_button(int x, int y, const GlassButton &b) {
 
 int draw_glass_badge(int x, int y, const std::string &s, float alpha) {
   Ctx &c = ctx();
-  int w = measure(Text::TVCaption2, s) + 24, h = 36;
+  int w = measure(Text::Caption2, s) + 24, h = 36;
   c.gfx.fill_round(x, y, w, h, theme::badge_radius, fade(with_alpha(rgba(0xffffff), 40), alpha));
   c.gfx.stroke_round(x, y, w, h, theme::badge_radius, 1, fade(with_alpha(rgba(0xffffff), 70), alpha));
-  text(Text::TVCaption2, s, x + 12, y + (h - line_for(Text::TVCaption2)) / 2, label(Label::Primary, alpha));
+  text(Text::Caption2, s, x + 12, y + (h - line_for(Text::Caption2)) / 2, label(Label::Primary, alpha));
   return w;
 }
 
@@ -397,14 +317,6 @@ void draw_progress(int x, int y, int w, int h, double fraction, Color fill, Colo
   c.gfx.fill_round(x, y, w, h, h / 2, track);
   int fw = static_cast<int>(w * std::max(0.0, std::min(1.0, fraction)));
   if (fw > 0) c.gfx.fill_round(x, y, std::max(fw, h), h, h / 2, fill);
-}
-
-int badge_width(const std::string &label) { return measure(Text::Footnote, label) + 22; }
-
-void draw_badge(int x, int y, const std::string &label, Color color) {
-  int w = badge_width(label);
-  ctx().gfx.stroke_round(x, y, w, 32, 7, 2, color);
-  text(Text::Footnote, label, x + 11, y + 3, with_alpha(theme::primary, color.a));
 }
 
 void draw_spinner(int cx, int cy, int size, Color color, long long since) {
@@ -418,12 +330,12 @@ void draw_spinner(int cx, int cy, int size, Color color, long long since) {
   c.animating = true;
 }
 
-int draw_hint(int x, int y, const std::string &key, const std::string &label) {
+int draw_hint(int x, int y, const std::string &key, const std::string &name) {
   Ctx &c = ctx();
-  int kw = std::max(40, measure(Text::Footnote, key) + 20);
-  c.gfx.stroke_round(x, y, kw, 34, 8, 2, theme::tertiary);
-  text_center(Text::Footnote, key, x + kw / 2, y + 4, theme::secondary);
-  int lw = text(Text::Caption, label, x + kw + 12, y + 3, theme::tertiary);
+  int kw = std::max(42, measure(Text::Caption2, key) + 20);
+  c.gfx.stroke_round(x, y, kw, 36, 8, 2, label(Label::Tertiary));
+  text_center(Text::Caption2, key, x + kw / 2, y + (36 - line_for(Text::Caption2)) / 2, label(Label::Secondary));
+  int lw = text(Text::Caption1, name, x + kw + 12, y + (36 - line_for(Text::Caption1)) / 2, label(Label::Tertiary));
   return kw + 12 + lw;
 }
 

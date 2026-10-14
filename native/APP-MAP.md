@@ -2,7 +2,7 @@
 
 Bloob, split into its actual layers. For each layer this file records what the layer does, which files it lives in, what works and how we know, what is missing, and the next small changes. Work one layer at a time. Cite the increment ID (for example **9.2**) in the commit. When a change lands or is tested on the TV, update the layer's state here.
 
-Snapshot: **1.2.0**, 14 October 2026, branch `claude/sleepy-ptolemy-o87vgv`. Rows marked *(1.2)* are new in 1.2.0; the item IDs (F1, P3, U6…) are from the consolidated list in [`IMPLEMENTATION-UX.md`](IMPLEMENTATION-UX.md#status-in-120).
+Snapshot: **2.0.0** (Glass), 14 October 2026, branch `claude/sleepy-ptolemy-o87vgv`. Rows marked *(2.0)* are new in 2.0.0 and follow the phases in [`GLASS-PLAN.md`](GLASS-PLAN.md) (G0–G8); rows marked *(1.2)* are new in 1.2.0; the item IDs (F1, P3, U6…) are from the consolidated list in [`IMPLEMENTATION-UX.md`](IMPLEMENTATION-UX.md#status-in-120).
 
 How good each layer is, against a researched definition of quality, is in [`QUALITY.md`](QUALITY.md). The concrete build plan for responsiveness and continuity (U0 to U9) is in [`IMPLEMENTATION-UX.md`](IMPLEMENTATION-UX.md). Re-score a layer there when you change it.
 
@@ -21,6 +21,7 @@ How good each layer is, against a researched definition of quality, is in [`QUAL
 - **0.4:** the owner reported that the app worked, with jaggies, some bugs, and playback dying after the LG quick menu.
 - **1.1:** answers that report. It has **not yet run on the TV**, so almost everything 1.1 changed is *Desktop* at best.
 - **1.2:** the consolidated implementation list (fixes, platform items, responsiveness, comfort). Also **not yet run on the TV**.
+- **2.0:** Glass, the complete visual overhaul the owner chose, plus direct Play and spoken focus. **Not yet run on the TV**; `TV-TEST.md` §8 is its pass.
 
 ## The layers at a glance
 
@@ -86,6 +87,8 @@ How good each layer is, against a researched definition of quality, is in [`QUAL
 | Done by a real person, at the sofa | Missing |
 | *(1.2)* One Play owner (`play.h`): Home, Details, the episode row and Up next all go through `start_playback`; resume rules live in one place (U2) | Desktop (unit tests) |
 | *(1.2)* Reduce motion: no slides, zooms, card lift or hero slideshow (U8) | Desktop |
+| *(2.0)* Play starts the best version directly from Home, the title page, an episode or Up next; only the progress sheet shows, and Cancel returns to where Play was pressed (G4) | Desktop (tour) |
+| *(2.0)* Spoken focus with LG Audio Guidance: label, role and position for every focusable control (G7) | Desktop (log); TV untested |
 
 **Gaps:**
 - No watchlist ("My list").
@@ -103,7 +106,7 @@ How good each layer is, against a researched definition of quality, is in [`QUAL
 
 **Job:** how everything looks: tokens, type, focus, motion, states and components.
 
-**Lives in:** `native/DESIGN.md` (the spec), `src/theme.h` (tokens), and `src/ui.h`/`ui.cpp` (type scale and components: button, card, pill, focus frame, panel, badge, progress, spinner, hint, missing-art).
+**Lives in:** `native/DESIGN.md` (the spec, Glass since 2.0), `native/GLASS-PLAN.md` (how Glass was built), `src/theme.h` (tokens), `src/ui.h`/`ui.cpp` (type scale, label roles and components: glass panel, glass button, glass badge, card, progress, spinner, hint, missing-art) and `src/images.cpp` (frost bake).
 
 **State:**
 
@@ -116,6 +119,11 @@ How good each layer is, against a researched definition of quality, is in [`QUAL
 | Seen at viewing distance | Missing |
 | *(1.2)* Type floor 22 px: Caption 23, Footnote and Eyebrow 22 (G5) | Desktop |
 | *(1.2)* Effects tiers: two slow 5 s windows (render p95 over 25 ms) turn shadows and blur off for the session (U8) | Desktop |
+| *(2.0)* Glass: frosted panels baked from the blurred backdrop, smoked glass over video, solid fallback; crossfade-safe panes (G1) | Desktop |
+| *(2.0)* tvOS type scale (Display 104 … Caption2 23) and label roles; old 1.x type names and components removed (G0, G8) | Desktop |
+| *(2.0)* Adaptive scrims from artwork brightness measured at decode; frost presses bright areas down so white text stays readable (G1, G6) | Desktop |
+| *(2.0)* Card focus: ×1.08 lift, shadow and a baked diagonal sheen; white focus fill with black label on every control (G1) | Desktop |
+| *(2.0)* Reduce transparency and Increase contrast settings (G6) | Desktop |
 
 **Gaps:**
 - The settings icon reads as a sun.
@@ -147,6 +155,7 @@ How good each layer is, against a researched definition of quality, is in [`QUAL
 | *(1.2)* Focus kept on the same card by identity when Continue watching refreshes (F4) | Desktop |
 | *(1.2)* Title details prefetched once focus rests on a card; Details opens from the cache (U4) | Desktop |
 | *(1.2)* One-time note explaining AllDebrid when nothing is paired: Connect now / Later (G1; no QR code) | Desktop |
+| *(2.0)* Full-bleed hero with adaptive scrims, frosted tab bar on the 60 px safe line, 320×180 cards in the tvOS grid, Continue cards with title, time left and progress inside the art (G2, G3) | Desktop |
 
 **Gaps:**
 - Shelves are a fixed list in `catalog.js`.
@@ -173,6 +182,7 @@ How good each layer is, against a researched definition of quality, is in [`QUAL
 | Searches 450 ms after the last key | Desktop |
 | Recent searches, saved in settings | Desktop |
 | *(1.2)* Keyboard gives way: it slides off, the query stays as a chip, results widen to 4 columns; landing, waiting, results and empty states (U9) | Desktop |
+| *(2.0)* Keyboard on solid glass, white focus keys, recent searches as glass buttons, results in 5 columns once the keyboard steps aside (G6) | Desktop |
 
 **Gaps:**
 - No voice search with the LG mic.
@@ -200,6 +210,8 @@ How good each layer is, against a researched definition of quality, is in [`QUAL
 | Specials last | Desktop (service) |
 | *(1.2)* Season strip scrolls to keep the selected season visible, with chevrons for more (F3/U5) | Untested (tour title has one season) |
 | *(1.2)* The main button comes from `play::title_default` (latest unfinished, else next, else first regular episode) (U2) | Desktop (unit tests) |
+| *(2.0)* Title page in Glass with *Play*, *Start over*, *All versions*; films get the frosted *How to watch* panel (best version ticked, two alternatives) fetched as the page opens (G4) | Desktop |
+| *(2.0)* Glass season buttons (candidate for the selected season) and episode cards with sheen (G4) | Desktop |
 
 **Gaps:**
 - **Season pills that do not fit across the screen are not drawn**, so shows with many seasons cannot reach the later ones. This is a real bug (`draw_episodes`, `if (sx + w > W - margin) break;`).
@@ -229,6 +241,8 @@ How good each layer is, against a researched definition of quality, is in [`QUAL
 | Resolve sheet with steps and progress. Asks for a file or quality when needed. On failure, "Try the next best". | Desktop (fixtures) |
 | *(1.2)* "1 seeder", plain digits; TV format warnings for DTS, TrueHD Atmos, disc Dolby Vision, 3D, disc images, samples and bitrate against 95 Mbps Ethernet (F5, P3, P4) | Desktop (unit tests) |
 | *(1.2)* A next episode prepared during the credits is picked up instead of starting a new job (U10) | Untested |
+| *(2.0)* The Sources screen is now *All versions* (opened on request) and the direct-start progress sheet; versions, release details, file and quality questions and the failure sheet restyled as glass; a chosen alternative travels as `PlayRequest.candidate` (G4) | Desktop |
+| *(2.0)* Pairing sheet on frosted glass over whichever screen opened it (G6) | Desktop |
 
 **Gaps:**
 - Nothing shows whether a release is already cached on AllDebrid (instant) or must download.
@@ -264,6 +278,8 @@ How good each layer is, against a researched definition of quality, is in [`QUAL
 | *(1.2)* Wall clock top right and "Ends at" beside the controls (G3) | Desktop |
 | *(1.2)* Track labels name commentary, forced and SDH tracks, more codecs and languages, and number duplicates "#2" (G2) | Desktop |
 | *(1.2)* Up next follows the autoplay setting; the next episode is ranked and resolved in the last 150 s (U10) | Desktop (UI); preparation Untested |
+| *(2.0)* Smoked-glass bar 56 px above the bottom (title, meta with badges, controls above the timeline), smoked clock pill with *Ends*, white seek bubble, track panels standing on the bar, Up next as a smoked card (G5) | Desktop (`ui-snapshots.sh`, tour) |
+| *(2.0)* Timers 5 s, 8 s when paused or on a control (paused no longer pins), fades 300 ms, seek commit 400 ms (G5) | Desktop (unit test for the commit) |
 
 **Gaps:**
 - No seek thumbnails.
@@ -290,6 +306,7 @@ How good each layer is, against a researched definition of quality, is in [`QUAL
 | Version and TV model | Desktop |
 | *(1.2)* Rows: preferred audio, subtitles language, autoplay next episode, Reduce motion, Disconnect AllDebrid (OK twice), About (version, credits, licences) (G4, U8) | Desktop |
 | *(1.2)* Diagnostics shows the effects tier, the last `[perf]` window and the network type | Desktop |
+| *(2.0)* Glass rows with switches; *Reduce transparency* and *Increase contrast* saved by the service; About and Diagnostics in the tvOS type (G6) | Desktop |
 
 **Gaps:**
 - No subtitle language.
@@ -462,6 +479,7 @@ How good each layer is, against a researched definition of quality, is in [`QUAL
 | Logos decoded once at 760×240, then scaled | Desktop |
 | Least-recently-drawn eviction above a 192 MB budget | Desktop |
 | Fade-in; a failed backdrop keeps the previous one | Desktop |
+| *(2.0)* Frost bake per panel on the image workers (quarter-size blur, half-resolution crop, tint, rounded corners), cached by rect and picture; luminance of the text region measured at decode for adaptive scrims (G1) | Desktop |
 
 **Gaps:**
 - The 192 MB budget is a guess; TV memory is unmeasured.
@@ -493,6 +511,7 @@ How good each layer is, against a researched definition of quality, is in [`QUAL
 | Model parsing | Desktop only (no unit tests) |
 | *(1.2)* Chunked-response parser rejects oversized chunk lengths (F1) | Desktop |
 | *(1.2)* Slow requests (over 20 s) logged; status-0 errors split into timed out and not responding (P6) | Desktop |
+| *(2.0)* Audio Guidance subscription (settingsservice) and TTS speak calls (`speech.cpp`); one refusal turns speech off (G7) | Desktop (host bus); TV untested |
 
 **Gaps:**
 - No unit tests for the model parsers.

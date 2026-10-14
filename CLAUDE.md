@@ -13,7 +13,7 @@ Build **Bloob**, a distinct webOS application with:
 
 The current prototype is a vertical slice, not the finished product. The user has seen a high-quality resolved stream play with HDR and Atmos on this TV, but criticized the old player overlay and source chooser and had to re-pair AllDebrid at every start. Version 0.2.0 (12 October 2026) answers all three: Buna now owns playback (`tv-app/src/buna/`), the source screen is recommendation-first, and pairing storage tries several locations, verifies each write, and reports where the key went. All of it is covered by unit tests and a key-driven end-to-end run in desktop Chromium. **None of it has been verified on the TV yet**; see "TV verification" in `tv-app/README.md`.
 
-## Native track (Buna N2, 13 October 2026; 1.1 UI pass the same day; 1.2.0 on 14 October)
+## Native track (Buna N2, 13 October 2026; 1.1 UI pass the same day; 1.2.0 and 2.0.0 Glass on 14 October)
 
 The owner chose native. `native/` is a C++ webOS app (`com.muhib.bloob`, "Bloob Native") built with the community webOS NDK (openlgtv buildroot-nc4, the toolchain Moonlight TV uses).
 
@@ -27,7 +27,14 @@ The owner chose native. `native/` is a C++ webOS app (`com.muhib.bloob`, "Bloob 
 - **App map (start here for any change):** `native/APP-MAP.md` splits the app into 24 layers across experience, engine, service and foundation. Each layer has its job, files, state with evidence, gaps, and numbered increments such as **9.3**. Work one layer per change, cite the increment ID in the commit, and update that layer's state when the change lands or is tested on the TV. `native/QUALITY.md` defines quality (ISO/IEC 25010, Nielsen response limits, streaming quality of experience, and TV 10-foot guidance), scores every layer on seven dimensions, and ranks them. Re-score a layer when it changes.
 - **UX implementation map:** `native/IMPLEMENTATION-UX.md` turns the Elements of A UI studies (now in `research/`, from `bloob-v1` commits `32c2ebc` and `59348e3`) into build items U0 to U9, with logic, code, tests and TV checks. Its *Status in 1.2.0* table lists the whole consolidated list the owner asked for in one go (F1–F8 fixes, P1–P6 platform items, U0–U10, G1–G5), where each landed and its evidence.
 - **1.2.0 (14 October 2026, built, not yet on the TV):** tracks restored after reconnects and preferred audio/subtitle languages applied; start position in the load request with seek fallback (unverified option); `policyAction` handled; reduced seek HUD and timeout classes; subtitle position (undocumented call, switches itself off); clock and "Ends at"; next episode prepared in the credits; TV format warnings in the ranker (`tv-app/service/tv-profile.js`: DTS, TrueHD Atmos, disc Dolby Vision, bitrate against 95 Mbps Ethernet); one Play owner (`native/src/play.*`); scrolling season strip; search keyboard that gives way; Settings with subtitles, autoplay, Reduce motion, Disconnect (`POST /api/account/unpair`, which writes an unpaired mark and deletes nothing) and About; effects tiers; 22 px type floor; glyphs beyond Latin-1; `[launch]`, `[perf]` and `[qoe]` log lines; IPK modes fixed to 755/644 by `native/scripts/fix-ipk-modes.py`. `requiredACG` is still unset: run the read-only `native/scripts/acg-lookup.sh` on the TV first. QA work (tour assertions, CI, TV automation) was skipped at the owner's request.
-- **Design (1.1):** the visual system, with tokens, type, focus, motion, states and per-screen layouts, is in `native/DESIGN.md`. The tokens live in `native/src/theme.h`, and the type scale and components in `ui.cpp`.
+- **2.0.0 Glass (14 October 2026, built, not yet on the TV):** the owner chose **Glass** from the concept canvas (artifact "Bloob UI concepts: Lantern and Glass") and asked for a full overhaul with a proper plan. `native/GLASS-PLAN.md` is that plan, phases G0–G8 with a status table and commits.
+  - **Visual system.** It follows Apple's public tvOS type scale (floor 23 px), safe area (80/60) and 5-column grid. Text uses label roles, with *Increase contrast*.
+  - **Glass materials.** Frosted glass is baked per panel from the blurred backdrop on image workers, with a soft knee so white text stays readable on bright art. Glass over video is smoked, because the video plane cannot be read. A solid fallback covers Lite, *Reduce transparency* and baking. Scrims adapt to the artwork's brightness.
+  - **Direct Play.** Play from Home, the title page, an episode or Up next goes straight to the best version, showing only a progress sheet; Cancel returns to where Play was pressed. Films show a frosted *How to watch* panel on the title page. The old chooser is now *All versions*.
+  - **Player.** A smoked bar with 5/8 s timers, 300 ms fades and a 400 ms seek commit.
+  - **Spoken focus (G7).** With LG Audio Guidance on, focus is spoken as label, role and position, via `native/src/speech.*`. It uses the documented `audioGuidance` setting and `com.webos.service.tts/speak`, unverified on this TV, and the app declares `accessibility.supportsAudioGuidance`.
+  - **Clean-up.** The 1.x type names, components and tokens are gone; `native/DESIGN.md` is rewritten for Glass. `native/TV-TEST.md` §8 is the 2.0 TV pass.
+- **Design (2.0, Glass):** the visual system, with materials, tokens, type, focus, motion, states, the spoken interface and per-screen layouts, is in `native/DESIGN.md`. The tokens live in `native/src/theme.h`, the type scale, label roles and components in `ui.cpp`, and the frost bake in `images.cpp`.
 - **Rendering and playback:**
   - The TV's SDL2 provides the window and remote. Bloob draws with its own renderer: Inter via stb_truetype with oversampling and gamma, exact-size anti-aliased shapes, and artwork via stb_image scaled on worker threads, on a 1920×1080 offscreen canvas.
   - Playback goes through LG uMediaServer over luna (`com.webos.media`), in an exported hardware video window under the UI.
@@ -43,7 +50,7 @@ The owner chose native. `native/` is a C++ webOS app (`com.muhib.bloob`, "Bloob 
   - watch progress and settings.
   If the bus will not start the service, the app runs it directly with the TV's Node and stops it on exit.
 - **Build and test scripts:**
-  - `native/scripts/build.sh`: tests, cross-build, ABI guard (GLIBC_2.4 only, no GLIBCXX), service staging, IPK with fixed modes (`native/artifacts/com.muhib.bloob_1.2.0_arm.ipk`).
+  - `native/scripts/build.sh`: tests, cross-build, ABI guard (GLIBC_2.4 only, no GLIBCXX), service staging, IPK with fixed modes (`native/artifacts/com.muhib.bloob_2.0.0_arm.ipk`).
   - `native/scripts/ui-tour.sh`: drives the whole app on the desktop through the acceptance task, plus quick-menu, Home and pipeline-lost events, against the real service with fixture sources.
   - `native/scripts/ui-snapshots.sh`: covers player states.
   - `native/TV-TEST.md`: the TV pass, with the acceptance task, viewing distance and lifecycle.
@@ -57,7 +64,7 @@ The owner chose native. `native/` is a C++ webOS app (`com.muhib.bloob`, "Bloob 
   - Some UI was buggy.
   - Playback died after the LG quick menu.
   - The look was not yet the calm, Apple-like feel the user wants.
-- **1.1.0 is the response to that report and has not yet run on the TV.** Neither has 1.2.0; `native/TV-TEST.md` §7 is its pass.
+- **1.1.0 is the response to that report and has not yet run on the TV.** Neither have 1.2.0 (`native/TV-TEST.md` §7) or 2.0.0 Glass (§8).
 
 See `native/README.md`. Elements of A is UI inspiration only. Technical references are the open-source Moonlight TV and Kodi webOS code, read but not copied. The web app (`tv-app/`) remains installed and working.
 

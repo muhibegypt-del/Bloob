@@ -41,7 +41,7 @@ Availability availability(const SourceOption &o) {
   if (seeders >= 20) return {"Readily available", good};
   if (seeders >= 5) return {"Available", good};
   if (o.availability.find("seeder") != std::string::npos) return {"Slow to prepare", caution};
-  return {"Availability unknown", tertiary};
+  return {"Availability unknown", label(Label::Tertiary)};
 }
 
 class SourcesScreen : public Screen {
@@ -405,12 +405,12 @@ class SourcesScreen : public Screen {
     switch (state_) {
       case State::Loading:
         draw_spinner(RX + RW / 2, 420, 56, label(Label::Secondary), loading_since_);
-        if (ctx().now - loading_since_ > spinner_delay_ms) text_center(Text::TVCallout, "Finding versions\xE2\x80\xA6", RX + RW / 2, 480, label(Label::Secondary));
+        if (ctx().now - loading_since_ > spinner_delay_ms) text_center(Text::Callout, "Finding versions\xE2\x80\xA6", RX + RW / 2, 480, label(Label::Secondary));
         break;
       case State::Error:
       case State::Empty: {
-        text(Text::TVTitle3, state_ == State::Empty ? "Nothing to play yet" : "Couldn\xE2\x80\x99t find versions", RX, 140, label(Label::Primary));
-        paragraph(Text::TVBody, state_ == State::Empty ? "No versions of this are available right now. Try again later." : error_, RX, 210,
+        text(Text::Title3, state_ == State::Empty ? "Nothing to play yet" : "Couldn\xE2\x80\x99t find versions", RX, 140, label(Label::Primary));
+        paragraph(Text::Body, state_ == State::Empty ? "No versions of this are available right now. Try again later." : error_, RX, 210,
                   label(Label::Secondary), RW, 3);
         GlassButton b;
         b.label = "Try again";
@@ -432,17 +432,17 @@ class SourcesScreen : public Screen {
     Ctx &c = ctx();
     int y = draw_title(req_.item, LX, 120, LW, 150);
     y += 34;
-    text(Text::TVHeadline, "All versions", LX, y, label(Label::Primary));
-    y += line_for(Text::TVHeadline) + 8;
+    text(Text::Headline, "All versions", LX, y, label(Label::Primary));
+    y += line_for(Text::Headline) + 8;
     if (req_.item.series()) {
-      text(Text::TVCallout, episode_code(req_.season, req_.episode), LX, y, label(Label::Secondary));
-      y += line_for(Text::TVCallout) + 4;
-      if (!req_.episode_title.empty()) y = paragraph(Text::TVCallout, req_.episode_title, LX, y, label(Label::Secondary), LW, 2);
+      text(Text::Callout, episode_code(req_.season, req_.episode), LX, y, label(Label::Secondary));
+      y += line_for(Text::Callout) + 4;
+      if (!req_.episode_title.empty()) y = paragraph(Text::Callout, req_.episode_title, LX, y, label(Label::Secondary), LW, 2);
     } else {
-      text(Text::TVCallout, meta_line(req_.item), LX, y, label(Label::Secondary), LW);
-      y += line_for(Text::TVCallout);
+      text(Text::Callout, meta_line(req_.item), LX, y, label(Label::Secondary), LW);
+      y += line_for(Text::Callout);
     }
-    if (req_.resume_ms > 0) text(Text::TVCallout, "Continues from " + clock_text(req_.resume_ms), LX, y + 16, label(Label::Primary));
+    if (req_.resume_ms > 0) text(Text::Callout, "Continues from " + clock_text(req_.resume_ms), LX, y + 16, label(Label::Primary));
     // AllDebrid connection, quietly.
     int ay = H - safe_y - 52;
     bool paired = c.paired;
@@ -450,7 +450,7 @@ class SourcesScreen : public Screen {
     std::string status = !account_known_ ? "Checking AllDebrid\xE2\x80\xA6"
                          : paired ? (durable_ ? "AllDebrid connected" : "AllDebrid connected until restart")
                                   : "AllDebrid not connected. You\xE2\x80\x99ll pair once when you press Play.";
-    text(Text::TVCaption1, status, LX + 28, ay, label(Label::Secondary), LW);
+    text(Text::Caption1, status, LX + 28, ay, label(Label::Secondary), LW);
   }
 
   void draw_options() {
@@ -462,7 +462,7 @@ class SourcesScreen : public Screen {
     }
     int others = static_cast<int>(options_.size()) - index;
     if (others > 0) {
-      text(Text::TVCaption1, has_recommended() ? "Other versions" : "Versions", RX, LIST_TOP - 44, label(Label::Secondary));
+      text(Text::Caption1, has_recommended() ? "Other versions" : "Versions", RX, LIST_TOP - 44, label(Label::Secondary));
       float s = scroll_.value;
       for (int i = 0; i < others; i++) {
         float ry = LIST_TOP + (i - s) * (ROW + ROW_GAP);
@@ -493,17 +493,17 @@ class SourcesScreen : public Screen {
     }
     Color fg = focused ? rgba(0x000000) : label(Label::Primary);
     Color fg2 = focused ? rgba(0x000000, 166) : label(Label::Secondary);
-    text(Text::TVCaption1, "Best version", x + 40, y + 36, fg2);
-    text(Text::TVTitle2, o.headline, x + 40, y + 72, fg, w - 260);
-    text(Text::TVBody, picture_words(o) + " \xC2\xB7 " + o.audio, x + 40, y + 146, fg2, w - 260);
-    paragraph(Text::TVCaption1, ranking_.why, x + 40, y + 190, fg2, w - 260, 2);
+    text(Text::Caption1, "Best version", x + 40, y + 36, fg2);
+    text(Text::Title2, o.headline, x + 40, y + 72, fg, w - 260);
+    text(Text::Body, picture_words(o) + " \xC2\xB7 " + o.audio, x + 40, y + 146, fg2, w - 260);
+    paragraph(Text::Caption1, ranking_.why, x + 40, y + 190, fg2, w - 260, 2);
     // Play affordance.
     int r = 52, cx = x + w - 40 - r, cy = y + h / 2;
     c.gfx.fill_circle(cx, cy, r, focused ? rgba(0x000000) : candidate);
     c.gfx.triangle_right(cx - 16, cy - 20, 40, focused ? rgba(0xffffff) : label(Label::Primary));
     if (!o.cautions.empty()) {
       c.icons.draw(Icon::Warning, x + 40, y + h - 46, 26, focused ? caution_ink : caution);
-      text(Text::TVCaption2, o.warnings[0], x + 76, y + h - 46, focused ? caution_ink : caution, w - 360);
+      text(Text::Caption2, o.warnings[0], x + 76, y + h - 46, focused ? caution_ink : caution, w - 360);
     }
   }
 
@@ -518,13 +518,13 @@ class SourcesScreen : public Screen {
     }
     Color fg = focused ? rgba(0x000000) : label(o.excluded ? Label::Disabled : Label::Primary);
     Color fg2 = focused ? rgba(0x000000, 166) : label(o.excluded ? Label::Disabled : Label::Secondary);
-    int ty = y + (ROW - line_for(Text::TVHeadline)) / 2;
-    text(Text::TVHeadline, o.resolution, x + 28, ty, fg);
-    text(Text::TVCallout, picture_words(o) + " \xC2\xB7 " + o.audio, x + 170, y + (ROW - line_for(Text::TVCallout)) / 2, fg2, w - 170 - 330);
+    int ty = y + (ROW - line_for(Text::Headline)) / 2;
+    text(Text::Headline, o.resolution, x + 28, ty, fg);
+    text(Text::Callout, picture_words(o) + " \xC2\xB7 " + o.audio, x + 170, y + (ROW - line_for(Text::Callout)) / 2, fg2, w - 170 - 330);
     Availability a = availability(o);
-    int aw = measure(Text::TVCaption1, a.words);
+    int aw = measure(Text::Caption1, a.words);
     int ax = x + w - 28 - aw;
-    text(Text::TVCaption1, a.words, ax, y + (ROW - line_for(Text::TVCaption1)) / 2, focused && a.dot.r == caution.r ? caution_ink : fg2, 300);
+    text(Text::Caption1, a.words, ax, y + (ROW - line_for(Text::Caption1)) / 2, focused && a.dot.r == caution.r ? caution_ink : fg2, 300);
     c.gfx.fill_circle(ax - 18, y + ROW / 2, 6, a.dot);
   }
 
@@ -534,7 +534,7 @@ class SourcesScreen : public Screen {
     if (a <= 0.01f || state_ != State::Ready || options_.empty()) return;
     Ctx &c = ctx();
     const SourceOption &o = options_[static_cast<size_t>(focus_index_)];
-    int w = 640, x = W - margin - w + static_cast<int>((1.0f - a) * 60), y = 96, h = H - 192;
+    int w = 640, x = W - safe_x - w + static_cast<int>((1.0f - a) * 60), y = 96, h = H - 192;
     // It slides, so it is solid glass (a moving frost would re-bake every frame).
     GlassSpec g;
     g.x = x;
@@ -543,18 +543,19 @@ class SourcesScreen : public Screen {
     g.h = h;
     g.kind = GlassKind::Solid;
     g.alpha = a;
+    // Opaque underneath: it lies over text, which must not ghost through.
+    c.gfx.fill_round(x, y, w, h, g.radius, fade(rgba(0x2c2c2e), a));
     draw_glass(g);
-    (void)c;
     int px = x + 44, pw = w - 88, py = y + 44;
-    text(Text::TVCaption1, "Release details", px, py, label(Label::Secondary, a));
+    text(Text::Caption1, "Release details", px, py, label(Label::Secondary, a));
     py += 38;
-    text(Text::TVTitle3, o.headline, px, py, label(Label::Primary, a), pw);
+    text(Text::Title3, o.headline, px, py, label(Label::Primary, a), pw);
     py += 70;
     auto row = [&](const std::string &name, const std::string &value, int lines = 1) {
       if (value.empty()) return;
-      text(Text::TVCaption2, name, px, py, label(Label::Secondary, a));
+      text(Text::Caption2, name, px, py, label(Label::Secondary, a));
       py += 30;
-      py = paragraph(Text::TVCallout, value, px, py, label(Label::Primary, a), pw, lines) + 18;
+      py = paragraph(Text::Callout, value, px, py, label(Label::Primary, a), pw, lines) + 18;
     };
     row("Picture", picture_words(o));
     row("Sound", o.audio);
@@ -563,16 +564,16 @@ class SourcesScreen : public Screen {
     row("Release name", o.release, 3);
     for (auto &warning : o.warnings) {
       c.icons.draw(Icon::Warning, px, py, 26, fade(caution, a));
-      py = paragraph(Text::TVCaption1, warning, px + 38, py, fade(caution, a), pw - 38, 2) + 8;
+      py = paragraph(Text::Caption1, warning, px + 38, py, fade(caution, a), pw - 38, 2) + 8;
     }
-    paragraph(Text::TVCaption2, "These details come from the release name, not from the file itself.", px, y + h - 92, label(Label::Tertiary, a), pw, 2);
+    paragraph(Text::Caption2, "These details come from the release name, not from the file itself.", px, y + h - 92, label(Label::Tertiary, a), pw, 2);
   }
 
   void draw_modal() {
     float a = modal_anim_.value;
     if (modal_ == Modal::None || a <= 0.01f) return;
     Ctx &c = ctx();
-    c.gfx.fill_rect(0, 0, W, H, with_alpha(ground, static_cast<int>(200 * a)));
+    c.gfx.fill_rect(0, 0, W, H, with_alpha(black, static_cast<int>(200 * a)));
     int w = 920, x = (W - w) / 2;
     if (modal_ == Modal::Resolving) {
       struct StepRow { const char *id; const char *label; };
@@ -582,8 +583,8 @@ class SourcesScreen : public Screen {
       steps.push_back({"unlocking", "Getting the stream"});
       int h = 330 + static_cast<int>(steps.size()) * 58 + (saw_caching_ ? 34 : 0), y = (H - h) / 2;
       sheet(x, y, w, h, a);
-      text(Text::TVCaption1, "Starting", x + 56, y + 48, label(Label::Secondary, a));
-      text(Text::TVTitle3, chosen_.headline, x + 56, y + 84, label(Label::Primary, a), w - 112);
+      text(Text::Caption1, "Starting", x + 56, y + 48, label(Label::Secondary, a));
+      text(Text::Title3, chosen_.headline, x + 56, y + 84, label(Label::Primary, a), w - 112);
       static const char *order[] = {"starting", "adding", "caching", "files", "unlocking", "preparing", "ready"};
       auto rank = [](const std::string &id) {
         for (int i = 0; i < 7; i++) if (id == order[i]) return i;
@@ -600,10 +601,10 @@ class SourcesScreen : public Screen {
         if (done) c.icons.draw(Icon::Check, x + 56, sy, 30, fade(good, a));
         else if (current) draw_spinner(x + 71, sy + 15, 30, label(Label::Primary, a));
         else c.gfx.fill_circle(x + 71, sy + 15, 5, label(Label::Tertiary, a));
-        text(Text::TVBody, st.label, x + 108, sy - 2, label(done ? Label::Secondary : current ? Label::Primary : Label::Tertiary, a));
+        text(Text::Body, st.label, x + 108, sy - 2, label(done ? Label::Secondary : current ? Label::Primary : Label::Tertiary, a));
         if (id == "caching" && fraction_ >= 0 && current) {
           draw_progress(x + 108, sy + 44, 520, 8, fraction_);
-          text(Text::TVCallout, std::to_string(static_cast<int>(fraction_ * 100)) + "%", x + 648, sy + 32, label(Label::Secondary, a));
+          text(Text::Callout, std::to_string(static_cast<int>(fraction_ * 100)) + "%", x + 648, sy + 32, label(Label::Secondary, a));
         }
         sy += id == "caching" ? 92 : 58;
       }
@@ -620,8 +621,8 @@ class SourcesScreen : public Screen {
       int shown = std::min(n, 7);
       int h = 210 + shown * 76, y = (H - h) / 2;
       sheet(x, y, w, h, a);
-      text(Text::TVTitle3, modal_ == Modal::ChooseFile ? "Which file?" : "Which quality?", x + 56, y + 46, label(Label::Primary, a));
-      text(Text::TVCallout, modal_ == Modal::ChooseFile ? "This release holds several videos." : "AllDebrid offers these versions.", x + 56, y + 104,
+      text(Text::Title3, modal_ == Modal::ChooseFile ? "Which file?" : "Which quality?", x + 56, y + 46, label(Label::Primary, a));
+      text(Text::Callout, modal_ == Modal::ChooseFile ? "This release holds several videos." : "AllDebrid offers these versions.", x + 56, y + 104,
            label(Label::Secondary, a));
       int first = std::max(0, std::min(choice_ - 3, n - shown));
       int ry = y + 160;
@@ -631,8 +632,8 @@ class SourcesScreen : public Screen {
           c.gfx.shadow(x + 32, ry, w - 64, 66, 20, 18, 8, 120);
           c.gfx.fill_round(x + 32, ry, w - 64, 66, 20, rgba(0xffffff));
         }
-        text(Text::TVCallout, choices_[static_cast<size_t>(i)].label, x + 56, ry + 14, f ? rgba(0x000000) : label(Label::Primary, a), w - 320);
-        text_right(Text::TVCallout, choices_[static_cast<size_t>(i)].detail, x + w - 56, ry + 14, f ? rgba(0x000000, 166) : label(Label::Secondary, a));
+        text(Text::Callout, choices_[static_cast<size_t>(i)].label, x + 56, ry + 14, f ? rgba(0x000000) : label(Label::Primary, a), w - 320);
+        text_right(Text::Callout, choices_[static_cast<size_t>(i)].detail, x + w - 56, ry + 14, f ? rgba(0x000000, 166) : label(Label::Secondary, a));
         ry += 76;
       }
       return;
@@ -641,8 +642,8 @@ class SourcesScreen : public Screen {
       int h = 420, y = (H - h) / 2;
       sheet(x, y, w, h, a);
       c.icons.draw(Icon::Warning, x + 56, y + 56, 40, fade(caution, a));
-      text(Text::TVTitle3, "That version didn\xE2\x80\x99t work", x + 112, y + 50, label(Label::Primary, a));
-      paragraph(Text::TVBody, failure_, x + 56, y + 130, label(Label::Secondary, a), w - 112, 3);
+      text(Text::Title3, "That version didn\xE2\x80\x99t work", x + 112, y + 50, label(Label::Primary, a));
+      paragraph(Text::Body, failure_, x + 56, y + 130, label(Label::Secondary, a), w - 112, 3);
       int bx = x + 56;
       bool has_next = focus_index_ + 1 < static_cast<int>(options_.size());
       GlassButton next;

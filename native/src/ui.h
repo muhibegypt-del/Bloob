@@ -161,16 +161,11 @@ std::string upper(std::string s);
 constexpr int kPlayIcon = 1000;   // the solid play triangle (not a line icon)
 constexpr int kPauseIcon = 1001;  // two solid bars
 
+// A button in a list a screen builds (drawn as a GlassButton).
 struct ButtonSpec {
   std::string label;
-  int icon = -1;          // Icon value, kPlayIcon, or -1
-  bool focused = false;
-  float lift = 1.0f;      // 0..1 focus animation progress
-  float alpha = 1.0f;
-  int h = theme::button_h;
+  int icon = -1;  // Icon value, kPlayIcon, kPauseIcon, or -1
 };
-int button_width(const ButtonSpec &b);
-int draw_button(int x, int y, const ButtonSpec &b);  // returns width
 
 // Artwork card: image (with missing-art fallback), optional title on the art,
 // progress, and the focus treatment (lift, shadow, frame).
@@ -181,7 +176,6 @@ struct CardSpec {
   double progress = -1;    // 0..1 to show a progress bar
   float focus = 0;         // 0..1 focus animation (lift + shadow)
   bool focused = false;    // frame appears at once
-  bool glass = false;      // Glass focus: sheen instead of the white frame
   std::string sub;         // Glass, with title_on_art: right-aligned note ("6 min left")
   float alpha = 1.0f;
 };
@@ -191,11 +185,8 @@ void draw_missing_art(int x, int y, int w, int h, int radius, const std::string 
 void draw_focus_frame(int x, int y, int w, int h, int radius, float alpha = 1.0f);
 
 // Pills: compact controls (player track buttons, season tabs, filters).
-int pill_width(const std::string &label, int icon = -1);
-int draw_pill(int x, int y, const std::string &label, bool focused, bool selected = false, int icon = -1, float alpha = 1.0f);
 
 // List row (menus, sources): white when focused.
-void draw_row_focus(int x, int y, int w, int h);
 
 // Panels over blurred art.
 void draw_panel(int x, int y, int w, int h, float alpha = 1.0f);
@@ -225,7 +216,7 @@ struct GlassButton {
   float lift = 1.0f;      // 0..1 focus animation
   float alpha = 1.0f;
   int h = 80;
-  Text style = Text::TVButton;
+  Text style = Text::Button;
 };
 int glass_button_width(const GlassButton &b);
 // Spoken position, "3 of 12" (G7).
@@ -234,12 +225,10 @@ int draw_glass_button(int x, int y, const GlassButton &b);  // returns width
 // Small outlined fact on art ("4K", "Dolby Vision").
 int draw_glass_badge(int x, int y, const std::string &label, float alpha = 1.0f);  // returns width
 
-void draw_progress(int x, int y, int w, int h, double fraction, Color fill = theme::accent,
-                   Color track = with_alpha(theme::focus, 50));
-void draw_badge(int x, int y, const std::string &label, Color color = theme::tertiary);  // outlined "4K"
-int badge_width(const std::string &label);
+void draw_progress(int x, int y, int w, int h, double fraction, Color fill = rgba(0xffffff),
+                   Color track = rgba(0xffffff, 50));
 // Spinner that only appears after `since` + spinner delay (quick loads show nothing).
-void draw_spinner(int cx, int cy, int size, Color color = theme::secondary, long long since = 0);
+void draw_spinner(int cx, int cy, int size, Color color = rgba(0xffffff, 166), long long since = 0);
 // "OK  Play" hint: a key cap and its meaning.
 int draw_hint(int x, int y, const std::string &key, const std::string &label);
 

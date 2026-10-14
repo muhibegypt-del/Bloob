@@ -19,7 +19,7 @@ constexpr int KX = safe_x, KW = 640;
 constexpr int KCOLS = 6;
 constexpr int KEY_H = 66, KEY_GAP = 10;
 constexpr int RX = 840;
-constexpr int RGAP = g_card_gap;
+constexpr int RGAP = card_gap;
 constexpr int TOP = 170;
 constexpr long long kDebounceMs = 450;
 
@@ -275,7 +275,7 @@ class SearchScreen : public Screen {
       chip.label = query_;
       chip.icon = static_cast<int>(Icon::Search);
       chip.h = 60;
-      chip.style = Text::TVCallout;
+      chip.style = Text::Callout;
       chip.alpha = 1.0f - k;
       draw_glass_button(safe_x, TOP - 84, chip);
     }
@@ -301,9 +301,9 @@ class SearchScreen : public Screen {
     c.gfx.fill_round(x0, iy, KW, 84, 42, fade(rgba(0xffffff, 26), a));
     c.icons.draw(Icon::Search, x0 + 26, iy + 25, 34, label(Label::Secondary, a));
     int qx = x0 + 80;
-    int qy = iy + (84 - line_for(Text::TVTitle3)) / 2;
-    int qw = text(Text::TVTitle3, query_, qx, qy, label(Label::Primary, a), KW - 110);
-    if (query_.empty()) text(Text::TVTitle3, "Films and series", qx, qy, label(Label::Tertiary, a));
+    int qy = iy + (84 - line_for(Text::Title3)) / 2;
+    int qw = text(Text::Title3, query_, qx, qy, label(Label::Primary, a), KW - 110);
+    if (query_.empty()) text(Text::Title3, "Films and series", qx, qy, label(Label::Tertiary, a));
     if (zone_ == Zone::Keys && !tabs_ && caret_) c.gfx.fill_rect(qx + qw + 4, iy + 20, 3, 44, fade(rgba(0xffffff), a));
 
     // Keys.
@@ -322,13 +322,13 @@ class SearchScreen : public Screen {
     auto &list = ctx().recent_searches;
     if (!list.empty()) {
       int ry = ay + KEY_H + pad + 36;
-      text(Text::TVCaption1, "Recent", x0, ry, label(Label::Secondary, a));
+      text(Text::Caption1, "Recent", x0, ry, label(Label::Secondary, a));
       int rx = x0;
       for (size_t i = 0; i < list.size(); i++) {
         GlassButton b;
         b.label = list[i];
         b.h = 60;
-        b.style = Text::TVCallout;
+        b.style = Text::Callout;
         b.focused = zone_ == Zone::Recent && static_cast<int>(i) == recent_index_ && !tabs_;
         b.lift = lift_.value;
         b.alpha = a;
@@ -346,7 +346,7 @@ class SearchScreen : public Screen {
     int gx = x - (gw - w) / 2, gy = y - (gh - KEY_H) / 2;
     if (focused) c.gfx.shadow(gx, gy, gw, gh, 16, 16, 8, static_cast<Uint8>(140 * a));
     c.gfx.fill_round(gx, gy, gw, gh, 16, fade(focused ? rgba(0xffffff) : rgba(0xffffff, 20), a));
-    Text style = small ? Text::TVCallout : Text::TVTitle3;
+    Text style = small ? Text::Callout : Text::Title3;
     text_center(style, name, gx + gw / 2, gy + (gh - line_for(style)) / 2, focused ? fade(rgba(0x000000), a) : label(Label::Primary, a));
   }
 
@@ -357,23 +357,23 @@ class SearchScreen : public Screen {
     std::string q = current_query();
     int rx = results_x(), rw = results_w(), cols = results_cols(), tw = tile_w(), th = tile_h(), rh = row_h();
     if (q.size() < 2) {
-      text(Text::TVTitle2, "Find something to watch", rx, TOP + 4, label(Label::Primary));
-      paragraph(Text::TVBody, "Type a few letters of a film or series. Results appear as you type.", rx, TOP + 84, label(Label::Secondary), rw, 2);
+      text(Text::Title2, "Find something to watch", rx, TOP + 4, label(Label::Primary));
+      paragraph(Text::Body, "Type a few letters of a film or series. Results appear as you type.", rx, TOP + 84, label(Label::Secondary), rw, 2);
       if (!ctx().recent_searches.empty())
-        paragraph(Text::TVCallout, "Or press Down from the keyboard to search again for something recent.", rx, TOP + 172, label(Label::Tertiary), rw, 2);
+        paragraph(Text::Callout, "Or press Down from the keyboard to search again for something recent.", rx, TOP + 172, label(Label::Tertiary), rw, 2);
       return;
     }
     bool waiting = searching_ || due_at_;
-    text(Text::TVTitle3, "Results for \xE2\x80\x9C" + q + "\xE2\x80\x9D", rx, TOP + 14, label(Label::Primary), rw - 80);
+    text(Text::Title3, "Results for \xE2\x80\x9C" + q + "\xE2\x80\x9D", rx, TOP + 14, label(Label::Primary), rw - 80);
     if (waiting) draw_spinner(rx + rw - 24, TOP + 40, 34, label(Label::Secondary), searching_ ? searching_since_ : 0);
     if (!error_.empty()) {
-      paragraph(Text::TVBody, error_, rx, TOP + 90, problem, rw, 3);
+      paragraph(Text::Body, error_, rx, TOP + 90, problem, rw, 3);
       return;
     }
     if (results_.empty()) {
       if (!waiting && searched_ == q) {
-        paragraph(Text::TVBody, "No titles match \xE2\x80\x98" + q + "\xE2\x80\x99.", rx, TOP + 90, label(Label::Secondary), rw, 2);
-        text(Text::TVCallout, "Try fewer letters, or another spelling.", rx, TOP + 140, label(Label::Tertiary), rw);
+        paragraph(Text::Body, "No titles match \xE2\x80\x98" + q + "\xE2\x80\x99.", rx, TOP + 90, label(Label::Secondary), rw, 2);
+        text(Text::Callout, "Try fewer letters, or another spelling.", rx, TOP + 140, label(Label::Tertiary), rw);
       }
       return;
     }
@@ -397,11 +397,10 @@ class SearchScreen : public Screen {
       cs.h = th;
       cs.focus = f ? lift_.value : 0;
       cs.focused = f;
-      cs.glass = true;
       draw_card(x, static_cast<int>(y), cs);
       int ly = static_cast<int>(y) + th + (f ? 22 : 14);
-      text(Text::TVCaption1, it.name, x, ly, label(f ? Label::Primary : Label::Secondary), tw);
-      text(Text::TVCaption2, join({it.series() ? "Series" : "Film", it.year}), x, ly + 34, label(Label::Tertiary), tw);
+      text(Text::Caption1, it.name, x, ly, label(f ? Label::Primary : Label::Secondary), tw);
+      text(Text::Caption2, join({it.series() ? "Series" : "Film", it.year}), x, ly + 34, label(Label::Tertiary), tw);
     }
     // Still showing the previous query's results while the new ones come.
     if (waiting && searched_ != q) c.gfx.fill_rect(rx - 20, top - 20, rw + 40, H - top + 20, with_alpha(plain, 130));

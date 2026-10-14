@@ -512,7 +512,7 @@ class App {
     std::vector<int> widths(kTabCount);
     int total = 0;
     for (int i = 0; i < kTabCount; i++) {
-      widths[static_cast<size_t>(i)] = kTabs[i].icon >= 0 ? 68 : measure(Text::TVCallout, kTabs[i].label) + 60;
+      widths[static_cast<size_t>(i)] = kTabs[i].icon >= 0 ? 68 : measure(Text::Callout, kTabs[i].label) + 60;
       total += widths[static_cast<size_t>(i)] + (i ? 6 : 0);
     }
     int pad = 8, h = 64;
@@ -538,7 +538,7 @@ class App {
       }
       Color fg = focused ? fade(rgba(0x000000), a) : label(current ? Label::Primary : Label::Secondary, a);
       if (kTabs[i].icon >= 0) c.icons.draw(static_cast<Icon>(kTabs[i].icon), x + 18, by + pad + 16, 32, fg);
-      else text_center(Text::TVCallout, kTabs[i].label, x + w / 2, by + pad + (h - line_for(Text::TVCallout)) / 2, fg);
+      else text_center(Text::Callout, kTabs[i].label, x + w / 2, by + pad + (h - line_for(Text::Callout)) / 2, fg);
       x += w + 6;
     }
   }
@@ -567,7 +567,7 @@ class App {
       draw_screen(screen, true, entering_.value, static_cast<int>((1.0f - entering_.value) * 28));
     } else {
       if (stack_.empty() && page_fade_.value < 0.999f) {
-        c.gfx.clear(theme::ground);
+        c.gfx.clear(theme::black);
         draw_screen(screen, true, page_fade_.value, 0);
       } else {
         screen->draw();
@@ -576,7 +576,7 @@ class App {
       if (leaving_) draw_screen(leaving_.get(), true, leaving_fade_.value, static_cast<int>((1.0f - leaving_fade_.value) * 20));
     }
     if (!toast_.empty() && c.now < toast_until_) {
-      int w = measure(Text::TVCallout, toast_) + 72, th = 72;
+      int w = measure(Text::Callout, toast_) + 72, th = 72;
       GlassSpec g;
       g.x = W / 2 - w / 2;
       g.y = H - theme::safe_y - th - 40;
@@ -584,7 +584,7 @@ class App {
       g.h = th;
       g.radius = th / 2;
       top()->shell_glass(g);
-      text_center(Text::TVCallout, toast_, W / 2, g.y + (th - line_for(Text::TVCallout)) / 2, label(Label::Primary));
+      text_center(Text::Callout, toast_, W / 2, g.y + (th - line_for(Text::Callout)) / 2, label(Label::Primary));
       c.redraw_at(toast_until_);
     }
     c.gfx.end_frame();

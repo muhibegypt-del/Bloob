@@ -16,7 +16,7 @@ namespace {
 
 using namespace theme;
 
-constexpr int ESTRIDE = episode_w + g_card_gap;
+constexpr int ESTRIDE = episode_w + card_gap;
 constexpr int X0 = safe_x;
 constexpr int kPanelY = 790, kPanelH = 214;
 
@@ -296,7 +296,7 @@ class DetailsScreen : public Screen {
       GlassButton b;
       b.label = s.label;
       b.h = 60;
-      b.style = Text::TVCallout;
+      b.style = Text::Callout;
       x += glass_button_width(b) + 12;
     }
     xs.push_back(x);
@@ -358,10 +358,10 @@ class DetailsScreen : public Screen {
     if (top_only > 0.01f) {
       y += 24;
       std::string facts = meta_line(it);
-      int mw = text(Text::TVCallout, facts, X0, y, label(Label::Secondary, top_only), 1100);
+      int mw = text(Text::Callout, facts, X0, y, label(Label::Secondary, top_only), 1100);
       if (!it.rating.empty()) draw_glass_badge(X0 + mw + 24, y, "IMDb " + it.rating, top_only);
       y += 54;
-      y = paragraph(Text::TVBody, it.description, X0, y, label(Label::Primary, 0.86f * top_only), 900, 3);
+      y = paragraph(Text::Body, it.description, X0, y, label(Label::Primary, 0.86f * top_only), 900, 3);
       int by = std::min(std::max(y + 36, 560), kPanelY - 120);
       draw_buttons(by, top_only);
       if (has_versions_panel()) draw_versions(top_only);
@@ -375,7 +375,7 @@ class DetailsScreen : public Screen {
       return;
     }
     if (!error_.empty() && !loaded_) {
-      paragraph(Text::TVCallout, error_, X0, by, fade(problem, alpha), 900, 2);
+      paragraph(Text::Callout, error_, X0, by, fade(problem, alpha), 900, 2);
       return;
     }
     int bx = X0;
@@ -389,7 +389,7 @@ class DetailsScreen : public Screen {
       b.alpha = alpha;
       bx += draw_glass_button(bx, by, b) + 20;
     }
-    if (has_resume_) text(Text::TVCaption1, resume_note_, bx + 8, by + (80 - line_for(Text::TVCaption1)) / 2, label(Label::Secondary, alpha));
+    if (has_resume_) text(Text::Caption1, resume_note_, bx + 8, by + (80 - line_for(Text::Caption1)) / 2, label(Label::Secondary, alpha));
   }
 
   // How to watch: a frosted panel along the bottom, best version ticked.
@@ -402,13 +402,13 @@ class DetailsScreen : public Screen {
     g.alpha = alpha;
     backdrop_.glass(g);
     int px = g.x + 36, py = g.y + 26;
-    text(Text::TVHeadline, "How to watch", px, py, label(Label::Primary, alpha));
+    text(Text::Headline, "How to watch", px, py, label(Label::Primary, alpha));
     std::string status;
     if (versions_state_ == Versions::Loading) status = "Finding versions\xE2\x80\xA6";
     else if (versions_state_ == Versions::Empty) status = "No versions found right now. Try again later.";
     else if (versions_state_ == Versions::Failed) status = versions_error_;
     else status = ctx().paired ? "Play starts the best version" : "Play connects AllDebrid first, then starts the best version";
-    text_right(Text::TVCaption1, status, g.x + g.w - 36, py + 8, label(Label::Secondary, alpha));
+    text_right(Text::Caption1, status, g.x + g.w - 36, py + 8, label(Label::Secondary, alpha));
     if (versions_state_ != Versions::Ready) {
       if (versions_state_ == Versions::Loading) draw_spinner(px + 24, py + 110, 34, label(Label::Secondary), opened_at_);
       return;
@@ -429,8 +429,8 @@ class DetailsScreen : public Screen {
       Color main = focused ? fade(rgba(0x000000), alpha) : label(Label::Primary, alpha);
       Color sub = focused ? fade(rgba(0x000000, 166), alpha) : label(Label::Secondary, alpha);
       std::string kind = best ? "Best version" : !o.cautions.empty() ? o.cautions[0] : !o.size.empty() ? o.size : "Another version";
-      text(Text::TVCaption2, kind, tx + 24, ty + 14, sub, tw - 80);
-      text(Text::TVCallout, o.headline, tx + 24, ty + 46, main, tw - (best ? 84 : 48));
+      text(Text::Caption2, kind, tx + 24, ty + 14, sub, tw - 80);
+      text(Text::Callout, o.headline, tx + 24, ty + 46, main, tw - (best ? 84 : 48));
       if (best) ctx().icons.draw(Icon::Check, tx + tw - 56, ty + (th - 32) / 2, 32, main);
     }
   }
@@ -450,7 +450,7 @@ class DetailsScreen : public Screen {
         GlassButton b;
         b.label = meta_.seasons[i].label;
         b.h = 60;
-        b.style = Text::TVCallout;
+        b.style = Text::Callout;
         b.focused = zone_ == Zone::Seasons && selected;
         b.candidate = selected && !b.focused;
         b.lift = lift_.value;
@@ -460,7 +460,7 @@ class DetailsScreen : public Screen {
       if (off > 0) c.icons.draw(Icon::ChevronLeft, X0 - 56, sy + 12, 36, label(Label::Tertiary));
       if (xs.back() - 12 - off > W - 2 * X0) c.icons.draw(Icon::ChevronRight, W - X0 + 20, sy + 12, 36, label(Label::Tertiary));
     } else {
-      text(Text::TVHeadline, meta_.seasons[0].label, X0, sy + 8, label(Label::Primary));
+      text(Text::Headline, meta_.seasons[0].label, X0, sy + 8, label(Label::Primary));
     }
 
     const Season &season = meta_.seasons[static_cast<size_t>(season_)];
@@ -482,7 +482,6 @@ class DetailsScreen : public Screen {
       cs.title = e.title;
       cs.w = episode_w;
       cs.h = episode_h;
-      cs.glass = true;
       cs.focus = focused ? lift_.value : j == prev_episode_ ? prev_lift_.value : 0;
       cs.focused = focused;
       auto prog = progress_.find(e.id);
@@ -496,9 +495,9 @@ class DetailsScreen : public Screen {
       }
       // Under the card: number, title, then a short summary once the page has risen.
       int ty = ey + episode_h + (focused ? 24 : 16);
-      text(Text::TVCaption2, e.season == 0 ? "Special" : "Episode " + std::to_string(e.episode), x, ty, label(Label::Secondary));
-      text(Text::TVCallout, e.title.empty() ? "Episode " + std::to_string(e.episode) : e.title, x, ty + 32, label(focused ? Label::Primary : Label::Secondary), episode_w);
-      if (p > 0.05f) paragraph(Text::TVCaption1, e.overview, x, ty + 76, label(Label::Secondary, p * (focused ? 1.0f : 0.75f)), episode_w, 3);
+      text(Text::Caption2, e.season == 0 ? "Special" : "Episode " + std::to_string(e.episode), x, ty, label(Label::Secondary));
+      text(Text::Callout, e.title.empty() ? "Episode " + std::to_string(e.episode) : e.title, x, ty + 32, label(focused ? Label::Primary : Label::Secondary), episode_w);
+      if (p > 0.05f) paragraph(Text::Caption1, e.overview, x, ty + 76, label(Label::Secondary, p * (focused ? 1.0f : 0.75f)), episode_w, 3);
     }
     if (count > 4 && hs + 4 < count) c.icons.draw(Icon::ChevronRight, W - 64, ey + episode_h / 2 - 20, 40, label(Label::Tertiary));
 
@@ -509,14 +508,14 @@ class DetailsScreen : public Screen {
       c.gfx.fill_rect(X0, ay - 26, W - 2 * X0, 1, fade(frost_hairline, a));
       std::vector<std::string> about = {meta_line(meta_.item)};
       if (!meta_.item.rating.empty()) about.push_back("IMDb " + meta_.item.rating);
-      text(Text::TVCaption1, "About", X0, ay, label(Label::Secondary, a));
-      text(Text::TVCallout, join(about), X0, ay + 38, label(Label::Primary, a), 760);
+      text(Text::Caption1, "About", X0, ay, label(Label::Secondary, a));
+      text(Text::Callout, join(about), X0, ay + 38, label(Label::Primary, a), 760);
       if (!meta_.cast.empty()) {
         std::string cast;
         for (size_t i = 0; i < std::min<size_t>(4, meta_.cast.size()); i++) cast += (i ? ", " : "") + meta_.cast[i];
         int cx = X0 + 860;
-        text(Text::TVCaption1, "Starring", cx, ay, label(Label::Secondary, a));
-        text(Text::TVCallout, cast, cx, ay + 38, label(Label::Primary, a), W - X0 - cx);
+        text(Text::Caption1, "Starring", cx, ay, label(Label::Secondary, a));
+        text(Text::Callout, cast, cx, ay + 38, label(Label::Primary, a), W - X0 - cx);
       }
     }
   }

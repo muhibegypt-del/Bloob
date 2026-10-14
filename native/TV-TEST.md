@@ -1,4 +1,4 @@
-# Bloob 1.2 on the TV: test script
+# Bloob 2.0 on the TV: test script
 
 Run this script on the OLED55G26LA from the sofa, at normal viewing distance (about 2.5 m), with the LG remote only. Write down what happens. Do not write down what should have happened. Do not photograph account screens or PINs.
 
@@ -98,7 +98,7 @@ The log lines below are written for exactly this pass. None of these behaviours 
 - [ ] **Tracks after a reconnect (F7).** Choose a second audio track, press Home, wait 10 s, return. After *Reconnecting*, the same track plays (`audio track N (…)` in the log).
 - [ ] **Preferred languages.** Set Settings → Subtitles to English. Start a film with English subtitles: they come on by themselves. With a preferred audio language that the file has as a second track, that track starts.
 - [ ] **Subtitle position (U7).** With subtitles on, press Down: the subtitle line should rise above the controls, and drop back when they hide. If the log says `subtitle position not supported here`, record that.
-- [ ] **Reduced seek (U6).** With the controls hidden, press Right: only the timeline appears and it hides about 2 s after the seek lands. Resting on the Audio pill keeps the controls up for about 12 s.
+- [ ] **Reduced seek (U6).** With the controls hidden, press Right: only the timeline appears and it hides about 2 s after the seek lands. In 2.0, resting on a control keeps the bar up for about 8 s (see §8).
 - [ ] **Up next prepared (U10).** Near the end of an episode, the log says `preparing S… · E… during the credits` and then `next episode is being prepared`. *Play now* reaches the picture faster than an ordinary start; time it. With Settings → *Play the next episode automatically* off, there is no countdown.
 - [ ] **Clock.** The wall clock (top right) and *Ends at* match the TV's own clock.
 - [ ] **ACG (P1).** Run `native/scripts/acg-lookup.sh` from the build machine and keep its output: it lists which permission groups this webOS build defines for the media, settings, connection-manager and TTS services. `requiredACG` is not yet set in `appinfo.json`; it will be filled from this output.
@@ -107,13 +107,45 @@ The log lines below are written for exactly this pass. None of these behaviours 
 - [ ] **Frame rate.** On 23.976 fps content, does the panel switch to 24p (TV info overlay, or *Diagnostics → Panel*)? Bloob does not request it; the TV may do it on its own.
 - [ ] **TrueHD passthrough.** On a file whose first audio track is Dolby TrueHD Atmos, what does the soundbar or receiver show: Atmos, TrueHD, Dolby Digital Plus or PCM? The source screen warns this may play as standard sound.
 - [ ] **DTS.** On a version the source screen marks *No sound on this TV*, confirm there is indeed no sound (do not leave it playing).
-- [ ] **Which text-to-speech service speaks.** With LG's Audio Guidance on, does anything in Bloob speak? (Bloob does not yet call a TTS service; this is to know which one exists before we do.)
+- [ ] **Text-to-speech.** Replaced by §8 *Spoken interface* in 2.0.
 - [ ] **Unknown media events.** Copy every `[media] unknown event key …` line and the `audio track fields: …` line. They show what this TV's pipeline reports that Bloob does not yet read.
 
 **Look and comfort.**
 - [ ] **First run.** On a TV that has never paired, Home shows the AllDebrid note once. *Later* dismisses it for good.
 - [ ] **Season row.** On a series with many seasons, every season is reachable with Right, and chevrons show more on either side.
-- [ ] **Search.** Type, then press Right into the results: the keyboard slides away, the query stays as a chip, four columns show. Left from the first column brings the keyboard back.
+- [ ] **Search.** Type, then press Right into the results: the keyboard slides away, the query stays as a chip, five columns show (2.0). Left from the first column brings the keyboard back.
 - [ ] **Reduce motion.** With Settings → *Reduce motion* on, nothing slides, zooms or advances by itself.
-- [ ] **Small text.** The smallest text (episode numbers, badges, captions) is now 22 px; check it is readable from the sofa.
+- [ ] **Small text.** The smallest text (episode numbers, badges, captions) is 23 px in 2.0; check it is readable from the sofa.
 - [ ] **Non-Latin titles.** A title with Polish, Czech, Greek or Cyrillic letters shows them correctly. Chinese and Japanese still show as `?` (no font for them yet).
+
+## 8. New in 2.0: Glass (record what the screen and the log say)
+
+Nothing in this section has run on the TV yet. Install `artifacts/com.muhib.bloob_2.0.0_arm.ipk`. Take photos at viewing distance where a check is about looks.
+
+**Play goes straight to the picture (G4).**
+- [ ] On a film's title page, *Play* shows only the *Starting* sheet and then the picture, without the version list. Time it from the press to the first frame (`[player] first frame after … ms`).
+- [ ] *How to watch* shows *Finding versions…*, then the best version ticked and two alternatives. Down, Right, OK plays the alternative; the log's `[sources]` line names that version.
+- [ ] *Cancel* (or Back) on the *Starting* sheet returns to the title page. If the version fails, the failure sheet appears, and Back from it shows the other versions.
+- [ ] Unpaired: *Play* opens pairing at once; *Cancel* returns to the title page.
+
+**Glass (G1–G3).**
+- [ ] The tab bar, How to watch and the pairing sheet look **frosted** (blurred colour of the artwork), not flat grey. If they stay grey for more than about a second after the picture appears, note the screen: the frost bake is slow on this TV.
+- [ ] Changing the hero (Left/Right on Home) crossfades the frost with the picture, without a flash of grey.
+- [ ] On a bright picture (sky, snow), the white text on How to watch is still easy to read.
+- [ ] `[perf]` lines while browsing: note render p95. If the log says `effects -> lite`, glass turned solid for the session; note where.
+- [ ] Settings → *Reduce transparency*: every panel turns solid grey, including the player bar. *Increase contrast*: grey text becomes brighter. Both survive an app restart.
+
+**Player (G5).**
+- [ ] The bar floats above the bottom edge; the video under it stays sharp (smoked, not blurred).
+- [ ] Timers: the bar hides about 5 s after the last key while playing, about 8 s when paused or resting on a control. Paused, the bar fades and the paused frame can be looked at; any key brings it back.
+- [ ] Seek commit: with the timeline focused, three quick Rights land as one seek about 0.4 s after the last press (`[player] seek to … landed at …`).
+- [ ] Up from the timeline reaches the controls; Down returns.
+- [ ] Subtitle lift (U7): with subtitles on, the line sits above the bar while it shows. If it is hidden behind the bar, note the subtitle position level in use (4 for the full bar, 2 for the timeline alone).
+
+**Spoken interface (G7).** Turn on LG Audio Guidance (Settings → Accessibility).
+- [ ] The log says `[speech] audio guidance on`.
+- [ ] Moving focus speaks: tabs ("Home, tab, 2 of 5"), hero buttons, cards with position, title page buttons, versions, episodes, keyboard letters, settings switches, player controls and track choices.
+- [ ] If nothing speaks and the log says `the TV refused speech (…)`, record the reason: the TTS service or its permission group differs on this TV (compare with `acg-lookup.sh`).
+- [ ] The TV's own reader does not talk over Bloob (the app declares `supportsAudioGuidance`).
+- [ ] The Home slideshow does not advance while Audio Guidance is on.
+
