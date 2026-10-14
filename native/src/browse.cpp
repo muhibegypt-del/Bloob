@@ -9,6 +9,7 @@
 #include "common.h"
 #include "log.h"
 #include "pairing.h"
+#include "speech.h"
 #include "play.h"
 #include "screens.h"
 
@@ -193,6 +194,29 @@ class BrowseScreen : public Screen {
   }
 
   Shown focused() const {
+    return focused_shown();
+  }
+
+  std::string spoken() const override {
+    if (pairing_.active()) return pairing_.spoken();
+    if (tabs_) return "";
+    if (welcome_) return std::string("Welcome to Bloob. ") + (welcome_button_ == 0 ? "Connect now" : "Later") + ", button, " +
+                         position(welcome_button_, 2);
+    if (state_ != State::Ready) return state_ == State::Loading ? "Loading" : error_;
+    if (hero_) {
+      auto list = hero_buttons();
+      if (list.empty()) return "";
+      int i = std::min(button_, static_cast<int>(list.size()) - 1);
+      return shown_.item.name + ". " + list[static_cast<size_t>(i)].label + ", button, " + position(i, static_cast<int>(list.size()));
+    }
+    if (rows_.empty()) return "";
+    const Row &row = rows_[static_cast<size_t>(row_)];
+    int col = cols_[static_cast<size_t>(row_)];
+    Shown s = focused_shown();
+    return row.title + ". " + s.item.name + ", " + position(col, static_cast<int>(row.size()));
+  }
+
+  Shown focused_shown() const {
     Shown s;
     if (rows_.empty()) return s;
     const Row &row = rows_[static_cast<size_t>(row_)];
@@ -459,7 +483,7 @@ class BrowseScreen : public Screen {
       else c.redraw_at(pending_at_ + dwell_ms);
     }
     // The featured title pages on by itself while nobody is using the remote.
-    if (state_ == State::Ready && hero_ && featured_.size() > 1 && !c.reduce_motion) {
+    if (state_ == State::Ready && hero_ && featured_.size() > 1 && !c.reduce_motion && !speech().on()) {  // no slideshow while focus is read aloud
       if (c.now - idle_since_ >= kAutoAdvanceMs) {
         idle_since_ = c.now;
         feature_ = (feature_ + 1) % static_cast<int>(featured_.size());

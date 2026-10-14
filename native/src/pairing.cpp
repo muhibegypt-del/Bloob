@@ -80,6 +80,15 @@ void Pairing::update() {
   if (!pin_.empty() && !checking_ && c.now >= next_check_) check();
 }
 
+std::string Pairing::spoken() const {
+  if (!active_) return "";
+  if (!error_.empty()) return "Pair this TV once. " + error_ + ". Cancel, button";
+  if (pin_.empty()) return "Pair this TV once. Getting a code";
+  std::string spelled;
+  for (char ch : pin_) spelled += std::string(spelled.empty() ? "" : " ") + ch;
+  return "Pair this TV once. On your phone or computer, go to alldebrid.com/pin and enter " + spelled + ". Cancel, button";
+}
+
 void Pairing::draw() {
   if (!active_) return;
   Ctx &c = ctx();

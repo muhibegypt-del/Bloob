@@ -435,6 +435,45 @@ class PlayerScreen : public Screen {
   enum class HudMode { Full, Reduced };
 
   long long hud_timeout() const {
+    return hud_timeout_for();
+  }
+
+  std::string spoken() const override {
+    Phase phase = session_.phase();
+    if (phase == Phase::Error || !failure_.empty()) {
+      const char *names[3] = {"Try again", "Choose another version", "Exit"};
+      return "Playback stopped. " + std::string(names[error_focus_]) + ", button";
+    }
+    if (up_next_ && req_.next) return "Up next, " + episode_code(req_.next->season, req_.next->episode) + ", " + req_.next->title + ". Play now, button";
+    if (!session_.started()) return reconnecting_ ? "Reconnecting" : "Starting " + req_.item.name;
+    if (panel_ != Panel::None) {
+      const MediaInfo &info = ums_.info();
+      auto labels = distinct_labels(panel_ == Panel::Audio ? info.audio : info.text, panel_ == Panel::Audio);
+      int rows = panel_rows();
+      std::string name = panel_ == Panel::Subtitles && panel_index_ == 0 ? "Off"
+                         : panel_ == Panel::Audio ? (panel_index_ < static_cast<int>(labels.size()) ? labels[static_cast<size_t>(panel_index_)] : "")
+                         : (panel_index_ - 1 < static_cast<int>(labels.size()) ? labels[static_cast<size_t>(panel_index_ - 1)] : "");
+      return std::string(panel_ == Panel::Audio ? "Audio, " : "Subtitles, ") + name + ", " + position(panel_index_, rows);
+    }
+    if (!hud_) return "";
+    if (zone_ == Zone::Controls) {
+      auto list = controls();
+      int i = std::min(control_, static_cast<int>(list.size()) - 1);
+      Ctl ctl = list[static_cast<size_t>(i)];
+      std::string name = ctl == Ctl::Toggle ? (session_.intent_play() ? "Pause" : "Play")
+                         : ctl == Ctl::Audio ? "Audio, " + control_label(ctl)
+                         : ctl == Ctl::Subtitles ? "Subtitles, " + control_label(ctl) : control_label(ctl);
+      return name + ", button, " + position(i, static_cast<int>(list.size()));
+    }
+    // The timeline: a seek target, or the state (not the running clock, which
+    // would be read out every second).
+    long long t = ctx().now;
+    if (session_.preview_ms()) return "Seek to " + clock_text(session_.display_ms(t));
+    if (phase == Phase::Paused) return "Paused at " + clock_text(session_.display_ms(t)) + " of " + clock_text(session_.duration_ms());
+    return "Playing " + req_.item.name;
+  }
+
+  long long hud_timeout_for() const {
     if (hud_mode_ == HudMode::Reduced) return hud_reduced_timeout_ms;
     if (zone_ == Zone::Controls || session_.phase() == Phase::Paused) return hud_paused_timeout_ms;
     return hud_timeout_ms;

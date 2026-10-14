@@ -13,6 +13,7 @@ class Pairing {
   // `done(true)` once paired; `done(false)` if the viewer cancels.
   void start(std::function<void(bool)> done);
   bool active() const { return active_; }
+  std::string spoken() const;
   void cancel();
   bool key(Key key);
   void update();

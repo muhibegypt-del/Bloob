@@ -26,7 +26,7 @@ target_include_directories(buna_core PUBLIC src)
 # system bus; the desktop build swaps in a stand-in (luna_host.cpp).
 set(APP_SOURCES
   src/main.cpp src/gfx.cpp src/media.cpp src/platform.cpp src/http.cpp src/tasks.cpp src/api.cpp
-  src/images.cpp src/icons.cpp src/ui.cpp src/common.cpp src/pairing.cpp
+  src/images.cpp src/icons.cpp src/ui.cpp src/common.cpp src/pairing.cpp src/speech.cpp
   src/browse.cpp src/details.cpp src/sources.cpp src/player.cpp src/search.cpp src/settings.cpp)
 
 if (CMAKE_CROSSCOMPILING)

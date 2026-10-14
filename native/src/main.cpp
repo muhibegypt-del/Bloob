@@ -23,6 +23,7 @@
 #include "perf.h"
 #include "luna.h"
 #include "screens.h"
+#include "speech.h"
 #include "ui.h"
 
 namespace {
@@ -117,6 +118,7 @@ class App {
     c.api.init(&c.api_tasks);
     c.images.init(c.renderer, &c.image_tasks, &c.api);
     Luna::instance().start(push_wake);
+    speech().start();
 
     c.push = [this](std::unique_ptr<Screen> s) { ops_.push_back({Op::Push, std::move(s)}); };
     c.pop = [this] { ops_.push_back({Op::Pop, nullptr}); };
@@ -452,6 +454,12 @@ class App {
     if (!root->key(key, repeat) && (key == Key::Up || key == Key::Back)) set_tabs_focus(true);
   }
 
+  // What Audio Guidance should say for the current focus (G7).
+  std::string spoken_focus() {
+    if (stack_.empty() && tabs_focus_) return std::string(kTabs[root_].label) + ", tab, " + position(root_, kTabCount);
+    return top()->spoken();
+  }
+
   void on_event(const SDL_Event &e) {
     if (e.type == SDL_QUIT) {
       running_ = false;
@@ -745,6 +753,10 @@ class App {
       tabs_alpha_.to(stack_.empty() && (tabs_wanted_ || tabs_focus_) ? 1.0f : 0.0f);
       if (tabs_alpha_.step(c.dt)) c.animating = true;
       apply_ops();
+      if (speech().on()) {
+        speech().focus(spoken_focus(), now);
+        if (speech().due()) c.redraw_at(speech().due());
+      }
       if (dirty_ || was_animating || c.animating || redraw_due) render();
     }
   }

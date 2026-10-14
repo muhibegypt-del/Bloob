@@ -34,6 +34,8 @@ class Screen {
   // artwork it shows. Plain pages get solid glass.
   virtual void shell_glass(const GlassSpec &g) const;
   virtual const char *name() const = 0;
+  // What is focused, for Audio Guidance: "label, role, position" (G7). Empty: nothing to say.
+  virtual std::string spoken() const { return ""; }
 
  protected:
   // Async callbacks capture this token; they are dropped once the screen is gone.

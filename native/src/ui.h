@@ -228,6 +228,8 @@ struct GlassButton {
   Text style = Text::TVButton;
 };
 int glass_button_width(const GlassButton &b);
+// Spoken position, "3 of 12" (G7).
+std::string position(int index, int count);
 int draw_glass_button(int x, int y, const GlassButton &b);  // returns width
 // Small outlined fact on art ("4K", "Dolby Vision").
 int draw_glass_badge(int x, int y, const std::string &label, float alpha = 1.0f);  // returns width

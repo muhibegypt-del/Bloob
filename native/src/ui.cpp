@@ -336,6 +336,10 @@ void draw_glass(const GlassSpec &g) {
   c.gfx.stroke_round(g.x, g.y, g.w, g.h, g.radius, 1, fade(theme::frost_hairline, g.alpha));
 }
 
+std::string position(int index, int count) {
+  return count > 1 ? std::to_string(index + 1) + " of " + std::to_string(count) : "";
+}
+
 int glass_button_width(const GlassButton &b) {
   if (b.label.empty()) return b.h;
   int w = measure(b.style, b.label) + (b.h >= 72 ? 96 : 60);

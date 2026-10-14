@@ -33,6 +33,27 @@ class SearchScreen : public Screen {
   bool root() const override { return true; }
   void set_tabs_focus(bool tabs) override { tabs_ = tabs; }
 
+  std::string spoken() const override {
+    if (tabs_) return "";
+    if (zone_ == Zone::Keys) {
+      if (krow_ == key_rows()) {
+        const char *actions[3] = {"Space", "Delete", "Clear"};
+        return std::string(actions[kcol_]) + ", button";
+      }
+      return std::string(1, kKeys[krow_ * KCOLS + kcol_]) + (query_.empty() ? "" : ". Search: " + query_);
+    }
+    if (zone_ == Zone::Recent) {
+      auto &list = ctx().recent_searches;
+      if (list.empty()) return "";
+      int i = std::min(recent_index_, static_cast<int>(list.size()) - 1);
+      return "Recent search, " + list[static_cast<size_t>(i)] + ", " + position(i, static_cast<int>(list.size()));
+    }
+    if (results_.empty()) return "";
+    const Item &it = results_[static_cast<size_t>(result_)];
+    return it.name + ", " + (it.series() ? "series" : "film") + (it.year.empty() ? "" : " " + it.year) + ", " +
+           position(result_, static_cast<int>(results_.size()));
+  }
+
   enum class Zone { Keys, Recent, Results };
 
   // Results layout follows the keyboard: beside it in 3 columns, full width in 4.

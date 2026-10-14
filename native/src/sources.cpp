@@ -55,6 +55,29 @@ class SourcesScreen : public Screen {
   const char *name() const override { return "sources"; }
   void shell_glass(const GlassSpec &g) const override { backdrop_.glass(g); }
 
+  std::string spoken() const override {
+    if (pairing_.active()) return pairing_.spoken();
+    switch (modal_) {
+      case Modal::Resolving: return "Starting " + chosen_.headline + ". " + step_label_ + " Cancel, button";
+      case Modal::ChooseFile:
+      case Modal::ChooseQuality: {
+        if (choices_.empty()) return "";
+        const Choice &c = choices_[static_cast<size_t>(choice_)];
+        return std::string(modal_ == Modal::ChooseFile ? "Which file? " : "Which quality? ") + c.label + ", " + c.detail + ", " +
+               position(choice_, static_cast<int>(choices_.size()));
+      }
+      case Modal::Failed:
+        return "That version didn't work. " + failure_ + ". " + (fail_focus_ == 0 ? "Try the next best" : "Try again") + ", button";
+      case Modal::None:
+        break;
+    }
+    if (state_ == State::Loading) return "Finding versions";
+    if (state_ != State::Ready) return state_ == State::Empty ? "Nothing to play yet" : error_;
+    const SourceOption &o = options_[static_cast<size_t>(focus_index_)];
+    std::string head = focus_index_ == 0 && has_recommended() ? "Best version, " : "";
+    return head + o.headline + ", " + picture_words(o) + ", " + o.audio + ", " + position(focus_index_, static_cast<int>(options_.size()));
+  }
+
   // A glass sheet over this screen's artwork (solid while the frost bakes).
   void sheet(int x, int y, int w, int h, float a) const {
     GlassSpec g;

@@ -26,6 +26,28 @@ class SettingsScreen : public Screen {
   void set_tabs_focus(bool tabs) override { tabs_ = tabs; }
   void shown() override { refresh(); }
 
+  std::string spoken() const override {
+    if (pairing_.active()) return pairing_.spoken();
+    if (tabs_) return "";
+    Ctx &c = ctx();
+    auto list = rows();
+    int i = std::min(row_, static_cast<int>(list.size()) - 1);
+    std::string say;
+    switch (list[static_cast<size_t>(i)]) {
+      case Row::Account: say = "AllDebrid, " + (account_.empty() ? std::string("checking") : account_) + ", button"; break;
+      case Row::Disconnect: say = confirm_ ? "Press OK again to forget the pairing" : "Disconnect AllDebrid, button"; break;
+      case Row::Audio: say = "Preferred audio language, " + c.language + ", adjustable"; break;
+      case Row::Subtitles: say = "Subtitles, " + c.subtitle_language + ", adjustable"; break;
+      case Row::Autoplay: say = std::string("Play the next episode automatically, switch, ") + (c.autoplay_next ? "on" : "off"); break;
+      case Row::Motion: say = std::string("Reduce motion, switch, ") + (c.reduce_motion ? "on" : "off"); break;
+      case Row::Transparency: say = std::string("Reduce transparency, switch, ") + (c.reduce_transparency ? "on" : "off"); break;
+      case Row::Contrast: say = std::string("Increase contrast, switch, ") + (c.high_contrast ? "on" : "off"); break;
+      case Row::About: say = "About Bloob, button"; break;
+      case Row::Diagnostics: say = "Diagnostics, button"; break;
+    }
+    return say + ", " + position(i, static_cast<int>(list.size()));
+  }
+
   void refresh() {
     if (!ctx().api.ready()) return;
     ctx().api.get("/api/account", [this](const ApiResult &r) {

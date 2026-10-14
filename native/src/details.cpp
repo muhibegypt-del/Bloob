@@ -40,6 +40,34 @@ class DetailsScreen : public Screen {
   const char *name() const override { return "details"; }
   void shell_glass(const GlassSpec &g) const override { backdrop_.glass(g); }
 
+  std::string spoken() const override {
+    if (!loaded_) return error_.empty() ? "Loading " + meta_.item.name : error_;
+    switch (zone_) {
+      case Zone::Buttons: {
+        auto list = buttons();
+        int i = std::min(button_, static_cast<int>(list.size()) - 1);
+        return meta_.item.name + ". " + list[static_cast<size_t>(i)].label + ", button, " + position(i, static_cast<int>(list.size()));
+      }
+      case Zone::Versions: {
+        if (versions_.empty()) return "";
+        const SourceOption &o = versions_[static_cast<size_t>(version_)];
+        return std::string(version_ == 0 ? "Best version, " : "") + o.headline + ", button, " + position(version_, static_cast<int>(versions_.size()));
+      }
+      case Zone::Seasons: {
+        const Season &s = meta_.seasons[static_cast<size_t>(season_)];
+        return s.label + ", " + position(season_, static_cast<int>(meta_.seasons.size()));
+      }
+      case Zone::Episodes: {
+        const Season &s = meta_.seasons[static_cast<size_t>(season_)];
+        if (s.episodes.empty()) return "";
+        const Episode &e = s.episodes[static_cast<size_t>(episode_)];
+        std::string number = e.season == 0 ? "Special" : "Episode " + std::to_string(e.episode);
+        return number + ", " + e.title + ", " + position(episode_, static_cast<int>(s.episodes.size()));
+      }
+    }
+    return "";
+  }
+
   void shown() override {
     // Back from playback: refresh what was watched and what plays next.
     if (loaded_) load_progress();
