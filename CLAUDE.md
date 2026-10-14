@@ -1,5 +1,13 @@
 # Bloob and Buna: complete project handoff
 
+## Engineering-question study (14 October 2026)
+
+Read [the complete 37-question index](research/Elements-of-A-engineering-questions.md) before asserting current reference UI/player behavior. It links fresh focused REA evidence and exact source offsets in four companion notes, using the decoded saved OTA build `16.4.4.J34L139`. No TV action was taken in this pass and activation of that snapshot remains unobserved. The shipped Home UI is JavaScript over a native C++ graphics/input/frame runtime.
+
+Key version-specific findings: current LG configuration inherits ULTRA but disables content frame-rate matching; unfocus pauses while focus alone does not resume; minimize/restore detaches/attaches and conditionally resumes; HLS detach evicts coded buffers while retaining a clock. The reference progressive adapter has empty audio/subtitle switching methods and no thumbnail support. Player controls use 5/8/20-second default dismissal classes, double for reader usage, and suppress dismissal during scrubbing. UI lists use bounded traversal/lazy realization; focus restoration, delayed nearby data, size-aware artwork and custom accessibility/TTS are concrete.
+
+Keep measured numbers and human decisions separate: code does not supply the team's latency budgets, biggest historical performance win, device lab, user-test results, failure prevalence or regrets. Diagnostic network timeouts and bandwidth heuristics are not playback release targets. The base loader checks `disableOTA`; the updated loader retains the comment but omits that executable check. Ten OTA entries are zero-length older chunks/font formats. Previous base-only UI notes were corrected to point to the decoded update study. The four detailed files are `research/question-startup-findings.md`, `question-ui-findings.md`, `question-playback-findings.md`, and `question-operations-findings.md`.
+
 ## ARM toolchain proof (13 October 2026)
 
 The TV's 32-bit userland and reference executable both use ARM EABI v5 soft-float (`e_flags=0x05000200`) with `/lib/ld-linux.so.3`; the TV reports glibc 2.35. An official Zig 0.15.2 compiler was downloaded and SHA-256 checked into the ignored `research/tools/` area. `zig cc -target arm-linux-gnueabi.2.35` produced `native-host/build/buna-abi-probe`, whose ELF header matches the reference on these fields. It ran from `/tmp` on the TV and exited 0 after printing its marker. This solves the compiler/loader question only; it is not a UI or player. See `native-host/README.md`. The owner need not install anything or provide additional credentials. Do not remove TV files, including this probe.

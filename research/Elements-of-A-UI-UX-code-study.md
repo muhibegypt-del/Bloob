@@ -83,7 +83,7 @@ remote input -> focused widget -> semantic action -> root page deck
 ## Evidence limits
 
 - These are code-derived organization and behavior findings. They are not measured input latency, frame rate, or proof of exactly how the current TV UI looked.
-- The JetPack update may replace or amend base `res/` modules before bootstrap. Its contents are not decoded. Treat precise style values in base modules as version-specific examples rather than a definitive current design spec.
+- This document studies the base bundle. The saved JetPack was subsequently decoded; see [the JetPack analysis](jetpack-analysis-2026-10-14.md) and [the engineering questions](Elements-of-A-engineering-questions.md) for checks against the updated build. Treat base-module style values as version-specific examples rather than a definitive current design spec.
 - Several named styles use a screen-scaling helper, so source numbers are not reliable literal TV pixel measurements.
 - The reference includes multiple feature flags and content variants; a path present in code may not have been active in the observed session.
 - The original Bloob design should use its own assets, copy, tokens, components, and interaction timings.
