@@ -251,7 +251,7 @@ class BrowseScreen : public Screen {
     return b;
   }
 
-  void play_resume(const Resume &r) { start_playback(play::continue_item(r), hero_ ? PlayOrigin::HomeHero : PlayOrigin::HomeRow); }
+  void play_resume(const Resume &r) { start_playback(play::continue_item(r), hero_ ? PlayOrigin::HomeHero : PlayOrigin::HomeRow, false, true); }
 
   void hero_action(int index) {
     auto buttons = hero_buttons();
@@ -262,7 +262,7 @@ class BrowseScreen : public Screen {
     } else if (shown_.has_resume) {
       play_resume(shown_.resume);
     } else {
-      start_playback(play::film(shown_.item, {}, false), PlayOrigin::HomeHero);
+      start_playback(play::film(shown_.item, {}, false), PlayOrigin::HomeHero, false, true);
     }
   }
 

@@ -86,6 +86,7 @@ struct PlayRequest {
   int season = 0, episode = 0;
   std::string episode_title, episode_thumbnail;
   long long resume_ms = 0;   // where to continue from (0 = start)
+  std::string candidate;     // a version chosen on the title page (empty: the recommended one)
   std::optional<NextEpisode> next;
   std::string label() const;  // "S2 · E4 · The Crossing"
 };

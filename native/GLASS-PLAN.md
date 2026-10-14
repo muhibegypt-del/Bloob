@@ -72,11 +72,11 @@ These are design targets to measure, not known results:
 
 | Phase | State | Commit |
 | --- | --- | --- |
-| G0 | Done (desktop) | this commit |
-| G1 | Done (desktop): frost bake, crossfade-safe panes, sheen, luminance | this commit |
-| G2 | Done (desktop): tab bar and toasts on glass; the bar fades in place (a moving pane would need a new frost each frame) | this commit |
-| G3 | Done (desktop): Home, Films, Series | this commit |
-| G4 | Planned | |
+| G0 | Done (desktop) | 66e82a4 |
+| G1 | Done (desktop): frost bake, crossfade-safe panes, sheen, luminance | 66e82a4 |
+| G2 | Done (desktop): tab bar and toasts on glass; the bar fades in place (a moving pane would need a new frost each frame) | 66e82a4 |
+| G3 | Done (desktop): Home, Films, Series | 66e82a4 |
+| G4 | Done (desktop): title page with direct Play and a frosted How to watch panel (films); seasons and episodes in Glass; Play from Home, Details, episodes and Up next starts the best version with only the progress sheet showing (Cancel returns to where Play was pressed); All versions restyled as a glass sheet | this commit |
 | G5 | Planned | |
 | G6 | Planned | |
 | G7 | Planned | |
