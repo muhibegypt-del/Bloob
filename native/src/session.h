@@ -46,7 +46,7 @@ const char *phase_name(Phase phase);
 
 class Session {
  public:
-  static constexpr long long kSeekDebounceMs = 600;
+  static constexpr long long kSeekDebounceMs = 400;  // theme::seek_commit_ms (G5)
   static constexpr long long kSeekTimeoutMs = 15000;
   static constexpr long long kStallMs = 3000;
   static constexpr long long kStartupTimeoutMs = 45000;

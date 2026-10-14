@@ -76,8 +76,8 @@ These are design targets to measure, not known results:
 | G1 | Done (desktop): frost bake, crossfade-safe panes, sheen, luminance | 66e82a4 |
 | G2 | Done (desktop): tab bar and toasts on glass; the bar fades in place (a moving pane would need a new frost each frame) | 66e82a4 |
 | G3 | Done (desktop): Home, Films, Series | 66e82a4 |
-| G4 | Done (desktop): title page with direct Play and a frosted How to watch panel (films); seasons and episodes in Glass; Play from Home, Details, episodes and Up next starts the best version with only the progress sheet showing (Cancel returns to where Play was pressed); All versions restyled as a glass sheet | this commit |
-| G5 | Planned | |
+| G4 | Done (desktop, 5702679): title page with direct Play and a frosted How to watch panel (films); seasons and episodes in Glass; Play from Home, Details, episodes and Up next starts the best version with only the progress sheet showing (Cancel returns to where Play was pressed); All versions restyled as a glass sheet | 5702679 |
+| G5 | Done (desktop): smoked bar (title, meta with stream badges and Paused/Seeking state, Play/Pause, Audio, Subtitles, Start over, Next episode above the timeline), smoked clock pill with "Ends", white seek bubble, track panels standing on the bar, Up next as a smoked card with a countdown line, startup and error on glass. Timers 5 s, 8 s when paused or on a control (paused no longer pins the bar), fades 300 ms, seek commit 400 ms (session test updated), the last second was already excluded. Up now also reaches the controls. Subtitle lift levels (U7) unchanged until measured on the TV | this commit |
 | G6 | Planned | |
 | G7 | Planned | |
 | G8 | Planned | |

@@ -357,8 +357,12 @@ class SourcesScreen : public Screen {
     bool moving = lift_.step(dt) | prev_lift_.step(dt) | scroll_.step(dt);
     details_anim_.to(details_ ? 1.0f : 0.0f);
     moving |= details_anim_.step(dt);
-    // Pairing given up on the way: show the versions instead.
-    if (direct_ && modal_ == Modal::None && !pairing_.active() && !leave_after_play_) direct_ = false;
+    // Pairing given up on the way from the title page: go back there.
+    if (direct_ && modal_ == Modal::None && !pairing_.active() && !leave_after_play_) {
+      direct_ = false;
+      ctx().pop();
+      return;
+    }
     modal_anim_.to(modal_ != Modal::None || pairing_.active() ? 1.0f : 0.0f);
     moving |= modal_anim_.step(dt);
     if (moving) c.animating = true;

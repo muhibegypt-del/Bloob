@@ -79,9 +79,9 @@ static void test_seek_preview_commit_ack() {
   s.nudge(1, t + 100);
   CHECK(s.preview_ms() && *s.preview_ms() == 30000);
   CHECK(port.seeks() == 0);
-  s.tick(t + 650);
+  s.tick(t + 450);  // the commit waits 400 ms after the last press
   CHECK(port.seeks() == 0);
-  s.tick(t + 701);
+  s.tick(t + 501);
   CHECK(port.seeks() == 1 && port.calls.back() == "seek:30000");
   CHECK(s.phase() == Phase::Seeking);
   CHECK(s.display_ms(t + 800) == 30000);

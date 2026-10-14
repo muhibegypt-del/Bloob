@@ -351,6 +351,7 @@ int draw_glass_button(int x, int y, const GlassButton &b) {
   int isz = h >= 72 ? 30 : 26;
   if (b.label.empty()) {
     if (b.icon == kPlayIcon) c.gfx.triangle_right(gx + gw / 2 - isz / 3, gy + (gh - isz) / 2, isz, fg);
+    else if (b.icon == kPauseIcon) c.gfx.bars(gx + (gw - isz * 4 / 5) / 2, gy + (gh - isz * 4 / 5) / 2, isz * 4 / 5, fg);
     else if (b.icon >= 0) c.icons.draw(static_cast<Icon>(b.icon), gx + (gw - isz) / 2, gy + (gh - isz) / 2, isz, fg);
     return w;
   }

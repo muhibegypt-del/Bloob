@@ -52,7 +52,7 @@ constexpr float backdrop_rate = 13.0f;  // ≈350 ms crossfade once decoded
 constexpr long long dwell_ms = 250;     // focus rest before the backdrop follows
 constexpr long long spinner_delay_ms = 400;
 constexpr long long hud_timeout_ms = 5000;
-constexpr long long hud_controls_timeout_ms = 12000;  // focus resting on the controls row
+constexpr long long hud_controls_timeout_ms = 8000;  // focus resting on the controls row
 constexpr long long hud_reduced_timeout_ms = 2000;   // timeline-only, after the seek lands
 
 // ---- Glass (2.0, native/GLASS-PLAN.md). Screens move to these phase by phase;

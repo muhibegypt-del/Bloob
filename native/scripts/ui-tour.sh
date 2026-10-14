@@ -45,10 +45,7 @@ run task 0 \
   "key:ok" "wait:4500" "snap:06-details-series" \
   "key:down" "wait:1500" "snap:07-seasons-episodes" \
   "key:down" "key:right" "wait:900" "snap:08-episode-focused" \
-  "key:ok" "wait:2000" "snap:09-sources" \
-  "key:down" "wait:500" "snap:10-sources-other" \
-  "key:right" "wait:600" "snap:11-sources-release-details" \
-  "key:left" "key:up" "wait:300" "key:ok" "wait:1200" "snap:12-starting" \
+  "key:ok" "wait:1200" "snap:09-starting" \
   "wait:14000" "snap:13-player-starting" \
   'media:{"loadCompleted":{}}' "media:$SRC" "media:$VI" 'media:{"playing":{}}' \
   'media:{"currentTime":{"currentTime":754000}}' "wait:500" "snap:14-player-hud" \
@@ -74,8 +71,12 @@ run task 0 \
 # Film path, pairing and failure states.
 run states 1 \
   "wait:8000" "snap:29-welcome" "key:right" "key:ok" "wait:400" "key:down" "wait:1500" "key:ok" "wait:4000" "snap:30-details-film" \
-  "key:ok" "wait:2000" "key:ok" "wait:1500" "snap:31-pairing" \
-  "key:back" "wait:300" "key:back" "key:back" "wait:800" \
+  "key:down" "wait:1500" "snap:30a-how-to-watch" "key:up" \
+  "key:right" "key:ok" "wait:2500" "snap:10-sources-all-versions" \
+  "key:down" "wait:500" "snap:11-sources-other" \
+  "key:right" "wait:600" "snap:11a-sources-release-details" "key:left" "key:back" "wait:800" \
+  "key:left" "key:ok" "wait:2500" "snap:31-pairing" \
+  "key:back" "wait:800" "key:back" "wait:800" \
   "key:up" "key:up" "key:up" "wait:300" "key:right" "key:right" "key:right" "wait:800" "snap:32-settings" \
   "quit"
 

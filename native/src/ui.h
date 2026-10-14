@@ -156,7 +156,8 @@ std::string upper(std::string s);
 
 // ---- components
 
-constexpr int kPlayIcon = 1000;  // the solid play triangle (not a line icon)
+constexpr int kPlayIcon = 1000;   // the solid play triangle (not a line icon)
+constexpr int kPauseIcon = 1001;  // two solid bars
 
 struct ButtonSpec {
   std::string label;
