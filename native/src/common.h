@@ -3,6 +3,7 @@
 // the next picture is decoded, can soften into blur), its scrims, the title
 // block (logo art or set type) and the meta line.
 #include <string>
+#include <vector>
 
 #include "model.h"
 #include "ui.h"
@@ -15,10 +16,21 @@ class Backdrop {
   void update(double dt);
   // `dim` 0..1 darkens; `blur` 0..1 crossfades to a soft version (sheets, scrolled pages).
   void draw(float dim = 0, float blur = 0);
+  // Glass over this backdrop: frost from the pictures on screen, crossfading with them.
+  void glass(GlassSpec g) const;
+  // Brightness of the current picture where hero text sits (0..1), -1 until known.
+  float luma() const;
 
  private:
   std::string current_, previous_;
   Anim fade_{theme::backdrop_rate, 1};
+  // Glass panels drawn over this backdrop: a new picture waits for their frost too.
+  struct Pane {
+    GlassRect rect;
+    int radius = 0;
+    long long used_at = 0;
+  };
+  mutable std::vector<Pane> glass_;
 };
 
 // Readable gradients over art: from the left (where text sits) and from the bottom.

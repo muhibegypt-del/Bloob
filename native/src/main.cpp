@@ -495,32 +495,40 @@ class App {
     Ctx &c = ctx();
     float a = tabs_alpha_.value;
     if (a <= 0.01f) return;
-    int dy = static_cast<int>((1.0f - a) * -24);
-    // Measure.
+    int dy = 0;  // glass fades in place: a moving pane would need a new frost each frame
+    // Glass: a floating frosted bar on the tvOS safe line; the current tab is
+    // white when the bar has focus, a soft candidate otherwise.
     std::vector<int> widths(kTabCount);
     int total = 0;
     for (int i = 0; i < kTabCount; i++) {
-      widths[static_cast<size_t>(i)] = kTabs[i].icon >= 0 ? 64 : measure(Text::Headline, kTabs[i].label) + 48;
-      total += widths[static_cast<size_t>(i)];
+      widths[static_cast<size_t>(i)] = kTabs[i].icon >= 0 ? 68 : measure(Text::TVCallout, kTabs[i].label) + 60;
+      total += widths[static_cast<size_t>(i)] + (i ? 6 : 0);
     }
     int pad = 8, h = 64;
-    int bw = total + pad * 2, bx = (W - bw) / 2, by = 40 + dy;
-    c.gfx.fill_round(bx, by, bw, h + pad * 2, (h + pad * 2) / 2, fade(with_alpha(theme::ground, 150), a));
+    int bw = total + pad * 2, bh = h + pad * 2, bx = (W - bw) / 2, by = theme::safe_y + dy;
+    GlassSpec bar;
+    bar.x = bx;
+    bar.y = by;
+    bar.w = bw;
+    bar.h = bh;
+    bar.radius = bh / 2;
+    bar.alpha = a;
+    top()->shell_glass(bar);
     int x = bx + pad;
     for (int i = 0; i < kTabCount; i++) {
       int w = widths[static_cast<size_t>(i)];
       bool current = i == root_;
       bool focused = tabs_focus_ && current;
       if (focused) {
-        c.gfx.shadow(x, by + pad, w, h, h / 2, 16, 8, static_cast<Uint8>(140 * a));
-        c.gfx.fill_round(x, by + pad, w, h, h / 2, fade(theme::focus, a));
+        c.gfx.shadow(x, by + pad, w, h, h / 2, 20, 8, static_cast<Uint8>(120 * a));
+        c.gfx.fill_round(x, by + pad, w, h, h / 2, fade(rgba(0xffffff), a));
       } else if (current) {
-        c.gfx.fill_round(x, by + pad, w, h, h / 2, fade(with_alpha(theme::focus, 40), a));
+        c.gfx.fill_round(x, by + pad, w, h, h / 2, fade(theme::candidate, a));
       }
-      Color fg = fade(focused ? theme::ink : current ? theme::primary : theme::secondary, a);
-      if (kTabs[i].icon >= 0) c.icons.draw(static_cast<Icon>(kTabs[i].icon), x + 16, by + pad + 16, 32, fg);
-      else text_center(Text::Headline, kTabs[i].label, x + w / 2, by + pad + (h - line_for(Text::Headline)) / 2, fg);
-      x += w;
+      Color fg = focused ? fade(rgba(0x000000), a) : label(current ? Label::Primary : Label::Secondary, a);
+      if (kTabs[i].icon >= 0) c.icons.draw(static_cast<Icon>(kTabs[i].icon), x + 18, by + pad + 16, 32, fg);
+      else text_center(Text::TVCallout, kTabs[i].label, x + w / 2, by + pad + (h - line_for(Text::TVCallout)) / 2, fg);
+      x += w + 6;
     }
   }
 
@@ -557,9 +565,15 @@ class App {
       if (leaving_) draw_screen(leaving_.get(), true, leaving_fade_.value, static_cast<int>((1.0f - leaving_fade_.value) * 20));
     }
     if (!toast_.empty() && c.now < toast_until_) {
-      int w = measure(Text::Callout, toast_) + 64;
-      c.gfx.fill_round(W / 2 - w / 2, H - 150, w, 64, 32, with_alpha(theme::raised, 240));
-      text_center(Text::Callout, toast_, W / 2, H - 134, theme::primary);
+      int w = measure(Text::TVCallout, toast_) + 72, th = 72;
+      GlassSpec g;
+      g.x = W / 2 - w / 2;
+      g.y = H - theme::safe_y - th - 40;
+      g.w = w;
+      g.h = th;
+      g.radius = th / 2;
+      top()->shell_glass(g);
+      text_center(Text::TVCallout, toast_, W / 2, g.y + (th - line_for(Text::TVCallout)) / 2, label(Label::Primary));
       c.redraw_at(toast_until_);
     }
     c.gfx.end_frame();

@@ -33,8 +33,16 @@ void Backdrop::update(double dt) {
     fade_.snap(1);
     return;
   }
-  // Hold the fade until the picture is decoded, so it never pops in half-drawn.
-  if (images.settled(current_, W, H)) {
+  // Hold the fade until the picture is decoded, and the frost of every glass
+  // panel over it is baked, so neither pops in half-drawn.
+  bool ready = images.settled(current_, W, H);
+  if (ready && !ctx().lite() && !ctx().reduce_transparency)
+    for (auto &g : glass_) {
+      if (ctx().now - g.used_at > 2000) continue;  // a panel no longer shown
+      ImageRef f = images.frost(current_, g.rect, g.radius);
+      ready = ready && (f.texture || f.failed);
+    }
+  if (ready) {
     if (fade_.step(dt)) ctx().animating = true;
     if (fade_.value >= 1.0f) previous_.clear();
   }
@@ -62,6 +70,35 @@ void Backdrop::draw(float dim, float blur) {
   layer(previous_, 1.0f);
   if (!current_.empty() && c.images.settled(current_, W, H)) layer(current_, fade_.value);
   if (dim > 0) c.gfx.fill_rect(0, 0, W, H, with_alpha(theme::ground, static_cast<int>(dim * 200)));
+}
+
+void Backdrop::glass(GlassSpec g) const {
+  Ctx &c = ctx();
+  GlassRect r{g.x, g.y, g.w, g.h};
+  bool known = false;
+  for (auto &k : glass_)
+    if (k.rect.x == r.x && k.rect.y == r.y && k.rect.w == r.w && k.rect.h == r.h && k.radius == g.radius) {
+      k.used_at = c.now;
+      known = true;
+    }
+  if (!known) {
+    if (glass_.size() >= 8) glass_.erase(glass_.begin());
+    glass_.push_back({r, g.radius, c.now});
+  }
+  bool fading = !previous_.empty() && fade_.value < 0.999f;
+  g.art = fading ? previous_ : current_;
+  draw_glass(g);
+  if (fading) {
+    // The new picture's frost fades in with it (no second shadow or solid).
+    ImageRef f = c.images.frost(current_, GlassRect{g.x, g.y, g.w, g.h}, g.radius);
+    if (f.texture && !c.lite() && !c.reduce_transparency)
+      c.gfx.texture(f.texture, g.x, g.y, g.w, g.h, static_cast<Uint8>(f.alpha * g.alpha * fade_.value));
+  }
+}
+
+float Backdrop::luma() const {
+  if (current_.empty()) return -1;
+  return ctx().images.get(current_, W, H).luma;
 }
 
 void draw_scrims(float left, int bottom_from, float bottom) {

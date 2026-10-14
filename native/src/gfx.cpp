@@ -450,6 +450,8 @@ void Gfx::shutdown() {
   if (ramp_h_) SDL_DestroyTexture(ramp_h_);
   if (ramp_v_) SDL_DestroyTexture(ramp_v_);
   for (auto &r : rings_) SDL_DestroyTexture(r.second);
+  for (auto &s : sheens_) SDL_DestroyTexture(s.second);
+  sheens_.clear();
   rings_.clear();
   canvas_ = ramp_h_ = ramp_v_ = nullptr;
 }
@@ -490,6 +492,37 @@ SDL_Texture *Gfx::disc(int radius) {
   SDL_Texture *t = texture_from_coverage(renderer_, coverage, size);
   discs_[radius] = t;
   return t;
+}
+
+void Gfx::sheen(int x, int y, int w, int h, int radius, int base_w, int base_h, Uint8 alpha) {
+  if (!shadows || alpha == 0 || base_w <= 0 || base_h <= 0) return;
+  std::string key = std::to_string(base_w) + "," + std::to_string(base_h) + "," + std::to_string(radius);
+  SDL_Texture *t = nullptr;
+  auto it = sheens_.find(key);
+  if (it != sheens_.end()) {
+    t = it->second;
+  } else {
+    std::vector<Uint32> px(static_cast<size_t>(base_w) * base_h);
+    float r = static_cast<float>(std::min(radius, std::min(base_w, base_h) / 2));
+    for (int py = 0; py < base_h; py++)
+      for (int qx = 0; qx < base_w; qx++) {
+        float d = (static_cast<float>(qx) / base_w * 0.6f + static_cast<float>(py) / base_h * 0.4f);
+        float light = d < 0.4f ? 1.0f - d / 0.4f : 0.0f;
+        float fx = qx + 0.5f, fy = py + 0.5f;
+        float cx = fx < r ? r : (fx > base_w - r ? base_w - r : fx);
+        float cy = fy < r ? r : (fy > base_h - r ? base_h - r : fy);
+        float dx = fx - cx, dy = fy - cy;
+        float coverage = std::max(0.0f, std::min(1.0f, r - std::sqrt(dx * dx + dy * dy) + 0.5f));
+        Uint32 a = static_cast<Uint32>(light * coverage * 255.0f + 0.5f);
+        px[static_cast<size_t>(py) * base_w + qx] = (a << 24) | 0x00FFFFFF;
+      }
+    SDL_Surface *surface = SDL_CreateRGBSurfaceFrom(px.data(), base_w, base_h, 32, base_w * 4, 0x00FF0000, 0x0000FF00, 0x000000FF, 0xFF000000);
+    t = SDL_CreateTextureFromSurface(renderer_, surface);
+    SDL_FreeSurface(surface);
+    if (t) SDL_SetTextureBlendMode(t, SDL_BLENDMODE_BLEND);
+    sheens_[key] = t;
+  }
+  if (t) texture(t, x, y, w, h, alpha);
 }
 
 SDL_Texture *Gfx::triangle(int size) {

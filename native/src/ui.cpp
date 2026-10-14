@@ -4,6 +4,13 @@
 #include <cstdio>
 
 #include "log.h"
+#include "screens.h"
+
+void Screen::shell_glass(const GlassSpec &g) const {
+  GlassSpec solid = g;
+  solid.kind = GlassKind::Solid;
+  draw_glass(solid);
+}
 
 Ctx &ctx() {
   static Ctx instance;
@@ -55,6 +62,16 @@ Spec spec(Text style) {
     case Text::Footnote: return {1, 22, 28};
     case Text::Eyebrow: return {2, 22, 28};
     case Text::Button: return {2, 26, 32};
+    case Text::TVDisplay: return {3, 104, 112};
+    case Text::TVTitle1: return {3, 76, 96};
+    case Text::TVTitle2: return {3, 57, 66};
+    case Text::TVTitle3: return {2, 48, 56};
+    case Text::TVHeadline: return {2, 38, 46};
+    case Text::TVCallout: return {1, 31, 38};
+    case Text::TVBody: return {1, 29, 36};
+    case Text::TVCaption1: return {1, 25, 32};
+    case Text::TVCaption2: return {1, 23, 30};
+    case Text::TVButton: return {2, 29, 36};
   }
   return {0, 24, 32};
 }
@@ -93,6 +110,12 @@ int text_center(Text style, const std::string &s, int cx, int y, Color color, in
 }
 
 int measure(Text style, const std::string &s) { return font_for(style).measure(s, size_for(style)); }
+
+Color label(Label role, float alpha) {
+  static const int normal[] = {255, 166, 102, 77}, high[] = {255, 217, 191, 140};
+  int a = (ctx().high_contrast ? high : normal)[static_cast<int>(role)];
+  return with_alpha(rgba(0xffffff), static_cast<int>(a * std::max(0.0f, std::min(1.0f, alpha))));
+}
 
 int paragraph(Text style, const std::string &s, int x, int y, Color color, int max_w, int max_lines) {
   for (auto &line : wrap(font_for(style), s, size_for(style), max_w, max_lines)) {
@@ -230,16 +253,31 @@ SDL_Rect draw_card(int x, int y, const CardSpec &cs) {
   } else {
     if (img.alpha < 255) c.gfx.fill_round(cx, cy, w, h, cs.radius, fade(theme::raised, cs.alpha));
     if (img.texture) c.gfx.texture(img.texture, cx, cy, w, h, static_cast<Uint8>(img.alpha * cs.alpha));
-    if (cs.title_on_art && !cs.title.empty())
+    if (cs.title_on_art && !cs.title.empty() && cs.glass) {
+      int ty = cy + h - (cs.progress >= 0 ? 30 : 16) - line_for(Text::TVCaption2);
+      int sw = cs.sub.empty() ? 0 : measure(Text::TVCaption2, cs.sub);
+      if (sw) text(Text::TVCaption2, cs.sub, cx + w - 16 - sw, ty, label(Label::Secondary, cs.alpha * 1.2f));
+      text(Text::TVCaption2, cs.title, cx + 16, ty, label(Label::Primary, cs.alpha), w - 44 - sw);
+    } else if (cs.title_on_art && !cs.title.empty()) {
       text(Text::Headline, cs.title, cx + 22, cy + h - 22 - line_for(Text::Headline), fade(theme::primary, cs.alpha), w - 44);
+    }
   }
-  if (cs.progress >= 0) {
+  if (cs.progress >= 0 && cs.glass) {
+    int pw = w - 32;
+    c.gfx.fill_round(cx + 16, cy + h - 18, pw, 5, 2, fade(with_alpha(rgba(0xffffff), 72), cs.alpha));
+    int fw = static_cast<int>(pw * std::max(0.0, std::min(1.0, cs.progress)));
+    if (fw > 0) c.gfx.fill_round(cx + 16, cy + h - 18, std::max(5, fw), 5, 2, fade(rgba(0xffffff), cs.alpha));
+  } else if (cs.progress >= 0) {
     int pw = w - 36;
     c.gfx.fill_round(cx + 18, cy + h - 20, pw, 6, 3, fade(with_alpha(theme::focus, 70), cs.alpha));
     int fw = static_cast<int>(pw * std::max(0.0, std::min(1.0, cs.progress)));
     if (fw > 0) c.gfx.fill_round(cx + 18, cy + h - 20, std::max(6, fw), 6, 3, fade(theme::accent, cs.alpha));
   }
-  if (cs.focused) draw_focus_frame(cx, cy, w, h, cs.radius, cs.alpha);
+  if (cs.glass) {
+    if (cs.focus > 0.01f && !missing) c.gfx.sheen(cx, cy, w, h, cs.radius, cs.w, cs.h, static_cast<Uint8>(56 * cs.focus * cs.alpha));
+  } else if (cs.focused) {
+    draw_focus_frame(cx, cy, w, h, cs.radius, cs.alpha);
+  }
   return SDL_Rect{cx, cy, w, h};
 }
 
@@ -269,6 +307,74 @@ void draw_row_focus(int x, int y, int w, int h) {
 
 void draw_panel(int x, int y, int w, int h, float alpha) {
   ctx().gfx.fill_round(x, y, w, h, theme::panel_radius, fade(theme::glass, alpha));
+}
+
+void draw_glass(const GlassSpec &g) {
+  Ctx &c = ctx();
+  if (g.w <= 0 || g.h <= 0 || g.alpha <= 0.01f) return;
+  if (g.shadow) c.gfx.shadow(g.x, g.y, g.w, g.h, g.radius, 40, 18, static_cast<Uint8>(90 * g.alpha));
+  if (g.kind == GlassKind::Smoke) {
+    c.gfx.fill_round(g.x, g.y, g.w, g.h, g.radius, fade(theme::smoke, g.alpha));
+    c.gfx.stroke_round(g.x, g.y, g.w, g.h, g.radius, 1, fade(theme::smoke_hairline, g.alpha));
+    return;
+  }
+  bool frost = g.kind == GlassKind::Frost && !g.art.empty() && !c.lite() && !c.reduce_transparency;
+  ImageRef f = frost ? c.images.frost(g.art, GlassRect{g.x, g.y, g.w, g.h}, g.radius) : ImageRef{};
+  // Solid underneath until the frost has faded in.
+  if (!f.texture || f.alpha < 255) c.gfx.fill_round(g.x, g.y, g.w, g.h, g.radius, fade(theme::solid, g.alpha));
+  if (f.texture) c.gfx.texture(f.texture, g.x, g.y, g.w, g.h, static_cast<Uint8>(f.alpha * g.alpha));
+  c.gfx.stroke_round(g.x, g.y, g.w, g.h, g.radius, 1, fade(theme::frost_hairline, g.alpha));
+}
+
+int glass_button_width(const GlassButton &b) {
+  if (b.label.empty()) return b.h;
+  int w = measure(b.style, b.label) + (b.h >= 72 ? 96 : 60);
+  if (b.icon >= 0) w += b.h >= 72 ? 42 : 36;
+  if (b.candidate) w += 40;
+  return w;
+}
+
+int draw_glass_button(int x, int y, const GlassButton &b) {
+  Ctx &c = ctx();
+  int w = glass_button_width(b), h = b.h;
+  float lift = b.focused && !c.reduce_motion ? 1.0f + (theme::control_lift - 1.0f) * b.lift : 1.0f;
+  int gw = static_cast<int>(w * lift), gh = static_cast<int>(h * lift);
+  int gx = x - (gw - w) / 2, gy = y - (gh - h) / 2;
+  if (b.focused) {
+    c.gfx.shadow(gx, gy, gw, gh, gh / 2, 30, 14, static_cast<Uint8>(150 * b.alpha));
+    c.gfx.fill_round(gx, gy, gw, gh, gh / 2, fade(rgba(0xffffff), b.alpha));
+  } else {
+    c.gfx.fill_round(gx, gy, gw, gh, gh / 2, fade(b.candidate ? theme::candidate : with_alpha(rgba(0xffffff), 36), b.alpha));
+    c.gfx.stroke_round(gx, gy, gw, gh, gh / 2, 1, fade(theme::frost_hairline, b.alpha));
+  }
+  Color fg = b.focused ? fade(rgba(0x000000), b.alpha) : label(b.disabled ? Label::Disabled : Label::Primary, b.alpha);
+  int isz = h >= 72 ? 30 : 26;
+  if (b.label.empty()) {
+    if (b.icon == kPlayIcon) c.gfx.triangle_right(gx + gw / 2 - isz / 3, gy + (gh - isz) / 2, isz, fg);
+    else if (b.icon >= 0) c.icons.draw(static_cast<Icon>(b.icon), gx + (gw - isz) / 2, gy + (gh - isz) / 2, isz, fg);
+    return w;
+  }
+  int content = measure(b.style, b.label) + (b.icon >= 0 ? isz + 12 : 0) + (b.candidate ? 40 : 0);
+  int tx = gx + (gw - content) / 2;
+  if (b.icon == kPlayIcon) {
+    c.gfx.triangle_right(tx, gy + (gh - isz) / 2, isz, fg);
+    tx += isz + 12;
+  } else if (b.icon >= 0) {
+    c.icons.draw(static_cast<Icon>(b.icon), tx, gy + (gh - isz) / 2, isz, fg);
+    tx += isz + 12;
+  }
+  text(b.style, b.label, tx, gy + (gh - line_for(b.style)) / 2, fg);
+  if (b.candidate) c.icons.draw(Icon::Check, tx + measure(b.style, b.label) + 12, gy + (gh - 28) / 2, 28, fg);
+  return w;
+}
+
+int draw_glass_badge(int x, int y, const std::string &s, float alpha) {
+  Ctx &c = ctx();
+  int w = measure(Text::TVCaption2, s) + 24, h = 36;
+  c.gfx.fill_round(x, y, w, h, theme::badge_radius, fade(with_alpha(rgba(0xffffff), 40), alpha));
+  c.gfx.stroke_round(x, y, w, h, theme::badge_radius, 1, fade(with_alpha(rgba(0xffffff), 70), alpha));
+  text(Text::TVCaption2, s, x + 12, y + (h - line_for(Text::TVCaption2)) / 2, label(Label::Primary, alpha));
+  return w;
 }
 
 void draw_progress(int x, int y, int w, int h, double fraction, Color fill, Color track) {

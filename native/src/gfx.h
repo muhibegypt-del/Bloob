@@ -94,6 +94,10 @@ class Gfx {
   void shadow(int x, int y, int w, int h, int radius, int blur, int dy, Uint8 alpha);
   // Off in the Lite effects tier: depth comes from fills and focus colour alone.
   bool shadows = true;
+  // Glass card focus: white light across the top-left of a rounded box, fading out
+  // by 40% of the diagonal. Baked once per resting size and stretched while the
+  // card lifts. Off with shadows.
+  void sheen(int x, int y, int w, int h, int radius, int base_w, int base_h, Uint8 alpha);
   // Colour with alpha running from a0 to a1, left→right or top→bottom.
   void gradient_h(int x, int y, int w, int h, Color color, Uint8 a0, Uint8 a1);
   void gradient_v(int x, int y, int w, int h, Color color, Uint8 a0, Uint8 a1);
@@ -121,6 +125,7 @@ class Gfx {
   SDL_Texture *canvas_ = nullptr;
   SDL_Texture *layer_ = nullptr;
   std::map<std::pair<int, int>, SDL_Texture *> rings_;  // (radius, width) -> anti-aliased annulus
+  std::map<std::string, SDL_Texture *> sheens_;         // "w,h,r" -> sheen
   SDL_Texture *ring(int radius, int width);
   int w_ = 1920, h_ = 1080;
 };

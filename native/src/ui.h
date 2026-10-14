@@ -67,6 +67,8 @@ struct Ctx {
   std::string subtitle_language = "Off";        // subtitles to switch on at start ("Off" = none)
   bool autoplay_next = true;                    // Up next starts the next episode by itself
   bool reduce_motion = false;                   // no auto-advancing hero, page movement or focus zoom
+  bool reduce_transparency = false;             // Glass panels become solid
+  bool high_contrast = false;                   // secondary and tertiary labels brighter
 
   // Effects tier: Full until rendering is measured to be slow, then Lite for the session
   // (no soft shadows, plain dimmed backdrops, a once-a-second player clock).
@@ -144,6 +146,8 @@ int text(Text style, const std::string &s, int x, int y, Color color, int max_w 
 int text_right(Text style, const std::string &s, int right, int y, Color color);
 int text_center(Text style, const std::string &s, int cx, int y, Color color, int max_w = 0);
 int measure(Text style, const std::string &s);
+// White at the role's opacity (Glass); `alpha` fades it further.
+Color label(Label role, float alpha = 1.0f);
 // Wrapped paragraph; returns the y below it.
 int paragraph(Text style, const std::string &s, int x, int y, Color color, int max_w, int max_lines);
 std::string ellipsize(Font &font, const std::string &text, int size, int max_w);
@@ -174,6 +178,8 @@ struct CardSpec {
   double progress = -1;    // 0..1 to show a progress bar
   float focus = 0;         // 0..1 focus animation (lift + shadow)
   bool focused = false;    // frame appears at once
+  bool glass = false;      // Glass focus: sheen instead of the white frame
+  std::string sub;         // Glass, with title_on_art: right-aligned note ("6 min left")
   float alpha = 1.0f;
 };
 // Draws centred on the card's resting box (x, y, w, h); returns the drawn box.
@@ -190,6 +196,38 @@ void draw_row_focus(int x, int y, int w, int h);
 
 // Panels over blurred art.
 void draw_panel(int x, int y, int w, int h, float alpha = 1.0f);
+
+// ---- Glass (2.0)
+// Frost: the blurred art under the panel, baked (needs the full-screen art the
+// panel floats over). Smoke: over video, which the UI cannot see. Solid: the
+// fallback in Lite, with Reduce transparency, and while frost is baking.
+enum class GlassKind { Frost, Smoke, Solid };
+struct GlassSpec {
+  int x = 0, y = 0, w = 0, h = 0;
+  int radius = theme::glass_radius;
+  GlassKind kind = GlassKind::Frost;
+  std::string art;        // Frost: the full-screen artwork under the panel
+  float alpha = 1.0f;
+  bool shadow = true;
+};
+void draw_glass(const GlassSpec &g);
+// Glass control (button or pill): focused = white with dark label and lift;
+// candidate = chosen but not focused (20% white, check); otherwise glass.
+struct GlassButton {
+  std::string label;
+  int icon = -1;          // Icon value, kPlayIcon, or -1 (icon-only when label is empty)
+  bool focused = false;
+  bool candidate = false;
+  bool disabled = false;
+  float lift = 1.0f;      // 0..1 focus animation
+  float alpha = 1.0f;
+  int h = 80;
+  Text style = Text::TVButton;
+};
+int glass_button_width(const GlassButton &b);
+int draw_glass_button(int x, int y, const GlassButton &b);  // returns width
+// Small outlined fact on art ("4K", "Dolby Vision").
+int draw_glass_badge(int x, int y, const std::string &label, float alpha = 1.0f);  // returns width
 
 void draw_progress(int x, int y, int w, int h, double fraction, Color fill = theme::accent,
                    Color track = with_alpha(theme::focus, 50));

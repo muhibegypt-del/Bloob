@@ -8,6 +8,8 @@
 #include "keys.h"
 #include "model.h"
 
+struct GlassSpec;
+
 class Screen {
  public:
   virtual ~Screen() = default;
@@ -28,6 +30,9 @@ class Screen {
   // Root pages sit under the tab bar.
   virtual bool root() const { return false; }
   virtual void set_tabs_focus(bool) {}
+  // Glass: draw shell glass (the tab bar, toasts) over this screen, frosting the
+  // artwork it shows. Plain pages get solid glass.
+  virtual void shell_glass(const GlassSpec &g) const;
   virtual const char *name() const = 0;
 
  protected:

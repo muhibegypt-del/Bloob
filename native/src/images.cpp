@@ -201,6 +201,71 @@ bool Images::settled(const std::string &url, int w, int h, int radius, Fit fit, 
   return ref.texture != nullptr || ref.failed;
 }
 
+float text_luma(const Pixels &p) {
+  if (p.w <= 0 || p.h <= 0) return -1;
+  const unsigned char *d = reinterpret_cast<const unsigned char *>(p.data.data());
+  double sum = 0;
+  long n = 0;
+  int x1 = p.w * 55 / 100, y0 = p.h * 30 / 100;
+  for (int y = y0; y < p.h; y += 4)
+    for (int x = 0; x < x1; x += 4) {
+      const unsigned char *px = d + (static_cast<size_t>(y) * p.w + x) * 4;
+      sum += 0.2126 * px[0] + 0.7152 * px[1] + 0.0722 * px[2];
+      n++;
+    }
+  return n ? static_cast<float>(sum / n / 255.0) : -1.0f;
+}
+
+Pixels frost_image(const unsigned char *rgba, int sw, int sh, int screen_w, int screen_h, GlassRect rect, int radius) {
+  Pixels out;
+  if (rect.w <= 0 || rect.h <= 0) return out;
+  // The art as the backdrop draws it, at quarter size, softly blurred.
+  Pixels full = scale_image(rgba, sw, sh, std::max(1, screen_w / 4), std::max(1, screen_h / 4), Fit::Cover, 0, false);
+  blur_image(full, 12);
+  // Half-resolution crop under the rect, sampled bilinearly from the quarter-size blur.
+  out.w = std::max(1, rect.w / 2);
+  out.h = std::max(1, rect.h / 2);
+  out.data.resize(static_cast<size_t>(out.w) * out.h * 4);
+  const unsigned char *src = reinterpret_cast<const unsigned char *>(full.data.data());
+  auto at = [&](int x, int y, int c) {
+    x = std::max(0, std::min(full.w - 1, x));
+    y = std::max(0, std::min(full.h - 1, y));
+    return static_cast<float>(src[(static_cast<size_t>(y) * full.w + x) * 4 + c]);
+  };
+  const float r = static_cast<float>(std::min(radius / 2, std::min(out.w, out.h) / 2));
+  for (int y = 0; y < out.h; y++) {
+    // Light gathers along the top edge, as on a pane of glass.
+    float ty = static_cast<float>(y) / out.h;
+    float light = ty < 0.35f ? 0.10f * (1 - ty / 0.35f) * (1 - ty / 0.35f) : 0.0f;
+    float tint = 0.14f + light;
+    for (int x = 0; x < out.w; x++) {
+      float u = (rect.x + (x + 0.5f) * 2) / 4.0f - 0.5f, v = (rect.y + (y + 0.5f) * 2) / 4.0f - 0.5f;
+      int x0 = static_cast<int>(std::floor(u)), y0 = static_cast<int>(std::floor(v));
+      float fx = u - x0, fy = v - y0;
+      float c[3];
+      for (int k = 0; k < 3; k++)
+        c[k] = (at(x0, y0, k) * (1 - fx) + at(x0 + 1, y0, k) * fx) * (1 - fy) + (at(x0, y0 + 1, k) * (1 - fx) + at(x0 + 1, y0 + 1, k) * fx) * fy;
+      float l = 0.2126f * c[0] + 0.7152f * c[1] + 0.0722f * c[2];
+      unsigned char *p = reinterpret_cast<unsigned char *>(&out.data[(static_cast<size_t>(y) * out.w + x) * 4]);
+      for (int k = 0; k < 3; k++) {
+        float sat = l + (c[k] - l) * 1.3f;          // a little richer
+        float v2 = sat * (1 - tint) + 255.0f * tint;  // frosted white
+        p[k] = static_cast<unsigned char>(std::max(0.0f, std::min(255.0f, v2 + 0.5f)));
+      }
+      float coverage = 1.0f;
+      if (r > 0) {
+        float px = x + 0.5f, py = y + 0.5f;
+        float cx = px < r ? r : (px > out.w - r ? out.w - r : px);
+        float cy = py < r ? r : (py > out.h - r ? out.h - r : py);
+        float dx = px - cx, dy = py - cy;
+        coverage = std::max(0.0f, std::min(1.0f, r - std::sqrt(dx * dx + dy * dy) + 0.5f));
+      }
+      p[3] = static_cast<unsigned char>(255 * coverage + 0.5f);
+    }
+  }
+  return out;
+}
+
 void blur_image(Pixels &p, int radius) {
   if (radius <= 0 || p.w <= 0 || p.h <= 0) return;
   std::vector<int> buf(static_cast<size_t>(p.w) * p.h * 4);
@@ -234,12 +299,35 @@ void blur_image(Pixels &p, int radius) {
 }
 
 ImageRef Images::get(const std::string &url, int w, int h, int radius, Fit fit, bool shade, int blur) {
-  ImageRef ref;
   if (url.empty() || w <= 0 || h <= 0) {
+    ImageRef ref;
     ref.failed = true;
     return ref;
   }
-  std::string key = key_for(url, w, h, radius, fit, shade, blur);
+  return lookup(key_for(url, w, h, radius, fit, shade, blur), url, [=](const unsigned char *rgba, int sw, int sh) {
+    if (blur > 0) {
+      // Blurred art carries no detail: a quarter-size texture is enough.
+      Pixels p = scale_image(rgba, sw, sh, std::max(1, w / 4), std::max(1, h / 4), fit, 0, false);
+      blur_image(p, std::max(1, blur / 4));
+      return p;
+    }
+    return scale_image(rgba, sw, sh, w, h, fit, radius, shade);
+  });
+}
+
+ImageRef Images::frost(const std::string &url, GlassRect rect, int radius) {
+  if (url.empty() || rect.w <= 0 || rect.h <= 0) {
+    ImageRef ref;
+    ref.failed = true;
+    return ref;
+  }
+  std::string key = "frost" + std::to_string(rect.x) + "," + std::to_string(rect.y) + "," + std::to_string(rect.w) + "," +
+                    std::to_string(rect.h) + "r" + std::to_string(radius) + url;
+  return lookup(key, url, [=](const unsigned char *rgba, int sw, int sh) { return frost_image(rgba, sw, sh, 1920, 1080, rect, radius); });
+}
+
+ImageRef Images::lookup(const std::string &key, const std::string &url, const Make &make) {
+  ImageRef ref;
   Entry &e = entries_[key];
   e.used_at = now_;
   e.shared->wanted.store(now_);
@@ -249,6 +337,7 @@ ImageRef Images::get(const std::string &url, int w, int h, int radius, Fit fit, 
       ref.texture = e.texture;
       ref.w = e.w;
       ref.h = e.h;
+      ref.luma = e.luma;
       ref.alpha = age >= kFadeMs ? 255 : static_cast<Uint8>(255 * age / kFadeMs);
       if (age < kFadeMs) fading_ = true;
       return ref;
@@ -262,7 +351,7 @@ ImageRef Images::get(const std::string &url, int w, int h, int radius, Fit fit, 
       // fall through
     case Entry::Idle:
       e.state = Entry::Loading;
-      load(key, url, w, h, radius, fit, shade, blur);
+      load(key, url, make);
       return ref;
     case Entry::Loading:
       return ref;
@@ -270,13 +359,14 @@ ImageRef Images::get(const std::string &url, int w, int h, int radius, Fit fit, 
   return ref;
 }
 
-void Images::load(const std::string &key, const std::string &url, int w, int h, int radius, Fit fit, bool shade, int blur) {
+void Images::load(const std::string &key, const std::string &url, Make make) {
   std::shared_ptr<Shared> shared = entries_[key].shared;
   Api *api = api_;
   tasks_->run(
       [=]() -> std::function<void()> {
         struct Result {
           Pixels pixels;
+          float luma = -1;
           bool stale = false;
           bool failed = false;
         };
@@ -297,13 +387,9 @@ void Images::load(const std::string &key, const std::string &url, int w, int h, 
             result->failed = true;
             if (status != 404) logf("images", "image failed (status %d)", status);
           } else {
-            if (blur > 0) {
-              // Blurred art carries no detail: a quarter-size texture is enough.
-              result->pixels = scale_image(decoded, sw, sh, std::max(1, w / 4), std::max(1, h / 4), fit, 0, false);
-              blur_image(result->pixels, std::max(1, blur / 4));
-            } else {
-              result->pixels = scale_image(decoded, sw, sh, w, h, fit, radius, shade);
-            }
+            result->pixels = make(decoded, sw, sh);
+            // Full-screen art: how bright it is where hero text sits (adaptive scrims).
+            if (result->pixels.w >= 1280) result->luma = text_luma(result->pixels);
             stbi_image_free(decoded);
           }
         }
@@ -332,6 +418,7 @@ void Images::load(const std::string &key, const std::string &url, int w, int h, 
           e.texture = texture;
           e.w = result->pixels.w;
           e.h = result->pixels.h;
+          e.luma = result->luma;
           e.bytes = result->pixels.data.size();
           e.state = Entry::Ready;
           // An image already on screen before its first frame fades in; one prefetched does not need to.

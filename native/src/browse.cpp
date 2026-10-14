@@ -1,7 +1,8 @@
-// Home, Films and Series. The top of the page is a featured title over its
-// full-bleed artwork (pages through a few picks); below it, shelves of 16:9
-// cards. Moving into the shelves hides the tab bar, keeps the focused title's
-// artwork and summary at the top, and sets the focused shelf at eye level.
+// Home, Films and Series (Glass). The featured title fills the screen: its art at
+// full brightness under adaptive scrims, its title, one line and the actions on
+// the left, the frosted tab bar above. Below, shelves of 320×180 cards on the
+// tvOS grid. Moving into the shelves hides the tab bar, keeps the focused
+// title's art and summary at the top, and sets the focused shelf at eye level.
 #include <algorithm>
 #include <cmath>
 
@@ -15,8 +16,9 @@ namespace {
 
 using namespace theme;
 
-constexpr int STRIDE = card_w + card_gap;
-constexpr int ROW_H = 350;
+constexpr int STRIDE = g_card_w + g_card_gap;
+constexpr int ROW_H = 330;
+constexpr int X0 = safe_x;
 constexpr long long kAutoAdvanceMs = 9000;
 constexpr int kFeatured = 6;
 
@@ -28,6 +30,10 @@ class BrowseScreen : public Screen {
 
   const char *name() const override { return kind_ == Browse::Home ? "home" : kind_ == Browse::Movies ? "films" : "series"; }
   bool root() const override { return true; }
+  void shell_glass(const GlassSpec &g) const override {
+    if (state_ == State::Ready) backdrop_.glass(g);
+    else Screen::shell_glass(g);
+  }
   void set_tabs_focus(bool tabs) override {
     tabs_ = tabs;
     if (tabs && !hero_) go_top();
@@ -311,20 +317,30 @@ class BrowseScreen : public Screen {
 
   void draw_welcome() {
     Ctx &c = ctx();
-    c.gfx.fill_rect(0, 0, W, H, with_alpha(ground, 200));
-    int w = 1040, h = 470, x = (W - w) / 2, y = (H - h) / 2;
-    draw_panel(x, y, w, h);
-    text(Text::Title2, "Watch with your AllDebrid account", x + 56, y + 52, primary, w - 112);
-    int ty = paragraph(Text::Body,
+    c.gfx.fill_rect(0, 0, W, H, with_alpha(rgba(0x000000), 140));
+    int w = 1080, h = 500, x = (W - w) / 2, y = (H - h) / 2;
+    GlassSpec g;
+    g.x = x;
+    g.y = y;
+    g.w = w;
+    g.h = h;
+    g.radius = glass_radius;
+    backdrop_.glass(g);
+    text(Text::TVTitle3, "Watch with your AllDebrid account", x + 56, y + 52, label(Label::Primary), w - 112);
+    int ty = paragraph(Text::TVBody,
                        "Bloob finds the versions of a film or episode and prepares the one you pick through AllDebrid, "
                        "a paid service you sign up for at alldebrid.com. Connect once with a short code; this TV remembers it.",
-                       x + 56, y + 122, secondary, w - 112, 4);
-    text(Text::Caption, "You can connect any time from Settings.", x + 56, ty + 14, tertiary, w - 112);
-    ButtonSpec connect{"Connect now", -1, welcome_button_ == 0};
-    ButtonSpec later{"Later", -1, welcome_button_ == 1};
-    int bx = x + 56, by = y + h - 112;
-    bx += draw_button(bx, by, connect) + 16;
-    draw_button(bx, by, later);
+                       x + 56, y + 132, label(Label::Primary, 0.86f), w - 112, 4);
+    text(Text::TVCaption1, "You can connect any time from Settings.", x + 56, ty + 14, label(Label::Secondary), w - 112);
+    GlassButton connect, later;
+    connect.label = "Connect now";
+    connect.focused = welcome_button_ == 0;
+    later.label = "Later";
+    later.focused = welcome_button_ == 1;
+    int bx = x + 56, by = y + h - 124;
+    bx += draw_glass_button(bx, by, connect) + 20;
+    draw_glass_button(bx, by, later);
+    (void)c;
   }
 
   bool hero_key(Key key, bool repeat) {
@@ -465,20 +481,24 @@ class BrowseScreen : public Screen {
     Ctx &c = ctx();
     if (state_ == State::Loading) return draw_skeleton();
     if (state_ == State::Error) {
-      c.gfx.clear(ground);
-      text_center(Text::Title2, "Couldn\xE2\x80\x99t load this page", W / 2, 420, primary);
-      int y = 480;
-      for (auto &l : wrap(font_for(Text::Body), error_, size_for(Text::Body), 900, 3)) {
-        text_center(Text::Body, l, W / 2, y, secondary);
-        y += line_for(Text::Body);
+      c.gfx.clear(plain);
+      text_center(Text::TVTitle3, "Couldn\xE2\x80\x99t load this page", W / 2, 400, label(Label::Primary));
+      int y = 476;
+      for (auto &l : wrap(font_for(Text::TVBody), error_, size_for(Text::TVBody), 960, 3)) {
+        text_center(Text::TVBody, l, W / 2, y, label(Label::Secondary));
+        y += line_for(Text::TVBody);
       }
-      ButtonSpec b{"Try again", -1, !tabs_};
-      draw_button(W / 2 - button_width(b) / 2, y + 40, b);
+      GlassButton b;
+      b.label = "Try again";
+      b.focused = !tabs_;
+      draw_glass_button(W / 2 - glass_button_width(b) / 2, y + 44, b);
       return;
     }
     float m = mode_.value;
-    backdrop_.draw(0.25f * m);
-    draw_scrims(1.0f, static_cast<int>(lerp(480, 300, m)), 1.0f);
+    backdrop_.draw(0.22f * m);
+    // Scrims follow the art: bright pictures get a stronger wash behind the text.
+    float s = scrim_for(backdrop_.luma());
+    draw_scrims(s, static_cast<int>(lerp(560, 330, m)), std::min(1.0f, 0.55f + 0.45f * s + 0.2f * m));
     draw_top(m);
     draw_rows(m);
     if (welcome_) draw_welcome();
@@ -487,16 +507,16 @@ class BrowseScreen : public Screen {
 
   void draw_skeleton() {
     Ctx &c = ctx();
-    c.gfx.clear(ground);
+    c.gfx.clear(plain);
     float pulse = 0.5f + 0.5f * static_cast<float>(std::sin(c.now / 1600.0 * 6.2831853));
-    Color tone = mix(raised, raised2, pulse);
-    c.gfx.fill_round(margin, 260, 520, 150, 16, tone);
-    c.gfx.fill_round(margin, 440, 380, 26, 13, tone);
-    c.gfx.fill_round(margin, 490, 760, 22, 11, tone);
-    c.gfx.fill_round(margin, 526, 640, 22, 11, tone);
-    c.gfx.fill_round(margin, 636, 200, button_h, button_h / 2, tone);
-    c.gfx.fill_round(margin + 220, 636, 170, button_h, button_h / 2, tone);
-    for (int i = 0; i < 5; i++) c.gfx.fill_round(margin + i * STRIDE, 900, card_w, card_h, card_radius, tone);
+    Color tone = mix(rgba(0x18181b), rgba(0x232326), pulse);
+    c.gfx.fill_round(X0, 300, 560, 160, 18, tone);
+    c.gfx.fill_round(X0, 492, 420, 30, 15, tone);
+    c.gfx.fill_round(X0, 546, 820, 26, 13, tone);
+    c.gfx.fill_round(X0, 584, 680, 26, 13, tone);
+    c.gfx.fill_round(X0, 690, 210, 80, 40, tone);
+    c.gfx.fill_round(X0 + 230, 690, 190, 80, 40, tone);
+    for (int i = 0; i < 5; i++) c.gfx.fill_round(X0 + i * STRIDE, 846, g_card_w, g_card_h, card_radius, tone);
   }
 
   void draw_top(float m) {
@@ -504,70 +524,74 @@ class BrowseScreen : public Screen {
     const Shown &s = shown_;
     if (s.item.id.empty()) return;
     float t = text_in_.value;  // new title text eases in
-    int box_top = static_cast<int>(lerp(232, 96, m));
-    int box_h = static_cast<int>(lerp(220, 160, m));
-    int box_w = static_cast<int>(lerp(760, 560, m));
+    int box_top = static_cast<int>(lerp(300, 140, m));
+    int box_h = static_cast<int>(lerp(200, 140, m));
+    int box_w = static_cast<int>(lerp(760, 520, m));
 
-    // Eyebrow: why this title is here.
-    std::string eyebrow;
-    if (s.has_resume) eyebrow = s.resume.kind == "next" ? "Up next" : "Continue watching";
-    else if (hero_) eyebrow = kind_ == Browse::Series ? "Popular series" : kind_ == Browse::Movies ? "Popular film" : (s.item.series() ? "Popular series" : "Popular film");
+    // Why this title is here, in plain words.
+    std::string why;
+    if (s.has_resume) why = s.resume.kind == "next" ? "Up next" : "Continue watching";
+    else if (hero_) why = kind_ == Browse::Series ? "Popular series" : kind_ == Browse::Movies ? "Popular film" : (s.item.series() ? "Popular series" : "Popular film");
     float hero_only = std::max(0.0f, 1.0f - 2.0f * m);
-    if (!eyebrow.empty() && hero_only > 0.01f) text(Text::Eyebrow, upper(eyebrow), margin, box_top - 34, fade(accent, hero_only * t));
+    if (!why.empty() && hero_only > 0.01f) text(Text::TVCaption1, why, X0, box_top - 44, label(Label::Secondary, hero_only * t));
 
-    int y = draw_title(s.item, margin, box_top, box_w, box_h, t);
-    y += 24;
+    int y = draw_title(s.item, X0, box_top, box_w, box_h, t);
+    y += 22;
     std::string meta = meta_line(s.item);
     if (s.has_resume && s.item.series()) {
       const Resume &r = s.resume;
       if (r.kind == "next" && r.next) meta = episode_code(r.next->season, r.next->episode) + " \xC2\xB7 " + r.next->title;
       else meta = join({episode_code(r.season, r.episode), r.episode_title});
     }
-    text(Text::Callout, meta, margin, y, fade(secondary, t), 1100);
-    y += 44;
-    paragraph(Text::Body, s.item.description, margin, y, fade(secondary, t), 780, 2);
+    text(Text::TVCallout, meta, X0, y, label(Label::Secondary, t), 1100);
+    y += 50;
+    paragraph(Text::TVBody, s.item.description, X0, y, label(Label::Primary, 0.86f * t), 860, 2);
 
     if (hero_only > 0.01f) {
-      int by = 636;
-      int bx = margin;
+      int by = 690;
+      int bx = X0;
       auto buttons = hero_buttons();
       for (size_t i = 0; i < buttons.size(); i++) {
-        ButtonSpec b = buttons[i];
+        GlassButton b;
+        b.label = buttons[i].label;
+        b.icon = buttons[i].icon;
         b.focused = hero_ && !tabs_ && static_cast<int>(i) == button_;
         b.lift = button_lift_.value;
         b.alpha = hero_only;
-        bx += draw_button(bx, by, b) + 20;
+        bx += draw_glass_button(bx, by, b) + 20;
       }
       if (s.has_resume && s.resume.kind == "resume" && s.resume.duration > 0) {
-        bx += 12;
-        draw_progress(bx, by + 24, 200, 6, static_cast<double>(s.resume.position) / s.resume.duration, fade(accent, hero_only),
-                      fade(with_alpha(focus, 50), hero_only));
-        text(Text::Footnote, minutes_left(s.resume.duration - s.resume.position), bx, by + 40, fade(secondary, hero_only));
+        bx += 14;
+        draw_progress(bx, by + 30, 200, 5, static_cast<double>(s.resume.position) / s.resume.duration, fade(rgba(0xffffff), hero_only),
+                      fade(with_alpha(rgba(0xffffff), 72), hero_only));
+        text(Text::TVCaption2, minutes_left(s.resume.duration - s.resume.position), bx, by + 44, label(Label::Secondary, hero_only));
       }
-      // Page dots for the featured picks.
+      // Page dots for the featured picks, right-aligned on the button line.
       int pages = static_cast<int>(featured_.size());
-      int dx = margin;
+      int dw = 0;
+      for (int i = 0; i < pages; i++) dw += (i == feature_ ? 28 : 8) + 10;
+      int dx = W - safe_x - dw + 10;
       for (int i = 0; pages > 1 && i < pages; i++) {
         bool on = i == feature_;
-        int w = on ? 28 : 10;
-        c.gfx.fill_round(dx, 752, w, 10, 5, fade(on ? primary : tertiary, hero_only));
+        int w = on ? 28 : 8;
+        c.gfx.fill_round(dx, by + 36, w, 8, 4, fade(on ? rgba(0xffffff) : with_alpha(rgba(0xffffff), 102), hero_only));
         dx += w + 10;
       }
     }
   }
 
   void draw_rows(float m) {
-    float base = lerp(850, 520, m);
+    float base = lerp(790, 500, m);
     for (size_t i = 0; i < rows_.size(); i++) {
       float y = base + (static_cast<float>(i) - vscroll_.value) * ROW_H;
       if (y > H || y < -ROW_H) continue;
       // Shelves that move above the focused one fade out under the title.
-      float alpha = std::max(0.0f, std::min(1.0f, (y - 300.0f) / 170.0f));
+      float alpha = std::max(0.0f, std::min(1.0f, (y - 320.0f) / 170.0f));
       if (alpha <= 0.01f) continue;
       bool focused_row = !hero_ && static_cast<int>(i) == row_;
       int hy = static_cast<int>(y);
-      text(Text::Headline, rows_[i].title, margin, hy, fade(focused_row ? primary : secondary, alpha));
-      draw_shelf(i, hy + 50, alpha, focused_row);
+      text(Text::TVHeadline, rows_[i].title, X0, hy, label(focused_row ? Label::Primary : Label::Secondary, alpha));
+      draw_shelf(i, hy + 58, alpha, focused_row);
     }
   }
 
@@ -580,7 +604,7 @@ class BrowseScreen : public Screen {
     int last = std::min(count - 1, static_cast<int>(std::ceil(hs)) + 5);
     for (int j = last + 1; j < std::min(count, last + 3); j++) {
       const Item &it = row.continue_row() ? row.resume[static_cast<size_t>(j)].item : row.items[static_cast<size_t>(j)];
-      c.images.prefetch(it.tile, card_w, card_h, card_radius);
+      c.images.prefetch(it.tile, g_card_w, g_card_h, card_radius, Fit::Cover, row.continue_row());
     }
     int focus_col = cols_[r];
     // Draw the focused card last so its lift and shadow sit above neighbours.
@@ -589,33 +613,37 @@ class BrowseScreen : public Screen {
     if (focused_row && focus_col >= first && focus_col <= last) order.push_back(focus_col);
     for (int j : order) {
       const Item &it = row.continue_row() ? row.resume[static_cast<size_t>(j)].item : row.items[static_cast<size_t>(j)];
-      int x = margin + static_cast<int>(std::lround((j - hs) * STRIDE));
-      if (x > W || x + card_w < 0) continue;
+      int x = X0 + static_cast<int>(std::lround((j - hs) * STRIDE));
+      if (x > W || x + g_card_w < 0) continue;
       bool focused = focused_row && j == focus_col && !tabs_;
       bool was = static_cast<int>(r) == prev_row_ && j == prev_col_;
       CardSpec cs;
       cs.art = it.tile;
       cs.fallback_art = it.poster;
       cs.title = it.name;
+      cs.w = g_card_w;
+      cs.h = g_card_h;
+      cs.glass = true;
       cs.focus = focused ? lift_.value : was ? prev_lift_.value : 0;
       cs.focused = focused;
       cs.alpha = alpha;
+      std::string sub;
       if (row.continue_row()) {
         const Resume &res = row.resume[static_cast<size_t>(j)];
         if (res.kind == "resume" && res.duration > 0) cs.progress = static_cast<double>(res.position) / res.duration;
+        if (res.kind == "next" && res.next) sub = "Next: " + episode_code(res.next->season, res.next->episode);
+        else if (res.item.series()) sub = join({episode_code(res.season, res.episode), minutes_left(res.duration - res.position)});
+        else sub = minutes_left(res.duration - res.position);
+        // Continue watching: what and how long, on the picture itself.
+        cs.title_on_art = true;
+        cs.sub = res.item.series() ? "" : sub;
       }
       draw_card(x, y, cs);
-      if (focused_row) {
-        std::string label = it.name, sub;
-        if (row.continue_row()) {
-          const Resume &res = row.resume[static_cast<size_t>(j)];
-          if (res.kind == "next" && res.next) sub = "Next: " + episode_code(res.next->season, res.next->episode);
-          else if (res.item.series()) sub = join({episode_code(res.season, res.episode), minutes_left(res.duration - res.position)});
-          else sub = minutes_left(res.duration - res.position);
-        }
-        int ly = y + card_h + (focused ? 22 : 14);
-        text(Text::Caption, label, x, ly, fade(focused ? primary : secondary, alpha), card_w);
-        if (!sub.empty()) text(Text::Footnote, sub, x, ly + 30, fade(tertiary, alpha), card_w);
+      if (focused) {
+        int ly = y + g_card_h + 22;
+        text(Text::TVCaption1, it.name, x, ly, label(Label::Primary, alpha), g_card_w + 40);
+        std::string under = row.continue_row() ? sub : join({it.year, it.series() ? "Series" : "Film"});
+        if (!under.empty()) text(Text::TVCaption2, under, x, ly + 34, label(Label::Secondary, alpha), g_card_w + 40);
       }
     }
   }
@@ -636,7 +664,7 @@ class BrowseScreen : public Screen {
   int row_ = 0;
   std::vector<int> cols_;
   std::vector<Anim> hscroll_;
-  Anim mode_{page_rate}, vscroll_{page_rate}, lift_{focus_rate}, prev_lift_{focus_out_rate}, text_in_{fade_rate, 1},
+  Anim mode_{page_rate}, vscroll_{page_rate}, lift_{focus_in_rate}, prev_lift_{focus_leave_rate}, text_in_{fade_rate, 1},
       button_lift_{focus_rate, 1};
   int prev_row_ = -1, prev_col_ = -1;
   Shown pending_, shown_;

@@ -55,7 +55,37 @@ constexpr long long hud_timeout_ms = 5000;
 constexpr long long hud_controls_timeout_ms = 12000;  // focus resting on the controls row
 constexpr long long hud_reduced_timeout_ms = 2000;   // timeline-only, after the seek lands
 
+// ---- Glass (2.0, native/GLASS-PLAN.md). Screens move to these phase by phase;
+// the 1.x tokens above go in G8.
+constexpr int safe_x = 80, safe_y = 60;            // tvOS safe area
+const Color black = rgba(0x000000);                // ground behind full-bleed artwork
+const Color plain = rgba(0x0b0b0d);                // ground of pages without artwork
+const Color frost_hairline = rgba(0xffffff, 38);   // 15%: edge of a frosted panel
+const Color smoke = rgba(0x000000, 115);           // 45%: glass over video (cannot be blurred)
+const Color smoke_hairline = rgba(0xffffff, 31);   // 12%
+const Color solid = rgba(0x2c2c2e, 240);           // 94%: Lite, Reduce transparency, frost still baking
+const Color candidate = rgba(0xffffff, 51);        // 20%: chosen but not focused
+constexpr float frost_tint = 0.14f;                // white mixed into the blurred art
+constexpr float frost_light = 0.10f;               // extra white along the top edge
+constexpr float frost_saturation = 1.3f;           // glass makes colour a little richer
+constexpr int glass_radius = 32, badge_radius = 6;
+constexpr float control_lift = 1.06f;              // focused buttons and pills
+constexpr int g_card_w = 320, g_card_h = 180, g_card_gap = 40;  // tvOS 5-column grid
+constexpr float focus_in_rate = 46.0f;             // ≈100 ms
+constexpr float focus_leave_rate = 23.0f;          // ≈200 ms
+constexpr float overlay_rate = 15.0f;              // ≈300 ms: player controls, sheets
+constexpr long long hud_paused_timeout_ms = 8000;  // paused, or focus on a control
+constexpr long long seek_commit_ms = 400;
+// Scrim strength over artwork follows its brightness under the text (0..1 luma):
+// light art gets the strong wash, dark art the light one.
+inline float scrim_for(float luma) { return luma < 0 ? 0.75f : 0.45f + 0.55f * (luma < 0.15f ? 0.0f : luma > 0.6f ? 1.0f : (luma - 0.15f) / 0.45f); }
+
 }  // namespace theme
 
 // Type scale. Inter at fixed sizes; nothing below 19 px.
-enum class Text { Display, Title1, Title2, Headline, Body, Callout, Caption, Footnote, Eyebrow, Button };
+enum class Text { Display, Title1, Title2, Headline, Body, Callout, Caption, Footnote, Eyebrow, Button,
+                  // Glass: Apple's public tvOS scale (size/leading), floor 23. Renamed in G8.
+                  TVDisplay, TVTitle1, TVTitle2, TVTitle3, TVHeadline, TVCallout, TVBody, TVCaption1, TVCaption2, TVButton };
+
+// Glass text colours by role; High contrast raises the lower ones.
+enum class Label { Primary, Secondary, Tertiary, Disabled };
