@@ -4,7 +4,7 @@ Bloob, split into its actual layers. For each layer this file records what the l
 
 Snapshot: **1.1.0**, 13 October 2026, branch `claude/sleepy-ptolemy-o87vgv`.
 
-How good each layer is, against a researched definition of quality, is in [`QUALITY.md`](QUALITY.md). Re-score a layer there when you change it.
+How good each layer is, against a researched definition of quality, is in [`QUALITY.md`](QUALITY.md). The concrete build plan for responsiveness and continuity (U0 to U9) is in [`IMPLEMENTATION-UX.md`](IMPLEMENTATION-UX.md). Re-score a layer there when you change it.
 
 ## How to read the state
 
