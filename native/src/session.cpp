@@ -59,8 +59,27 @@ long long Session::display_ms(long long now) const {
   return duration_ms_ > 0 ? std::min(pos, duration_ms_) : pos;
 }
 
+void Session::account(long long now) {
+  if (!open_) return;
+  if (accounted_at_ == 0 || now < accounted_at_) {
+    accounted_at_ = now;
+    return;
+  }
+  long long dt = now - accounted_at_;
+  accounted_at_ = now;
+  bool wanting = started_ && intent_play_ && !ended_ && error_.empty();
+  bool stalling = wanting && !pending_ && (buffering_ || stalled_);
+  if (was_stalling_) stats_.stall_ms += dt;
+  if (wanting) stats_.play_wall_ms += dt;
+  if (stalling && !was_stalling_) stats_.stalls++;
+  was_stalling_ = stalling;
+  stats_.first_frame_ms = first_frame_ms_;
+  if (!error_.empty() && !started_) stats_.start_failed = true;
+}
+
 void Session::on_event(const MediaEvent &event, const MediaInfo &info, long long now) {
   if (!open_) return;
+  account(now);
   switch (event.kind) {
     case MediaEvent::Loaded:
       if (!loaded_) {
@@ -93,8 +112,15 @@ void Session::on_event(const MediaEvent &event, const MediaInfo &info, long long
       if (event.time_ms > media_ms_ + 20 || event.time_ms < media_ms_) last_advance_at_ = now;
       if (pending_) {
         // A fresh report near the target, after the seek settled, confirms it.
-        if (now - seek_started_ > 300 && std::llabs(event.time_ms - *pending_) < 3000) pending_.reset();
-        else break;
+        if (now - seek_started_ > 300 && std::llabs(event.time_ms - *pending_) < 3000) {
+          stats_.seeks_landed++;
+          stats_.seek_error_ms += std::llabs(event.time_ms - *pending_);
+          pending_.reset();
+        } else {
+          break;
+        }
+      } else if (event.time_ms > media_ms_ && event.time_ms - media_ms_ < 5000) {
+        stats_.watched_media_ms += event.time_ms - media_ms_;
       }
       media_ms_ = event.time_ms;
       media_at_ = now;
@@ -107,6 +133,7 @@ void Session::on_event(const MediaEvent &event, const MediaInfo &info, long long
     }
     case MediaEvent::SeekDone:
       if (pending_) {
+        stats_.seeks_landed++;  // the TV reports no landing point here; error counts as 0
         media_ms_ = *pending_;
         media_at_ = now;
         pending_.reset();
@@ -125,10 +152,12 @@ void Session::on_event(const MediaEvent &event, const MediaInfo &info, long long
     case MediaEvent::Lost:  // the player reloads; the session is reopened
       break;
   }
+  account(now);  // latch the new state, so the next interval is counted under it
 }
 
 bool Session::tick(long long now) {
   if (!open_) return false;
+  account(now);
   bool changed = false;
   if (preview_ && now >= preview_deadline_) {
     commit(*preview_, now);
@@ -148,6 +177,7 @@ bool Session::tick(long long now) {
     buffering_since_ = now;
     changed = true;
   }
+  account(now);
   return changed;
 }
 
@@ -209,6 +239,7 @@ void Session::commit(long long target, long long now) {
   ended_ = false;
   pending_ = target;
   seek_started_ = now;
+  stats_.seeks++;
   if (port_) port_->seek(target);
 }
 

@@ -17,6 +17,31 @@ struct PlayerPort {
 };
 
 enum class Phase { Idle, Loading, Playing, Paused, Buffering, Seeking, Ended, Error };
+
+// What the viewer experienced, for the end-of-session log line. Stall time counts
+// only waiting while playback was wanted (not seeks, pauses or the start-up).
+struct SessionStats {
+  long long first_frame_ms = -1;
+  int stalls = 0;
+  long long stall_ms = 0;
+  long long play_wall_ms = 0;      // wall-clock time spent wanting to play, after the start
+  long long watched_media_ms = 0;  // media time that actually advanced
+  int seeks = 0, seeks_landed = 0;
+  long long seek_error_ms = 0;     // sum of |landing - target|
+  bool start_failed = false;
+  SessionStats &operator+=(const SessionStats &o) {
+    if (first_frame_ms < 0) first_frame_ms = o.first_frame_ms;
+    stalls += o.stalls;
+    stall_ms += o.stall_ms;
+    play_wall_ms += o.play_wall_ms;
+    watched_media_ms += o.watched_media_ms;
+    seeks += o.seeks;
+    seeks_landed += o.seeks_landed;
+    seek_error_ms += o.seek_error_ms;
+    start_failed = start_failed || o.start_failed;
+    return *this;
+  }
+};
 const char *phase_name(Phase phase);
 
 class Session {
@@ -31,6 +56,9 @@ class Session {
   void on_event(const MediaEvent &event, const MediaInfo &info, long long now);
   // Drive debounce, timeouts and the stall watchdog. Returns true if state changed.
   bool tick(long long now);
+  // Bring the counters up to `now` (also done by every event and tick); call before stats().
+  void account(long long now);
+  const SessionStats &stats() const { return stats_; }
 
   void toggle();
   void play();
@@ -92,4 +120,7 @@ class Session {
   int burst_ = 0;
   int burst_direction_ = 0;
   int subtitle_index_ = -1;
+  SessionStats stats_;
+  long long accounted_at_ = 0;
+  bool was_stalling_ = false;
 };

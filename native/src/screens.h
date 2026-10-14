@@ -41,9 +41,13 @@ std::unique_ptr<Screen> make_browse(Browse kind);
 std::unique_ptr<Screen> make_search();
 std::unique_ptr<Screen> make_settings();
 std::unique_ptr<Screen> make_diagnostics();
+std::unique_ptr<Screen> make_about();
 std::unique_ptr<Screen> make_details(const Item &item);
 // `autostart`: resolve the best match straight away (up next).
 std::unique_ptr<Screen> make_sources(const PlayRequest &request, bool autostart = false);
+enum class PlayOrigin { HomeHero, HomeRow, Details, Episodes, UpNext };
+// The single way playback starts: gates, logging, then Choose how to watch.
+void start_playback(const PlayRequest &req, PlayOrigin origin, bool replace_top = false, bool autostart = false);
 // Set by the player before it closes to return to the source list instead of leaving it.
 bool &player_wants_another_source();
 std::unique_ptr<Screen> make_player(const PlayRequest &request, const std::string &url, const std::string &source_label,

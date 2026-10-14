@@ -139,6 +139,35 @@ static void test_stall_and_recovery() {
   CHECK(s.phase() == Phase::Playing);
 }
 
+static void test_session_stats() {
+  FakePort port;
+  Session s;
+  long long t = 0;
+  start_playing(s, port, t);  // t = 400
+  MediaInfo info = info_with(600000);
+  s.on_event({MediaEvent::Time, 1000}, info, 1400);
+  s.tick(4900);                                   // no progress for 3.5 s: a stall begins
+  s.on_event({MediaEvent::Time, 1400}, info, 8900);  // and ends 4 s later
+  s.account(8900);
+  const SessionStats &st = s.stats();
+  CHECK(st.stalls == 1);
+  CHECK(st.stall_ms == 4000);
+  CHECK(st.watched_media_ms == 1400);
+  CHECK(st.play_wall_ms == 8500);
+  CHECK(st.first_frame_ms == 400);
+  // A seek's own wait is not a stall.
+  s.seek_to(60000, 9000);
+  s.tick(14000);
+  s.on_event({MediaEvent::SeekDone}, info, 14000);
+  s.account(14000);
+  CHECK(s.stats().stalls == 1);
+  CHECK(s.stats().seeks == 1 && s.stats().seeks_landed == 1);
+  SessionStats total;
+  total += s.stats();
+  total += s.stats();
+  CHECK(total.stalls == 2 && total.first_frame_ms == 400);
+}
+
 static void test_errors_and_timeouts() {
   FakePort port;
   Session s;
@@ -192,6 +221,8 @@ static void test_json() {
   CHECK(Json::quote("a\"b\\c\n") == "\"a\\\"b\\\\c\\n\"");
 }
 
+int run_play_tests();
+
 int main() {
   test_startup();
   test_clock_interpolates_but_caps();
@@ -199,10 +230,12 @@ int main() {
   test_seek_ack_from_time_report();
   test_acceleration_and_clamp();
   test_stall_and_recovery();
+  test_session_stats();
   test_errors_and_timeouts();
   test_tracks();
   test_end_and_replay();
   test_json();
+  failures += run_play_tests();
   if (failures) {
     std::printf("%d check(s) failed\n", failures);
     return 1;

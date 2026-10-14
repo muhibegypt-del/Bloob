@@ -2,6 +2,7 @@
 
 #include "http.h"
 #include "log.h"
+#include "ui.h"
 
 void Api::get(const std::string &path, Callback callback, const std::shared_ptr<void> &owner) {
   request("GET", path, "", std::move(callback), owner);
@@ -27,11 +28,17 @@ void Api::request(const std::string &method, const std::string &path, const std:
   std::string where = path.substr(0, path.find('?'));
   tasks_->run(
       [=]() -> std::function<void()> {
+        long long started = static_cast<long long>(SDL_GetTicks());
         HttpResponse res = http_request(method, port, path, body, 30000);
+        long long took = static_cast<long long>(SDL_GetTicks()) - started;
+        if (took > 20000) logf("api", "%s %s slow: %lld ms", method.c_str(), where.c_str(), took);
         auto result = std::make_shared<ApiResult>();
         result->status = res.status;
         if (res.status == 0) {
-          result->error = "Bloob's background service is not responding.";
+          // The service is local, so these say what happened to Bloob, not to the internet.
+          bool timeout = res.error.find("timed out") != std::string::npos;
+          result->error = timeout ? "Bloob's background service is taking too long to answer. Try again."
+                                  : "Bloob's background service is not responding.";
           logf("api", "%s %s failed: %s", method.c_str(), where.c_str(), res.error.c_str());
         } else {
           bool ok = false;
@@ -45,7 +52,12 @@ void Api::request(const std::string &method, const std::string &path, const std:
           }
         }
         if (!callback) return {};
-        return [callback, result] { callback(*result); };
+        return [callback, result] {
+          // Upstream failures while the TV is offline: say so plainly (read on the UI thread).
+          if (!result->ok() && result->status >= 500 && !ctx().online)
+            result->error = "You're offline. Check the TV's internet connection.";
+          callback(*result);
+        };
       },
       owner);
 }

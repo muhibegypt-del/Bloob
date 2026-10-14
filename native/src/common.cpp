@@ -1,5 +1,7 @@
 #include "common.h"
 
+#include <algorithm>
+#include <cstdio>
 #include <cstdlib>
 
 namespace {
@@ -11,7 +13,7 @@ void Backdrop::set(const std::string &url, bool immediate) {
   // Whatever is on screen now stays underneath while the new picture fades in.
   if (!current_.empty() && ctx().images.get(current_, W, H).texture) previous_ = current_;
   current_ = url;
-  if (immediate) {
+  if (immediate || ctx().reduce_motion) {  // Reduce motion cuts instead of crossfading
     fade_.snap(1);
     previous_.clear();
   } else {
@@ -40,6 +42,11 @@ void Backdrop::update(double dt) {
 
 void Backdrop::draw(float dim, float blur) {
   Ctx &c = ctx();
+  // Lite effects: no blurred copy; a darker dim reads the same behind text.
+  if (c.lite() && blur > 0) {
+    dim = std::max(dim, 0.45f * blur);
+    blur = 0;
+  }
   c.gfx.fill_rect(0, 0, W, H, theme::ground);
   auto layer = [&](const std::string &url, float alpha) {
     if (url.empty() || alpha <= 0.01f) return;
@@ -102,6 +109,13 @@ int draw_title(const Item &item, int x, int top, int box_w, int box_h, float alp
   return top + box_h;
 }
 
+int runtime_minutes(const std::string &runtime) {
+  // Cinemeta gives "145 min" (films) or "45" (series); "2h 25m" is handled too.
+  int h = 0, m = 0;
+  if (std::sscanf(runtime.c_str(), "%dh %dm", &h, &m) == 2) return h * 60 + m;
+  return std::max(0, std::atoi(runtime.c_str()));
+}
+
 std::string runtime_text(const std::string &runtime) {
   int minutes = std::atoi(runtime.c_str());
   if (minutes <= 0) return runtime;
@@ -120,4 +134,18 @@ std::string meta_line(const Item &item) {
   if (item.series()) parts.push_back("Series");
   else if (!item.runtime.empty()) parts.push_back(runtime_text(item.runtime));
   return join(parts);
+}
+
+std::string meta_key(const Item &item) { return item.type + ":" + item.id; }
+
+void prefetch_meta(const Item &item) {
+  Ctx &c = ctx();
+  std::string key = meta_key(item);
+  if (item.id.empty() || item.type.empty() || !c.api.ready() || c.meta_cache.get(key, c.now) || c.meta_cache.in_flight.count(key)) return;
+  c.meta_cache.in_flight.insert(key);
+  c.api.get("/api/meta?type=" + item.type + "&id=" + item.id, [key](const ApiResult &r) {
+    Ctx &x = ctx();
+    x.meta_cache.in_flight.erase(key);
+    if (r.ok()) x.meta_cache.put(key, r.json, x.now);
+  }, nullptr);
 }

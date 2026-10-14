@@ -7,6 +7,8 @@
 
 #include "common.h"
 #include "log.h"
+#include "pairing.h"
+#include "play.h"
 #include "screens.h"
 
 namespace {
@@ -77,12 +79,37 @@ class BrowseScreen : public Screen {
       build_featured();
       reset_focus();
       logf("browse", "%s: %zu rows", name(), rows_.size());
+      if (kind_ == Browse::Home && state_ == State::Ready) ctx().mark("home-data");
     }, alive_);
+  }
+
+  // Identity of a card: the title, plus the episode for Continue watching.
+  static std::string card_id(const Row &row, int col) {
+    if (row.continue_row()) {
+      const Resume &r = row.resume[static_cast<size_t>(col)];
+      return r.item.id + "|" + r.video_id;
+    }
+    return row.items[static_cast<size_t>(col)].id;
+  }
+  // Where that card is now; the same title (a different episode) if the exact one has gone.
+  static int find_card(const Row &row, const std::string &id, int fallback) {
+    int count = static_cast<int>(row.size());
+    for (int i = 0; i < count; i++)
+      if (card_id(row, i) == id) return i;
+    std::string title = id.substr(0, id.find('|')) + "|";
+    for (int i = 0; i < count; i++)
+      if (card_id(row, i).compare(0, title.size(), title) == 0) return i;
+    return std::max(0, std::min(fallback, count - 1));
   }
 
   void refresh_continue() {
     ctx().api.get("/api/progress", [this](const ApiResult &r) {
       if (!r.ok()) return;
+      // Remember what the viewer was on by identity, not position: the title just
+      // watched moves to the front of the row.
+      bool on_continue = !hero_ && row_ == 0 && !rows_.empty() && rows_[0].continue_row();
+      std::string was = on_continue ? card_id(rows_[0], cols_[0]) : "";
+      std::string feature_was = featured_.empty() ? "" : featured_[static_cast<size_t>(feature_)].item.id;
       std::vector<Resume> items;
       for (size_t i = 0; i < r.json["items"].size(); i++) items.push_back(parse_resume(r.json["items"][i]));
       bool had = !rows_.empty() && rows_[0].continue_row();
@@ -93,7 +120,9 @@ class BrowseScreen : public Screen {
         row_ = std::max(0, row_ - 1);
       } else if (had) {
         rows_[0].resume = items;
-        cols_[0] = std::min<int>(cols_[0], static_cast<int>(items.size()) - 1);
+        int count = static_cast<int>(items.size());
+        cols_[0] = was.empty() ? std::min(cols_[0], count - 1) : find_card(rows_[0], was, cols_[0]);
+        hscroll_[0].snap(static_cast<float>(std::min(cols_[0], std::max(0, count - 4))));
       } else if (!items.empty()) {
         Row row;
         row.id = "continue";
@@ -106,6 +135,8 @@ class BrowseScreen : public Screen {
       }
       vscroll_.snap(static_cast<float>(row_));
       build_featured();
+      for (int i = 0; i < static_cast<int>(featured_.size()); i++)
+        if (featured_[static_cast<size_t>(i)].item.id == feature_was) feature_ = i;
       if (hero_) show_featured(true);
       else show_focused(true);
     }, alive_);
@@ -190,6 +221,8 @@ class BrowseScreen : public Screen {
     text_in_.to(1);
     // Warm the title art so it arrives with the backdrop.
     if (!shown_.item.logo.empty()) ctx().images.prefetch(shown_.item.logo, 760, 240, 0, Fit::Contain);
+    // Focus has rested here: fetch the title's details so Details opens complete.
+    prefetch_meta(shown_.item);
   }
 
   // ---------------------------------------------------------------- actions
@@ -212,24 +245,7 @@ class BrowseScreen : public Screen {
     return b;
   }
 
-  void play_resume(const Resume &r) {
-    PlayRequest req;
-    req.item = r.item;
-    if (r.kind == "next" && r.next) {
-      req.video_id = r.next->video_id;
-      req.season = r.next->season;
-      req.episode = r.next->episode;
-      req.episode_title = r.next->title;
-    } else {
-      req.video_id = r.video_id;
-      req.season = r.season;
-      req.episode = r.episode;
-      req.episode_title = r.episode_title;
-      req.resume_ms = r.position;
-      req.next = r.next;
-    }
-    ctx().push(make_sources(req));
-  }
+  void play_resume(const Resume &r) { start_playback(play::continue_item(r), hero_ ? PlayOrigin::HomeHero : PlayOrigin::HomeRow); }
 
   void hero_action(int index) {
     auto buttons = hero_buttons();
@@ -240,10 +256,7 @@ class BrowseScreen : public Screen {
     } else if (shown_.has_resume) {
       play_resume(shown_.resume);
     } else {
-      PlayRequest req;
-      req.item = shown_.item;
-      req.video_id = shown_.item.id;
-      ctx().push(make_sources(req));
+      start_playback(play::film(shown_.item, {}, false), PlayOrigin::HomeHero);
     }
   }
 
@@ -257,12 +270,61 @@ class BrowseScreen : public Screen {
 
   bool key(Key key, bool repeat) override {
     idle_since_ = ctx().now;
+    if (pairing_.active()) return pairing_.key(key);
+    if (welcome_) return welcome_key(key, repeat);
     if (state_ != State::Ready) {
       if (state_ == State::Error && key == Key::Ok) load();
       return key == Key::Ok;
     }
     if (hero_) return hero_key(key, repeat);
     return rows_key(key, repeat);
+  }
+
+  // ---------------------------------------------------------------- first run
+
+  // Once, on Home, while nothing is paired: what AllDebrid is and why Bloob needs it.
+  void maybe_welcome() {
+    Ctx &c = ctx();
+    if (welcome_checked_ || state_ != State::Ready || !c.settings_loaded || !c.account_known) return;
+    welcome_checked_ = true;
+    welcome_ = kind_ == Browse::Home && !c.paired && !c.welcome_seen;
+    welcome_button_ = 0;
+  }
+
+  void dismiss_welcome() {
+    welcome_ = false;
+    ctx().welcome_seen = true;
+    ctx().save_settings();
+  }
+
+  bool welcome_key(Key key, bool repeat) {
+    if (key == Key::Left) welcome_button_ = 0;
+    if (key == Key::Right) welcome_button_ = 1;
+    if (key == Key::Back) dismiss_welcome();
+    if (key == Key::Ok && !repeat) {
+      bool connect = welcome_button_ == 0;
+      dismiss_welcome();
+      if (connect) pairing_.start([](bool) {});
+    }
+    return true;
+  }
+
+  void draw_welcome() {
+    Ctx &c = ctx();
+    c.gfx.fill_rect(0, 0, W, H, with_alpha(ground, 200));
+    int w = 1040, h = 470, x = (W - w) / 2, y = (H - h) / 2;
+    draw_panel(x, y, w, h);
+    text(Text::Title2, "Watch with your AllDebrid account", x + 56, y + 52, primary, w - 112);
+    int ty = paragraph(Text::Body,
+                       "Bloob finds the versions of a film or episode and prepares the one you pick through AllDebrid, "
+                       "a paid service you sign up for at alldebrid.com. Connect once with a short code; this TV remembers it.",
+                       x + 56, y + 122, secondary, w - 112, 4);
+    text(Text::Caption, "You can connect any time from Settings.", x + 56, ty + 14, tertiary, w - 112);
+    ButtonSpec connect{"Connect now", -1, welcome_button_ == 0};
+    ButtonSpec later{"Later", -1, welcome_button_ == 1};
+    int bx = x + 56, by = y + h - 112;
+    bx += draw_button(bx, by, connect) + 16;
+    draw_button(bx, by, later);
   }
 
   bool hero_key(Key key, bool repeat) {
@@ -367,6 +429,8 @@ class BrowseScreen : public Screen {
 
   void update(double dt) override {
     Ctx &c = ctx();
+    pairing_.update();
+    maybe_welcome();
     if (waiting_for_service_ && c.api.ready()) load();
     if (waiting_for_service_ && !c.service_error.empty()) {
       waiting_for_service_ = false;
@@ -379,7 +443,7 @@ class BrowseScreen : public Screen {
       else c.redraw_at(pending_at_ + dwell_ms);
     }
     // The featured title pages on by itself while nobody is using the remote.
-    if (state_ == State::Ready && hero_ && featured_.size() > 1) {
+    if (state_ == State::Ready && hero_ && featured_.size() > 1 && !c.reduce_motion) {
       if (c.now - idle_since_ >= kAutoAdvanceMs) {
         idle_since_ = c.now;
         feature_ = (feature_ + 1) % static_cast<int>(featured_.size());
@@ -417,6 +481,8 @@ class BrowseScreen : public Screen {
     draw_scrims(1.0f, static_cast<int>(lerp(480, 300, m)), 1.0f);
     draw_top(m);
     draw_rows(m);
+    if (welcome_) draw_welcome();
+    pairing_.draw();
   }
 
   void draw_skeleton() {
@@ -570,13 +636,16 @@ class BrowseScreen : public Screen {
   int row_ = 0;
   std::vector<int> cols_;
   std::vector<Anim> hscroll_;
-  Anim mode_{page_rate}, vscroll_{page_rate}, lift_{focus_rate}, prev_lift_{focus_rate}, text_in_{fade_rate, 1},
+  Anim mode_{page_rate}, vscroll_{page_rate}, lift_{focus_rate}, prev_lift_{focus_out_rate}, text_in_{fade_rate, 1},
       button_lift_{focus_rate, 1};
   int prev_row_ = -1, prev_col_ = -1;
   Shown pending_, shown_;
   long long pending_at_ = -1;
   long long idle_since_ = 0;
   Backdrop backdrop_;
+  Pairing pairing_;
+  bool welcome_ = false, welcome_checked_ = false;
+  int welcome_button_ = 0;
 };
 
 }  // namespace

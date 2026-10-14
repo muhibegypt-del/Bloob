@@ -27,6 +27,61 @@ describe('parseRelease', () => {
     expect(parseRelease('New.Film.2026.HDTS.x264').sourceType).toBe('TS');
   });
 
+  it('reads audio codecs stuck to their channel count', () => {
+    const cases = [
+      ['Film.2020.1080p.WEB.AAC2.0.x264', 'AAC', '2.0'],
+      ['Film.2020.1080p.BluRay.DTS5.1.x264', 'DTS', '5.1'],
+      ['Film.2020.1080p.WEB-DL.DDP5.1.H.264', 'Dolby Digital Plus', '5.1'],
+      ['Film.2020.1080p.BluRay.FLAC2.0.x264', 'FLAC', '2.0'],
+      ['Film.2020.2160p.BluRay.TrueHD7.1.Atmos', 'TrueHD', '7.1'],
+      ['Film.2020.1080p.WEB.Opus2.0.x265', 'Opus', '2.0'],
+      ['Film.2020.720p.HDTV.AC3.5.1.x264', 'Dolby Digital', '5.1'],
+      ['Film.2020.1080p.BluRay.DTS-HD.MA5.1.x264', 'DTS-HD MA', '5.1'],
+    ];
+    for (const [name, codec, channels] of cases) {
+      const parsed = parseRelease(name);
+      expect(parsed.audio, name).toContain(codec);
+      expect(parsed.channels, name).toBe(channels);
+    }
+  });
+
+  it('lets an explicit 1080p or 720p win over UHD', () => {
+    expect(parseRelease('Movie.2020.1080p.UHD.BluRay.x264-GRP').resolution).toBe('1080p');
+    expect(parseRelease('Movie.2020.UHD.720p.WEB').resolution).toBe('720p');
+    expect(parseRelease('Movie.2020.UHD.BluRay.x265').resolution).toBe('4K');
+    expect(parseRelease('Movie.2020.4K.HDR.WEB').resolution).toBe('4K');
+  });
+
+  it('reads REMUX wherever it appears', () => {
+    expect(parseRelease('Film.2019.1080p.BDRemux.AVC.DTS-HD.MA.5.1').sourceType).toBe('REMUX');
+    expect(parseRelease('Film.2019.1080p.BD-Remux.AVC').sourceType).toBe('REMUX');
+    expect(parseRelease('Film 2019 2160p UHD BluRay REMUX HEVC').sourceType).toBe('REMUX');
+  });
+
+  it('does not take the source from a title word', () => {
+    expect(parseRelease('Cam.2018.1080p.NF.WEB-DL.DDP5.1.H.264-GRP').sourceType).toBe('WEB-DL');
+    expect(parseRelease('Charlottes.Web.1973.DVDRip.x264').sourceType).toBe('DVD');
+    expect(parseRelease('Web.Therapy.S01E01.720p.HDTV.x264').sourceType).toBe('HDTV');
+    expect(parseRelease('Cam.2018').sourceType).toBeUndefined();
+    // Words no title uses still count anywhere.
+    expect(parseRelease('[HDCAM] New Film 2026').sourceType).toBe('CAM');
+  });
+
+  it('flags 3D versions, disc images and samples', () => {
+    expect(parseRelease('Avatar.2009.1080p.3D.HSBS.BluRay.x264').threeD).toBe(true);
+    expect(parseRelease('Film.2012.1080p.BluRay.Half-SBS.x264').threeD).toBe(true);
+    expect(parseRelease('Film.2012.1080p.BluRay.H-OU.x264').threeD).toBe(true);
+    expect(parseRelease('Film.2012.1080p.3D.BluRay.SBS').threeD).toBe(true);
+    // "3D" in the title of a flat release is not a claim.
+    expect(parseRelease('Step.Up.3D.2010.1080p.BluRay.x264').threeD).toBeUndefined();
+    expect(parseRelease('Film.2020.COMPLETE.UHD.BLURAY-GRP').discImage).toBe(true);
+    expect(parseRelease('Film.2020.COMPLETE.BLURAY-GRP').discImage).toBe(true);
+    expect(parseRelease('Film.2020.1080p.BluRay.iso').discImage).toBe(true);
+    expect(parseRelease('Film 2020 BDMV').discImage).toBe(true);
+    expect(parseRelease('Film.2020.1080p.WEB-DL.sample.mkv').sample).toBe(true);
+    expect(parseRelease('Film.2020.1080p.WEB-DL.mkv')).toMatchObject({ threeD: undefined, discImage: undefined, sample: undefined });
+  });
+
   it('does not invent properties', () => {
     expect(parseRelease('Some Movie')).toEqual({
       resolution: undefined, hdr: undefined, videoCodec: undefined, audio: undefined, channels: undefined, container: undefined, sourceType: undefined,
@@ -62,6 +117,23 @@ describe('parseStream', () => {
       infoHash: HASH, fileIdx: 2,
     }, 'Torrentio');
     expect(candidate).toMatchObject({ pack: true, fileName: 'Show.S01E03.1080p.BluRay.x264-GRP.mkv', fileIdx: 2, seeders: 31, sizeBytes: 2_100_000_000, languages: [] });
+  });
+
+  it('reads the source from the release name, not from a title word in the file name', () => {
+    const candidate = parseStream({
+      title: 'Charlottes.Web.1973.DVDRip.x264-GRP\n👤 12 💾 1.4 GB ⚙️ X',
+      infoHash: HASH,
+      behaviorHints: { filename: 'Charlottes.Web.1973.DVDRip.x264-GRP.mkv' },
+    }, 'X');
+    expect(candidate.sourceType).toBe('DVD');
+  });
+
+  it('carries 3D, disc image and sample claims', () => {
+    const claims = (title) => parseStream({ title, infoHash: HASH }, 'X').claims;
+    expect(claims('Avatar.2009.1080p.3D.HSBS.BluRay.x264')).toMatchObject({ threeD: true });
+    expect(claims('Film.2020.COMPLETE.UHD.BLURAY-GRP')).toMatchObject({ discImage: true });
+    expect(claims('Film.2020.1080p.WEB-DL.sample')).toMatchObject({ sample: true });
+    expect(claims('Film.2020.1080p.WEB-DL')).not.toHaveProperty('threeD');
   });
 
   it('prefers the indexer-reported byte size', () => {

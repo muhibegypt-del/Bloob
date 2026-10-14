@@ -7,11 +7,13 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <ctime>
 
 #include "common.h"
 #include "log.h"
 #include "luna.h"
 #include "media.h"
+#include "play.h"
 #include "screens.h"
 #include "session.h"
 
@@ -20,6 +22,7 @@ namespace {
 using namespace theme;
 
 constexpr long long kSaveEveryMs = 15000;
+constexpr long long kPrepareNextBeforeEndMs = 150000;  // start finding the next episode in the credits
 constexpr long long kUpNextMs = 10000;
 constexpr long long kBufferingDelayMs = 500;
 constexpr int kMaxReloads = 3;
@@ -40,7 +43,14 @@ std::string language_name(const std::string &code) {
       {"tel", "Telugu"}, {"th", "Thai"}, {"tha", "Thai"}, {"vi", "Vietnamese"}, {"vie", "Vietnamese"},
       {"id", "Indonesian"}, {"ind", "Indonesian"}, {"ms", "Malay"}, {"may", "Malay"}, {"cs", "Czech"},
       {"cze", "Czech"}, {"hu", "Hungarian"}, {"hun", "Hungarian"}, {"ro", "Romanian"}, {"rum", "Romanian"},
-      {"uk", "Ukrainian"}, {"ukr", "Ukrainian"}, {"fa", "Persian"}, {"per", "Persian"}};
+      {"uk", "Ukrainian"}, {"ukr", "Ukrainian"}, {"fa", "Persian"}, {"per", "Persian"}, {"fas", "Persian"},
+      {"ell", "Greek"}, {"ces", "Czech"}, {"ron", "Romanian"}, {"msa", "Malay"}, {"nb", "Norwegian"},
+      {"nob", "Norwegian"}, {"nn", "Norwegian"}, {"nno", "Norwegian"}, {"hr", "Croatian"}, {"hrv", "Croatian"},
+      {"sr", "Serbian"}, {"srp", "Serbian"}, {"bg", "Bulgarian"}, {"bul", "Bulgarian"}, {"sk", "Slovak"},
+      {"slk", "Slovak"}, {"slo", "Slovak"}, {"et", "Estonian"}, {"est", "Estonian"}, {"lv", "Latvian"},
+      {"lav", "Latvian"}, {"lt", "Lithuanian"}, {"lit", "Lithuanian"}, {"sl", "Slovenian"}, {"slv", "Slovenian"},
+      {"is", "Icelandic"}, {"isl", "Icelandic"}, {"ice", "Icelandic"}, {"ca", "Catalan"}, {"cat", "Catalan"},
+      {"fil", "Filipino"}, {"tl", "Filipino"}, {"tgl", "Filipino"}};
   for (auto &n : names) if (code == n.first) return n.second;
   if (code.empty() || code == "und") return "Unknown language";
   return upper(code);
@@ -51,6 +61,12 @@ std::string codec_name(std::string codec) {
   if (codec == "EAC3" || codec == "E-AC-3") return "Dolby Digital Plus";
   if (codec == "AC3" || codec == "AC-3") return "Dolby Digital";
   if (codec.find("TRUEHD") != std::string::npos) return "Dolby TrueHD";
+  if (codec.rfind("DTS", 0) == 0 || codec.rfind("DCA", 0) == 0) return "DTS";
+  if (codec.find("AAC") != std::string::npos || codec.rfind("MP4A", 0) == 0) return "AAC";
+  if (codec == "FLAC") return "FLAC";
+  if (codec == "OPUS") return "Opus";
+  if (codec == "MP3" || codec == "MPEG" || codec == "MPGA") return "MP3";
+  if (codec.rfind("PCM", 0) == 0 || codec == "LPCM") return "PCM";
   return codec;
 }
 
@@ -59,15 +75,53 @@ std::string channels_name(int channels) {
          : channels ? std::to_string(channels) + " ch" : "";
 }
 
-// "English · Dolby Digital Plus 5.1"
+// What a track is for, beyond its language: commentary, forced, SDH.
+std::string track_role(const MediaTrack &t, bool audio) {
+  std::string title = upper(t.title);
+  auto has = [&](const char *w) { return title.find(w) != std::string::npos; };
+  if (t.commentary || has("COMMENTARY")) return "Commentary";
+  if (audio) return (has("DESCRI") || has("AUDIO DESC")) ? "Audio description" : "";
+  if (t.forced || has("FORCED")) return "Forced";
+  if (t.hearing_impaired || has("SDH") || has("HEARING")) return "SDH";
+  return "";
+}
+
+// "English · Dolby Digital Plus 5.1", "English · Commentary · AAC Stereo"
 std::string audio_label(const MediaTrack &t) {
-  return join({language_name(t.language), join({codec_name(t.codec), channels_name(t.channels)}, " ")});
+  return join({language_name(t.language), track_role(t, true), join({codec_name(t.codec), channels_name(t.channels)}, " ")});
 }
 
 std::string subtitle_label(const MediaTrack &t) {
   std::string kind = upper(t.codec);
   if (kind == "TEXT" || kind == "SUBTITLE") kind.clear();  // generic: says nothing
-  return join({language_name(t.language), kind});
+  return join({language_name(t.language), track_role(t, false), kind});
+}
+
+// Labels for a whole list: identical ones get "#2", "#3" so every row is distinct.
+std::vector<std::string> distinct_labels(const std::vector<MediaTrack> &tracks, bool audio) {
+  std::vector<std::string> base, out;
+  for (auto &t : tracks) base.push_back(audio ? audio_label(t) : subtitle_label(t));
+  for (size_t i = 0; i < base.size(); i++) {
+    int same = 1;
+    for (size_t j = 0; j < i; j++) same += base[j] == base[i];
+    out.push_back(same > 1 ? base[i] + " #" + std::to_string(same) : base[i]);
+  }
+  return out;
+}
+
+// A preference such as "English" matches a track whose code names that language.
+bool speaks(const MediaTrack &t, const std::string &language) {
+  return !language.empty() && language != "Off" && language_name(t.language) == language;
+}
+
+// "21:43" in the TV's local time.
+std::string wall_clock(long long offset_ms = 0) {
+  std::time_t now = std::time(nullptr) + static_cast<std::time_t>(offset_ms / 1000);
+  std::tm local{};
+  localtime_r(&now, &local);
+  char buf[8];
+  std::snprintf(buf, sizeof buf, "%02d:%02d", local.tm_hour, local.tm_min);
+  return buf;
 }
 
 class UmsPort : public PlayerPort {
@@ -105,6 +159,9 @@ class PlayerScreen : public Screen {
     zone_ = Zone::Timeline;
     error_focus_ = 0;
     resume_done_ = false;
+    resume_check_ = false;
+    tracks_applied_ = false;
+    sub_pos_sent_ = sub_pos_want_ = 0;
     up_next_ = false;
     opened_at_ = c.now;
     show_hud();
@@ -116,17 +173,22 @@ class PlayerScreen : public Screen {
     }
     place_video(0, 0);
     opened_ = true;
-    ums_.load(url_, c.app_id, window_id_, load_type_, [this](const MediaEvent &event) { on_media(event); });
+    // A reopen continues exactly where it was; a first start only past the resume threshold.
+    load_start_ = start_at_ >= (reconnecting_ ? 1000 : play::kResumeMinMs) ? start_at_ : 0;
+    ums_.load(url_, c.app_id, window_id_, load_type_, [this](const MediaEvent &event) { on_media(event); }, load_start_);
   }
 
   // Release the pipeline. `keep_window` when reopening straight away.
   void close(bool keep_window = false) {
     if (!opened_) return;
     save_progress();
+    Ctx &c = ctx();
+    session_.account(c.now);
+    total_ += session_.stats();
     ums_.unload();
     session_.close();
     opened_ = false;
-    Ctx &c = ctx();
+    if (!keep_window) log_quality();
     if (!keep_window && !window_id_.empty() && c.webos.destroy_exported_window) {
       c.webos.destroy_exported_window(window_id_.c_str());
       window_id_.clear();
@@ -137,7 +199,7 @@ class PlayerScreen : public Screen {
   // playing again, or while a seek is unconfirmed, the target is the truth;
   // the media clock still reads zero or the old position.
   long long viewer_position() const {
-    if (!session_.started() || !resume_done_) return start_at_;
+    if (!session_.started() || !resume_done_ || resume_check_) return start_at_;
     if (auto pending = session_.pending_ms()) return *pending;
     return session_.position_ms(ctx().now);
   }
@@ -156,6 +218,7 @@ class PlayerScreen : public Screen {
     }
     long long at = viewer_position();
     logf("player", "reloading at %lld ms (%s)", at, why);
+    total_reloads_++;
     start_at_ = at;
     reconnecting_ = true;
     lost_ = false;
@@ -202,17 +265,23 @@ class PlayerScreen : public Screen {
       logf("player", "seek to %lld ms landed at %lld ms after %lld ms", *pending, session_.position_ms(t), t - seek_started);
     if (event.kind == MediaEvent::VideoInfo || event.kind == MediaEvent::SourceInfo || event.kind == MediaEvent::Loaded)
       place_video(ums_.info().width, ums_.info().height);
-    // Continue where the viewer left off, once the pipeline is playing.
+    if ((event.kind == MediaEvent::SourceInfo || event.kind == MediaEvent::TrackSelected) && !tracks_applied_ &&
+        (!ums_.info().audio.empty() || !ums_.info().text.empty()))
+      apply_tracks();
+    // Continue where the viewer left off. The load asked the pipeline to start
+    // there; the first clock report shows whether it did, else seek.
     if (event.kind == MediaEvent::Playing && !resume_done_) {
       resume_done_ = true;
-      reconnecting_ = false;
+      playing_at_ = t;
       long long d = session_.duration_ms();
-      if (start_at_ >= 30000 && (d <= 0 || start_at_ < d * 95 / 100)) {
-        session_.seek_to(start_at_, t);
+      bool wanted = load_start_ > 0 && (reconnecting_ || d <= 0 || load_start_ < d * play::kResumeMaxPercent / 100);
+      if (wanted) {
+        resume_check_ = true;
         resumed_ = req_.resume_ms > 0;
-        logf("player", "continuing at %lld ms", start_at_);
       }
+      reconnecting_ = false;
     }
+    if (resume_check_ && event.kind == MediaEvent::Time) check_start(event.time_ms);
     if (event.kind == MediaEvent::Paused) save_progress();
     if (event.kind == MediaEvent::EndOfStream) {
       save_progress(true);
@@ -222,6 +291,71 @@ class PlayerScreen : public Screen {
       }
       show_hud();
     }
+  }
+
+  // Did the pipeline honour the start position in the load request? If not, seek there.
+  void check_start(long long at) {
+    resume_check_ = false;
+    if (std::llabs(at - load_start_) <= 10000) {
+      logf("player", "started at %lld ms from the load request", at);
+      return;
+    }
+    logf("player", "the load start was not honoured (at %lld ms); seeking to %lld ms", at, load_start_);
+    session_.seek_to(load_start_, ctx().now);
+  }
+
+  // Tracks for this pipeline: what the viewer chose before a reopen, else, on the
+  // first start, the preferred audio and subtitle languages from Settings.
+  void apply_tracks() {
+    tracks_applied_ = true;
+    const MediaInfo &info = ums_.info();
+    Ctx &c = ctx();
+    if (!preferences_applied_) {
+      preferences_applied_ = true;
+      bool current_fits = false;
+      for (auto &a : info.audio) current_fits = current_fits || (a.selected && speaks(a, c.language));
+      if (chosen_audio_ < 0 && !current_fits)
+        for (size_t i = 0; i < info.audio.size(); i++)
+          if (speaks(info.audio[i], c.language) && track_role(info.audio[i], true).empty()) {
+            chosen_audio_ = static_cast<int>(i);
+            break;
+          }
+      if (!chosen_text_ && c.subtitle_language != "Off") {
+        int any = -1;
+        for (size_t i = 0; i < info.text.size(); i++) {
+          if (!speaks(info.text[i], c.subtitle_language)) continue;
+          if (any < 0) any = static_cast<int>(i);
+          if (track_role(info.text[i], false) != "Forced") {
+            any = static_cast<int>(i);
+            break;
+          }
+        }
+        if (any >= 0) chosen_text_ = any;
+      }
+    }
+    if (chosen_audio_ >= 0 && chosen_audio_ < static_cast<int>(info.audio.size()) &&
+        !info.audio[static_cast<size_t>(chosen_audio_)].selected) {
+      logf("player", "audio track %d (%s)", chosen_audio_, audio_label(info.audio[static_cast<size_t>(chosen_audio_)]).c_str());
+      session_.select_audio(chosen_audio_);
+    }
+    if (chosen_text_ && *chosen_text_ < static_cast<int>(info.text.size()) && *chosen_text_ != session_.subtitle_index()) {
+      logf("player", "subtitles %d", *chosen_text_);
+      session_.select_text(*chosen_text_);
+    }
+  }
+
+  // One line per viewing, across reopens: what the viewer actually experienced.
+  void log_quality() {
+    const SessionStats &q = total_;
+    if (q.play_wall_ms > 0 || q.first_frame_ms >= 0 || q.start_failed) {
+      double ratio = q.play_wall_ms > 0 ? 100.0 * static_cast<double>(q.stall_ms) / static_cast<double>(q.play_wall_ms) : 0;
+      logf("qoe", "first frame %lld ms; stalls %d, %lld ms (%.2f%% of %lld s wanting to play); media watched %lld s; "
+           "seeks %d, %d landed, mean error %lld ms; reloads %d; start failed %s; dropped frames unknown",
+           q.first_frame_ms, q.stalls, q.stall_ms, ratio, q.play_wall_ms / 1000, q.watched_media_ms / 1000, q.seeks,
+           q.seeks_landed, q.seek_error_ms / std::max(1, q.seeks_landed), total_reloads_, q.start_failed ? "yes" : "no");
+    }
+    total_ = SessionStats{};
+    total_reloads_ = 0;
   }
 
   void place_video(int video_w, int video_h) {
@@ -254,25 +388,63 @@ class PlayerScreen : public Screen {
   }
 
   void play_next() {
-    if (!req_.next) return;
-    PlayRequest next;
-    next.item = req_.item;
-    next.video_id = req_.next->video_id;
-    next.season = req_.next->season;
-    next.episode = req_.next->episode;
-    next.episode_title = req_.next->title;
+    auto next = play::after(req_);
+    if (!next) return;
+    // The episode after that, from the title details fetched during the credits.
+    if (const Json *meta = ctx().meta_cache.get(meta_key(req_.item), ctx().now))
+      next->next = next_episode(parse_meta(*meta), next->video_id);
     close();
-    ctx().replace(make_sources(next, true));
+    start_playback(*next, PlayOrigin::UpNext, true, true);  // replaces this screen
+  }
+
+  // In the credits: rank the next episode's sources and start resolving the
+  // recommended one, so Up next starts in seconds. The source screen picks the
+  // job up if it recommends the same version.
+  void prepare_next() {
+    prepared_ = true;
+    if (!req_.next || !ctx().paired) return;
+    prefetch_meta(req_.item);
+    NextEpisode n = *req_.next;
+    std::string body = "{\"type\":" + Json::quote(req_.item.type) + ",\"videoId\":" + Json::quote(n.video_id) +
+                       ",\"language\":" + Json::quote(ctx().language);
+    if (int minutes = runtime_minutes(req_.item.runtime)) body += ",\"runtimeMinutes\":" + std::to_string(minutes);
+    body += "}";
+    logf("player", "preparing %s during the credits", episode_code(n.season, n.episode).c_str());
+    ctx().api.post("/api/sources/ranked", body, [this, n](const ApiResult &r) {
+      if (!r.ok()) return;
+      Ranking ranking = parse_ranking(r.json);
+      if (!ranking.recommended) return;
+      std::string headline = ranking.recommended->headline;
+      std::string start = "{\"candidate\":" + Json::quote(ranking.recommended->id) + ",\"season\":" + std::to_string(n.season) +
+                          ",\"episode\":" + std::to_string(n.episode) + "}";
+      ctx().api.post("/api/resolve/start", start, [n, headline](const ApiResult &j) {
+        std::string id = j.ok() ? j.json["id"].as_string() : "";
+        if (id.empty()) return;
+        ctx().prepared_next = Ctx::Prepared{n.video_id, id, headline, ctx().now};
+        logf("player", "next episode is being prepared");
+      }, alive_);
+    }, alive_);
   }
 
   // ---------------------------------------------------------------- controls
 
   enum class Zone { Timeline, Controls };
   enum class Panel { None, Audio, Subtitles };
+  // Full: title, timeline and controls. Reduced: the timeline alone, for a seek
+  // started from a clear picture.
+  enum class HudMode { Full, Reduced };
 
-  void show_hud() {
+  long long hud_timeout() const {
+    if (hud_mode_ == HudMode::Reduced) return hud_reduced_timeout_ms;
+    if (zone_ == Zone::Controls) return hud_controls_timeout_ms;
+    return hud_timeout_ms;
+  }
+
+  void show_hud(HudMode mode = HudMode::Full) {
+    // A reduced request never downgrades controls already shown in full.
+    if (!hud_ || mode == HudMode::Full) hud_mode_ = mode;
     hud_ = true;
-    hud_until_ = ctx().now + hud_timeout_ms;
+    hud_shown_at_ = ctx().now;
   }
 
   bool hud_pinned() const {
@@ -306,6 +478,16 @@ class PlayerScreen : public Screen {
       case Ctl::Toggle: return "";
     }
     return "";
+  }
+
+  void choose_track(int row) {
+    if (panel_ == Panel::Audio) {
+      chosen_audio_ = row;
+      session_.select_audio(row);
+    } else {
+      chosen_text_ = row - 1;
+      session_.select_text(row - 1);
+    }
   }
 
   void run_control(Ctl ctl) {
@@ -369,8 +551,7 @@ class PlayerScreen : public Screen {
       if (key == Key::Up) panel_index_ = std::max(0, panel_index_ - 1);
       if (key == Key::Down) panel_index_ = std::min(std::max(0, rows - 1), panel_index_ + 1);
       if (key == Key::Ok && rows > 0 && !repeat) {
-        if (panel_ == Panel::Audio) session_.select_audio(panel_index_);
-        else session_.select_text(panel_index_ - 1);
+        choose_track(panel_index_);
         panel_ = Panel::None;
       }
       if (key == Key::Back || key == Key::Left) panel_ = Panel::None;
@@ -387,7 +568,8 @@ class PlayerScreen : public Screen {
       default: break;
     }
     if (key == Key::Back) {
-      if (session_.cancel_preview()) { show_hud(); return true; }
+      if (hud_ && hud_mode_ == HudMode::Reduced && !session_.preview_ms()) { hud_ = false; return true; }
+      if (session_.cancel_preview()) { show_hud(hud_mode_); return true; }
       if (hud_ && session_.phase() == Phase::Playing && zone_ == Zone::Timeline) { hud_ = false; return true; }
       if (hud_ && zone_ == Zone::Controls) { zone_ = Zone::Timeline; show_hud(); return true; }
       exit();
@@ -397,12 +579,26 @@ class PlayerScreen : public Screen {
     int count = static_cast<int>(list.size());
     if (!hud_) {
       // First press only reveals the controls, except the obvious ones.
-      if (key == Key::Left || key == Key::Right) session_.nudge(key == Key::Right ? 1 : -1, t);
+      if (key == Key::Left || key == Key::Right) {
+        session_.nudge(key == Key::Right ? 1 : -1, t);
+        zone_ = Zone::Timeline;
+        show_hud(HudMode::Reduced);  // just the timeline while seeking from nothing
+        return true;
+      }
       if (key == Key::Ok && !repeat) session_.toggle();
       zone_ = key == Key::Down ? Zone::Controls : Zone::Timeline;
       control_ = 0;
       show_hud();
       return true;
+    }
+    if (hud_mode_ == HudMode::Reduced) {
+      if (key == Key::Left || key == Key::Right) {
+        session_.nudge(key == Key::Right ? 1 : -1, t);
+        show_hud(HudMode::Reduced);
+        return true;
+      }
+      show_hud(HudMode::Full);  // the viewer wants more than the timeline
+      if (key != Key::Down) return true;
     }
     show_hud();
     if (zone_ == Zone::Timeline) {
@@ -424,9 +620,18 @@ class PlayerScreen : public Screen {
     Ctx &c = ctx();
     long long t = c.now;
     if (session_.tick(t)) c.animating = true;
-    if (hud_ && t > hud_until_ && !hud_pinned()) hud_ = false;
+    // A reduced timeline hides a moment after the seek lands, not after the last key.
+    if (hud_ && hud_mode_ == HudMode::Reduced && (session_.preview_ms() || session_.pending_ms())) hud_shown_at_ = t;
+    long long hud_until = hud_shown_at_ + hud_timeout();
+    if (hud_ && t > hud_until && !hud_pinned()) hud_ = false;
     if (session_.phase() == Phase::Playing && t - last_save_ > kSaveEveryMs) save_progress();
-    if (up_next_ && t - up_next_at_ >= kUpNextMs) {
+    // No clock report after the start: the load option may not apply here.
+    if (resume_check_ && t - playing_at_ > 2000) check_start(session_.position_ms(t));
+    long long duration = session_.duration_ms();
+    if (!prepared_ && req_.next && c.autoplay_next && session_.phase() == Phase::Playing && duration > 0 &&
+        duration - session_.position_ms(t) <= kPrepareNextBeforeEndMs)
+      prepare_next();
+    if (up_next_ && c.autoplay_next && t - up_next_at_ >= kUpNextMs) {
       play_next();
       return;
     }
@@ -435,9 +640,33 @@ class PlayerScreen : public Screen {
     panel_anim_.to(panel_ != Panel::None ? 1.0f : 0.0f);
     if (hud_anim_.step(dt) | panel_anim_.step(dt)) c.animating = true;
     // Redraw for a visible moving clock (4×/s), the seek preview and countdowns.
-    if (session_.preview_ms() || up_next_ || session_.phase() == Phase::Buffering || !session_.started()) c.animating = true;
+    if (session_.preview_ms() || (up_next_ && c.autoplay_next) || session_.phase() == Phase::Buffering || !session_.started())
+      c.animating = true;
     else if (show) c.redraw_at((t / 250 + 1) * 250);
-    if (hud_ && !hud_pinned()) c.redraw_at(hud_until_ + 1);
+    if (hud_ && !hud_pinned()) c.redraw_at(hud_until + 1);
+    update_subtitle_position(t, show);
+  }
+
+  // Embedded subtitles are drawn by the TV under this window; lift them clear of
+  // the controls while those show. Undocumented call: one refusal turns it off.
+  void update_subtitle_position(long long t, bool shown) {
+    int want = !shown ? 0 : hud_mode_ == HudMode::Reduced ? 2 : 4;
+    if (want != sub_pos_want_) {
+      sub_pos_want_ = want;
+      sub_pos_since_ = t;
+    }
+    if (!sub_pos_supported_ || session_.subtitle_index() < 0 || sub_pos_want_ == sub_pos_sent_) return;
+    if (t - sub_pos_since_ < 300) {
+      ctx().redraw_at(sub_pos_since_ + 300);
+      return;
+    }
+    sub_pos_sent_ = sub_pos_want_;
+    std::weak_ptr<int> alive = alive_;
+    ums_.set_subtitle_position(sub_pos_sent_, [this, alive](bool ok) {
+      if (alive.expired() || ok || !sub_pos_supported_) return;
+      sub_pos_supported_ = false;
+      logf("player", "subtitle position not supported here; leaving subtitles where the TV puts them");
+    });
   }
 
   void draw() override {
@@ -487,10 +716,24 @@ class PlayerScreen : public Screen {
 
   void draw_hud(float a, Phase phase) {
     Ctx &c = ctx();
-    long long t = c.now;
-    c.gfx.gradient_v(0, H - 440, W, 440, rgba(0x000000), 0, static_cast<Uint8>(225 * a));
-    c.gfx.gradient_v(0, 0, W, 160, rgba(0x000000), static_cast<Uint8>(120 * a), 0);
+    bool reduced = hud_mode_ == HudMode::Reduced;
+    if (reduced) {
+      c.gfx.gradient_v(0, H - 300, W, 300, rgba(0x000000), 0, static_cast<Uint8>(170 * a));
+    } else {
+      // Bright scenes must not wash out the title: solid enough behind the text band.
+      c.gfx.gradient_v(0, H - 600, W, 240, rgba(0x000000), 0, static_cast<Uint8>(190 * a));
+      c.gfx.fill_rect(0, H - 360, W, 360, rgba(0x000000, static_cast<Uint8>(190 * a)));
+      c.gfx.gradient_v(0, H - 360, W, 360, rgba(0x000000), 0, static_cast<Uint8>(60 * a));
+      c.gfx.gradient_v(0, 0, W, 180, rgba(0x000000), static_cast<Uint8>(140 * a), 0);
+      text_right(Text::Callout, wall_clock(), W - margin, 52, fade(secondary, a));
+    }
+    if (!reduced) draw_hud_title(a);
+    draw_timeline(a, phase);
+    if (reduced) return;
+    draw_controls(a, phase);
+  }
 
+  void draw_hud_title(float a) {
     // Title and context, bottom-left; quiet stream badges on the right.
     std::string title = req_.item.series() ? req_.episode_title.empty() ? req_.item.name : req_.episode_title : req_.item.name;
     std::string sub = req_.item.series() ? join({req_.item.name, episode_code(req_.season, req_.episode)}) : join({req_.item.year, req_.item.genres.empty() ? "" : req_.item.genres[0]});
@@ -503,8 +746,11 @@ class PlayerScreen : public Screen {
       draw_badge(bx, H - 296, *it, fade(secondary, a));
       bx -= 10;
     }
+  }
 
-    // Timeline.
+  void draw_timeline(float a, Phase phase) {
+    Ctx &c = ctx();
+    long long t = c.now;
     long long display = session_.display_ms(t), duration = session_.duration_ms(), position = session_.position_ms(t);
     int tx = margin, tw = W - 2 * margin, ty = H - 214;
     bool timeline = zone_ == Zone::Timeline && panel_ == Panel::None;
@@ -532,6 +778,14 @@ class PlayerScreen : public Screen {
     if (phase == Phase::Seeking) text_center(Text::Callout, "Seeking\xE2\x80\xA6", W / 2, ty + 20, fade(secondary, a));
     else if (phase == Phase::Paused) text_center(Text::Callout, "Paused", W / 2, ty + 20, fade(secondary, a));
     else if (phase == Phase::Ended) text_center(Text::Callout, "Finished", W / 2, ty + 20, fade(secondary, a));
+  }
+
+  void draw_controls(float a, Phase phase) {
+    Ctx &c = ctx();
+    // When it ends, in wall-clock time, on the right of the controls row.
+    long long duration = session_.duration_ms(), left = duration - session_.display_ms(c.now);
+    if (duration > 0 && left > 0 && phase != Phase::Ended)
+      text_right(Text::Callout, "Ends at " + wall_clock(left), W - margin, H - 128 + 14, fade(tertiary, a));
 
     // Controls row: play/pause, then the track and episode pills.
     auto ctl = controls();
@@ -565,6 +819,7 @@ class PlayerScreen : public Screen {
     text(Text::Title2, panel_ == Panel::Audio ? "Audio" : "Subtitles", x + 40, y + 40, fade(primary, a));
     int ry = y + 112;
     if (panel_ == Panel::Audio && rows == 0) paragraph(Text::Callout, "This video reports no audio tracks.", x + 40, ry, fade(secondary, a), w - 80, 2);
+    auto labels = distinct_labels(panel_ == Panel::Audio ? info.audio : info.text, panel_ == Panel::Audio);
     int visible = (h - 150) / 76;
     int first = std::max(0, std::min(panel_index_ - visible / 2, rows - visible));
     for (int i = first; i < std::min(rows, first + visible); i++) {
@@ -572,13 +827,13 @@ class PlayerScreen : public Screen {
       std::string label;
       bool selected = false;
       if (panel_ == Panel::Audio) {
-        label = audio_label(info.audio[static_cast<size_t>(i)]);
+        label = labels[static_cast<size_t>(i)];
         selected = info.audio[static_cast<size_t>(i)].selected;
       } else if (i == 0) {
         label = "Off";
         selected = session_.subtitle_index() < 0;
       } else {
-        label = subtitle_label(info.text[static_cast<size_t>(i - 1)]);
+        label = labels[static_cast<size_t>(i - 1)];
         selected = session_.subtitle_index() == i - 1;
       }
       if (f) draw_row_focus(x + 20, ry, w - 40, 64);
@@ -641,6 +896,10 @@ class PlayerScreen : public Screen {
     text(Text::Title2, n.title, x, y + 98, secondary, 1200);
     ButtonSpec play{"Play now", kPlayIcon, true};
     int bw = draw_button(x, y + 170, play);
+    if (!c.autoplay_next) {
+      text(Text::Callout, "Back to stay", x + bw + 28, y + 190, secondary);
+      return;
+    }
     text(Text::Callout, "Starts in " + std::to_string(left) + " s  \xC2\xB7  Back to stay", x + bw + 28, y + 190, secondary);
     draw_progress(x, y + 270, 520, 6, static_cast<double>(elapsed) / kUpNextMs, focus);
   }
@@ -662,7 +921,8 @@ class PlayerScreen : public Screen {
   long long reload_window_start_ = 0;
   std::string failure_;
   bool hud_ = true;
-  long long hud_until_ = 0;
+  HudMode hud_mode_ = HudMode::Full;
+  long long hud_shown_at_ = 0;
   Zone zone_ = Zone::Timeline;
   int control_ = 0;
   Panel panel_ = Panel::None;
@@ -670,6 +930,18 @@ class PlayerScreen : public Screen {
   int error_focus_ = 0;
   long long last_save_ = 0;
   bool resume_done_ = false, resumed_ = false;
+  long long load_start_ = 0, playing_at_ = 0;
+  bool resume_check_ = false;  // waiting for the first clock report after a start position
+  // Tracks the viewer chose, kept across reopens; preferences apply once.
+  int chosen_audio_ = -1;
+  std::optional<int> chosen_text_;  // -1 = off
+  bool tracks_applied_ = false, preferences_applied_ = false;
+  int sub_pos_sent_ = 0, sub_pos_want_ = 0;
+  long long sub_pos_since_ = 0;
+  bool sub_pos_supported_ = true;
+  bool prepared_ = false;
+  SessionStats total_;
+  int total_reloads_ = 0;
   bool up_next_ = false;
   long long up_next_at_ = 0;
   Anim hud_anim_{fade_rate, 1}, panel_anim_{fade_rate};

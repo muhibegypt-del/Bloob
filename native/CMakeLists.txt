@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(bloob_native VERSION 1.1.0 LANGUAGES C CXX)
+project(bloob_native VERSION 1.2.0 LANGUAGES C CXX)
 
 # Cross-compile for the TV with the webOS NDK (openlgtv buildroot-nc4):
 #   cmake -B build -DCMAKE_TOOLCHAIN_FILE=/opt/arm-webos-linux-gnueabi_sdk-buildroot/share/buildroot/toolchainfile.cmake
@@ -12,13 +12,14 @@ if (NOT CMAKE_BUILD_TYPE)
 endif ()
 
 add_compile_options(-Wall -Wextra -Wno-unused-parameter -Wno-missing-field-initializers)
+add_compile_definitions(BLOOB_VERSION="${PROJECT_VERSION}")
 if (CMAKE_CROSSCOMPILING)
   # GCC notes that ARM parameter passing changed in GCC 7; irrelevant with a static C++ runtime.
   add_compile_options(-Wno-psabi)
 endif ()
 
 # Platform-free core, shared by the app and the tests.
-add_library(buna_core STATIC src/session.cpp src/json.cpp src/log.cpp src/model.cpp)
+add_library(buna_core STATIC src/session.cpp src/json.cpp src/log.cpp src/model.cpp src/play.cpp)
 target_include_directories(buna_core PUBLIC src)
 
 # The app: shell, renderer, screens and media. The TV build talks to the real
@@ -72,7 +73,7 @@ else ()
     target_link_libraries(bloob_host PRIVATE buna_core ${SDL2_LIBRARIES} pthread dl)
   endif ()
   enable_testing()
-  add_executable(native_tests tests/session_test.cpp)
+  add_executable(native_tests tests/session_test.cpp tests/play_test.cpp)
   target_link_libraries(native_tests PRIVATE buna_core)
   add_test(NAME native_tests COMMAND native_tests)
 endif ()

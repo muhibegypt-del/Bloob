@@ -2,7 +2,7 @@
 
 Bloob, split into its actual layers. For each layer this file records what the layer does, which files it lives in, what works and how we know, what is missing, and the next small changes. Work one layer at a time. Cite the increment ID (for example **9.2**) in the commit. When a change lands or is tested on the TV, update the layer's state here.
 
-Snapshot: **1.1.0**, 13 October 2026, branch `claude/sleepy-ptolemy-o87vgv`.
+Snapshot: **1.2.0**, 14 October 2026, branch `claude/sleepy-ptolemy-o87vgv`. Rows marked *(1.2)* are new in 1.2.0; the item IDs (F1, P3, U6…) are from the consolidated list in [`IMPLEMENTATION-UX.md`](IMPLEMENTATION-UX.md#status-in-120).
 
 How good each layer is, against a researched definition of quality, is in [`QUALITY.md`](QUALITY.md). The concrete build plan for responsiveness and continuity (U0 to U9) is in [`IMPLEMENTATION-UX.md`](IMPLEMENTATION-UX.md). Re-score a layer there when you change it.
 
@@ -20,6 +20,7 @@ How good each layer is, against a researched definition of quality, is in [`QUAL
 - **0.3:** proved the window, remote, luna, uMediaServer and test-clip path.
 - **0.4:** the owner reported that the app worked, with jaggies, some bugs, and playback dying after the LG quick menu.
 - **1.1:** answers that report. It has **not yet run on the TV**, so almost everything 1.1 changed is *Desktop* at best.
+- **1.2:** the consolidated implementation list (fixes, platform items, responsiveness, comfort). Also **not yet run on the TV**.
 
 ## The layers at a glance
 
@@ -39,14 +40,14 @@ How good each layer is, against a researched definition of quality, is in [`QUAL
 | 2 | UI: visual system | Desktop | Legibility and contrast at viewing distance on OLED |
 | 3 | Home and browse | Desktop; TV (user) for 0.4 | Rows are a fixed list; no "see all" |
 | 4 | Search | Desktop | No voice input |
-| 5 | Details, seasons, episodes | Desktop | Season pills past the screen edge are cut off |
+| 5 | Details, seasons, episodes | Desktop | Season strip scrolling not yet seen on a many-season title |
 | 6 | Sources and pairing | Desktop | Whether a source is cached on AllDebrid is unknown until resolving |
 | 7 | Player screen | Desktop | No thumbnails; tracks only as the TV reports them |
-| 8 | Settings and diagnostics | Desktop | Only one preference |
-| 9 | Player engine (Buna N2) | TV ✓ test clip; real files Untested | Preferred audio not applied; tracks not restored after a reconnect |
+| 8 | Settings and diagnostics | Desktop | None of the new preferences tried on the TV |
+| 9 | Player engine (Buna N2) | TV ✓ test clip; real files Untested | Start-position option and subtitle position unverified on the TV |
 | 10 | App shell and lifecycle | TV (user) for 0.4; 1.1 lifecycle Desktop | The quick-menu fix needs a TV check |
 | 11 | Remote input | TV ✓ D-pad and Back | Magic Remote pointer ignored |
-| 12 | Rendering engine | TV ✓ for 0.3/0.4; 1.1 smoothing Desktop | Only Latin-1 characters can be drawn |
+| 12 | Rendering engine | TV ✓ for 0.3/0.4; 1.1 smoothing Desktop | Chinese, Japanese and Korean have no font (drawn as ?) |
 | 13 | Artwork pipeline | TV (user); Desktop | Memory headroom on the TV unmeasured |
 | 14 | Data, workers and system bus | TV ✓ luna; Desktop for the rest | Model parsing has no tests |
 | 15 | Service core and security | TV (user) for 0.4 | Bus start versus fallback start unmeasured |
@@ -54,9 +55,9 @@ How good each layer is, against a researched definition of quality, is in [`QUAL
 | 17 | Sources and ranking | Desktop (fixtures) | One indexer; weights untuned on real results |
 | 18 | AllDebrid pairing and resolving | Web app TV (user); native Untested | Pairing must survive a restart on the TV |
 | 19 | Progress and settings store | Desktop | One profile; files never pruned |
-| 20 | Platform and packaging | TV ✓ | No `requiredACG` in appinfo (works today; may be required later) |
+| 20 | Platform and packaging | TV ✓ | `requiredACG` waits for `acg-lookup.sh` output from the TV |
 | 21 | Testing and tooling | Desktop | The tour takes pictures but checks nothing; no CI |
-| 22 | Observability | TV ✓ log over SSH; Desktop for the rest | No metrics, memory or frame-time sampling |
+| 22 | Observability | TV ✓ log over SSH; Desktop for the rest | No memory sampling; dropped frames unknown |
 | 23 | External services | — | Every one is a third party we do not control |
 | 24 | Web app (legacy, `tv-app/src`) | TV (user) 0.2 | Decide whether to freeze it |
 
@@ -83,12 +84,14 @@ How good each layer is, against a researched definition of quality, is in [`QUAL
 | Returning restores focus, scroll and backdrop (screens stay alive under the next) | Desktop |
 | After an episode ends, details offers the next one, with the last marked watched | Desktop |
 | Done by a real person, at the sofa | Missing |
+| *(1.2)* One Play owner (`play.h`): Home, Details, the episode row and Up next all go through `start_playback`; resume rules live in one place (U2) | Desktop (unit tests) |
+| *(1.2)* Reduce motion: no slides, zooms, card lift or hero slideshow (U8) | Desktop |
 
 **Gaps:**
 - No watchlist ("My list").
 - No way to remove an item from Continue watching, or to mark something watched by hand.
 - Colour and number keys do nothing.
-- No first-run explanation.
+- ~~No first-run explanation.~~ 1.2 adds a one-time AllDebrid note on Home (G1).
 
 **Next:**
 - **1.1** Run `TV-TEST.md` §1 with someone who has not seen Bloob. Turn every hesitation into an increment on the right layer.
@@ -111,6 +114,8 @@ How good each layer is, against a researched definition of quality, is in [`QUAL
 | Focus: lift ×1.08, ring, white button | Desktop |
 | Designed states: skeleton, missing art, errors, reconnecting | Desktop |
 | Seen at viewing distance | Missing |
+| *(1.2)* Type floor 22 px: Caption 23, Footnote and Eyebrow 22 (G5) | Desktop |
+| *(1.2)* Effects tiers: two slow 5 s windows (render p95 over 25 ms) turn shadows and blur off for the session (U8) | Desktop |
 
 **Gaps:**
 - The settings icon reads as a sun.
@@ -139,6 +144,9 @@ How good each layer is, against a researched definition of quality, is in [`QUAL
 | The backdrop follows focus after 250 ms; rows above the focused one fade | Desktop |
 | Continue watching: resume, or the next episode | Desktop |
 | Skeleton while loading; error with Try again | Desktop |
+| *(1.2)* Focus kept on the same card by identity when Continue watching refreshes (F4) | Desktop |
+| *(1.2)* Title details prefetched once focus rests on a card; Details opens from the cache (U4) | Desktop |
+| *(1.2)* One-time note explaining AllDebrid when nothing is paired: Connect now / Later (G1; no QR code) | Desktop |
 
 **Gaps:**
 - Shelves are a fixed list in `catalog.js`.
@@ -164,6 +172,7 @@ How good each layer is, against a researched definition of quality, is in [`QUAL
 | On-screen keyboard (6 columns) and 3-column results grid | Desktop |
 | Searches 450 ms after the last key | Desktop |
 | Recent searches, saved in settings | Desktop |
+| *(1.2)* Keyboard gives way: it slides off, the query stays as a chip, results widen to 4 columns; landing, waiting, results and empty states (U9) | Desktop |
 
 **Gaps:**
 - No voice search with the LG mic.
@@ -189,6 +198,8 @@ How good each layer is, against a researched definition of quality, is in [`QUAL
 | Down lifts the page into season pills and episode cards; About strip at the foot | Desktop |
 | Watched checks and resume bars on episodes | Desktop |
 | Specials last | Desktop (service) |
+| *(1.2)* Season strip scrolls to keep the selected season visible, with chevrons for more (F3/U5) | Untested (tour title has one season) |
+| *(1.2)* The main button comes from `play::title_default` (latest unfinished, else next, else first regular episode) (U2) | Desktop (unit tests) |
 
 **Gaps:**
 - **Season pills that do not fit across the screen are not drawn**, so shows with many seasons cannot reach the later ones. This is a real bug (`draw_episodes`, `if (sx + w > W - margin) break;`).
@@ -216,6 +227,8 @@ How good each layer is, against a researched definition of quality, is in [`QUAL
 | Release details drawer, opened with Right | Desktop |
 | Pairing PIN sheet, then continues straight to the chosen source | Desktop (fixtures) |
 | Resolve sheet with steps and progress. Asks for a file or quality when needed. On failure, "Try the next best". | Desktop (fixtures) |
+| *(1.2)* "1 seeder", plain digits; TV format warnings for DTS, TrueHD Atmos, disc Dolby Vision, 3D, disc images, samples and bitrate against 95 Mbps Ethernet (F5, P3, P4) | Desktop (unit tests) |
+| *(1.2)* A next episode prepared during the credits is picked up instead of starting a new job (U10) | Untested |
 
 **Gaps:**
 - Nothing shows whether a release is already cached on AllDebrid (instant) or must download.
@@ -246,15 +259,19 @@ How good each layer is, against a researched definition of quality, is in [`QUAL
 | Error panel: Try again, Choose another version, Exit | Desktop |
 | Reconnecting screen after the TV drops the stream | Desktop |
 | Playback of the test clip | TV ✓ (0.3) |
+| *(1.2)* Title on a solid scrim band so bright scenes cannot wash it out (F6) | Desktop |
+| *(1.2)* Seeking from a clear picture shows only the timeline, which hides 2 s after landing; resting on the controls row keeps them 12 s (U6) | Desktop |
+| *(1.2)* Wall clock top right and "Ends at" beside the controls (G3) | Desktop |
+| *(1.2)* Track labels name commentary, forced and SDH tracks, more codecs and languages, and number duplicates "#2" (G2) | Desktop |
+| *(1.2)* Up next follows the autoplay setting; the next episode is ranked and resolved in the last 150 s (U10) | Desktop (UI); preparation Untested |
 
 **Gaps:**
 - No seek thumbnails.
-- No clock or "ends at" time (the web app had one).
 - No subtitle size or style.
 - No skip-intro or skip-recap.
 
 **Next:**
-- **7.1** Add the clock and "ends at" to the controls.
+- **7.1** ~~Add the clock and "ends at" to the controls.~~ Done in 1.2 (G3).
 - **7.2** Subtitle size and background, once **9.4** shows the TV can render them.
 
 ### 8. Settings and diagnostics
@@ -271,6 +288,8 @@ How good each layer is, against a researched definition of quality, is in [`QUAL
 | Preferred audio language (Left/Right) | Desktop. It only affects ranking; see **9.2**. |
 | Diagnostics: display, remote keys, recent log | Desktop |
 | Version and TV model | Desktop |
+| *(1.2)* Rows: preferred audio, subtitles language, autoplay next episode, Reduce motion, Disconnect AllDebrid (OK twice), About (version, credits, licences) (G4, U8) | Desktop |
+| *(1.2)* Diagnostics shows the effects tier, the last `[perf]` window and the network type | Desktop |
 
 **Gaps:**
 - No subtitle language.
@@ -315,6 +334,11 @@ How good each layer is, against a researched definition of quality, is in [`QUAL
 | Pipeline lost → reopen at the same position, at most 3 per minute | Desktop (simulated `unloadCompleted`) |
 | Resume from ≥30 s below 95%; progress every 15 s, on pause and on exit | Desktop |
 | First-frame and seek-landing times in the log | Desktop |
+| *(1.2)* Chosen audio and subtitle tracks re-applied after a reconnect; preferred audio and subtitle languages applied at start (F7) | Desktop (simulated events) |
+| *(1.2)* Start position sent in the load request (`transmission.playTime.start`); seek fallback if the first clock report is elsewhere; load retried without it if refused (P5) | Desktop; TV Untested |
+| *(1.2)* `policyAction` treated as a lost pipeline; unknown event keys logged once each with their value (P2) | Desktop |
+| *(1.2)* Subtitle position follows the controls: 0 hidden, 2 reduced, 4 full; switched off after one refusal (U7) | Untested (undocumented call) |
+| *(1.2)* QoE accounting across reconnects: stalls and stall time, time wanting to play, media watched, seeks and landing error, reloads; one `[qoe]` line per viewing (U1) | Desktop (unit tests) |
 
 **Gaps:**
 - The preferred audio language is not chosen at start.
@@ -354,6 +378,8 @@ How good each layer is, against a researched definition of quality, is in [`QUAL
 | Service start over the bus, with a fork/exec fallback that runs the TV's Node | TV (user) for 0.4, which did not say which path ran |
 | Launch parameters `{uri, title, autoplay, loadType}` play a link directly | Desktop; untested on the TV |
 | Scripted runs (`BLOOB_SCRIPT`: key, wait, media, window, snap) | Desktop |
+| *(1.2)* `[launch]` marks: window, fonts, service, home-data, home-frame (U1) | Desktop |
+| *(1.2)* Connection Manager subscription sets online and wired/wifi; offline turns service errors into "You're offline" (P6) | Untested |
 
 **Gaps:**
 - Startup time is unmeasured.
@@ -408,6 +434,8 @@ How good each layer is, against a researched definition of quality, is in [`QUAL
 | Inter in 4 weights; exact-size glyphs, 2× oversampling ≤48 px, gamma lift, kerning | Desktop; TV (user) reported jaggies in 0.4, before this change |
 | Exact-size anti-aliased discs, rings, triangles; soft shadows; gradients | Desktop |
 | Layer capture for page transitions | Desktop |
+| *(1.2)* Glyphs beyond Latin-1 baked on demand (Polish, Czech, Greek, Cyrillic…), capped at 2,000 per size (F8) | Desktop |
+| *(1.2)* Shadows off in the Lite tier; `BLOOB_EFFECTS=full` pins the tier for desktop renders | Desktop |
 
 **Gaps:**
 - **The glyph atlas covers Latin-1 and a few symbols only** (`atlas_codepoints`). Polish, Czech, Turkish, Greek, Cyrillic, Arabic, CJK and so on show as missing characters.
@@ -463,6 +491,8 @@ How good each layer is, against a researched definition of quality, is in [`QUAL
 | HTTP to the local service, worker pools, owner-guarded results | TV (user) for 0.4; Desktop |
 | JSON parser | Unit tests |
 | Model parsing | Desktop only (no unit tests) |
+| *(1.2)* Chunked-response parser rejects oversized chunk lengths (F1) | Desktop |
+| *(1.2)* Slow requests (over 20 s) logged; status-0 errors split into timed out and not responding (P6) | Desktop |
 
 **Gaps:**
 - No unit tests for the model parsers.
@@ -550,6 +580,8 @@ How good each layer is, against a researched definition of quality, is in [`QUAL
 | Release parser (both Torrentio formats) | Unit tests |
 | Ranker: one recommendation with a reason; cinema recordings and zero-seeder releases excluded | Unit tests; Desktop with fixtures |
 | Live Torrentio results | Not reachable from build machines. TV (user) in the web app. |
+| *(1.2)* TV profile table (`tv-profile.js`, `lg-2022-oled`) drives warnings; all weights in one `WEIGHTS` table; bitrate from size over running time; a DTS-only version is never recommended while one with playable sound exists (P3) | Desktop (unit tests) |
+| *(1.2)* Parser: 3D, disc image and sample claims; ambiguous source words read only after the title (P4) | Desktop (unit tests) |
 
 **Gaps:**
 - One indexer, called directly.
@@ -577,6 +609,7 @@ How good each layer is, against a researched definition of quality, is in [`QUAL
 | Persistent storage with verified writes and per-folder diagnostics | Unit tests; **TV restart test pending** |
 | Resolve jobs with progress, cancelling, and asking for a file or quality | Unit tests; Desktop (fixtures) |
 | Revoked key detected; asks to pair again | Overwrite is unit-tested; detection only reviewed in code |
+| *(1.2)* `POST /api/account/unpair` forgets the key and writes an unpaired mark so the shared web-app pairing is not reloaded; nothing is deleted (G4) | Desktop (route test) |
 
 **Gaps:**
 - Persistence for the native app (`com.muhib.bloob`) on the TV is unproven.
@@ -600,6 +633,7 @@ How good each layer is, against a researched definition of quality, is in [`QUAL
 | Position, duration, watched at 95%, next episode | Unit tests; Desktop |
 | Continue watching: resume from 30 s; next episode after a finished one | Desktop |
 | Settings: preferred language, recent searches | Desktop |
+| *(1.2)* Settings `subtitleLanguage`, `reduceMotion`, `autoplayNext`, `welcomeSeen`; wrong types ignored | Desktop (tests) |
 
 **Gaps:**
 - One profile.
@@ -632,6 +666,8 @@ How good each layer is, against a researched definition of quality, is in [`QUAL
 | ARM EABI5 binary, static C++ runtime, needs only GLIBC_2.4 | TV ✓ |
 | IPK with the app, fonts, test clip and service | TV ✓ (0.3, 0.4 installed) |
 | `native/artifacts/com.muhib.bloob_1.1.0_arm.ipk` | Built; not yet installed |
+| *(1.2)* IPK repacked after `ares-package`: directories and executables 755, files 644; the build fails on any writable entry (F2) | Desktop (build) |
+| *(1.2)* `scripts/acg-lookup.sh`: read-only lookup of the TV's permission groups; `requiredACG` deliberately not guessed (P1) | Untested |
 
 **Gaps:**
 - No `requiredACG`. It works today on a developer-mode TV but may be needed later.
@@ -685,6 +721,7 @@ How good each layer is, against a researched definition of quality, is in [`QUAL
 | --- | --- |
 | Log of navigation, media commands and events, first frame, seek landing, reloads | TV ✓ (0.3/0.4 logs read over SSH) |
 | URLs reduced to host; no keys | By design, reviewed |
+| *(1.2)* `[perf]` every 5 s while drawing: key-to-present p50/p95/max, render p50/p95/max, frames over 33 ms; `[launch]` and `[qoe]` lines (U1) | Desktop |
 
 **Gaps:**
 - No metrics summary per session.

@@ -1,4 +1,4 @@
-# Bloob 1.1 on the TV: test script
+# Bloob 1.2 on the TV: test script
 
 Run this script on the OLED55G26LA from the sofa, at normal viewing distance (about 2.5 m), with the LG remote only. Write down what happens. Do not write down what should have happened. Do not photograph account screens or PINs.
 
@@ -6,7 +6,7 @@ Run this script on the OLED55G26LA from the sofa, at normal viewing distance (ab
 
 ```bat
 cd /d %USERPROFILE%\Downloads
-ares-install -d rootedTV com.muhib.bloob_1.1.0_arm.ipk
+ares-install -d rootedTV com.muhib.bloob_1.2.0_arm.ipk
 ares-launch -d rootedTV com.muhib.bloob
 ```
 
@@ -48,6 +48,7 @@ Write down every place where they paused, asked something or pressed a wrong key
 ## 4. Persistence
 
 - [ ] Pair AllDebrid once. Quit Bloob from the Back double-press, launch it again, and play. You are not asked to pair again. Settings says *saved on this TV*.
+- [ ] Settings → *Disconnect AllDebrid* (OK twice). Quit and relaunch: Bloob is still disconnected, and the web app's pairing was not touched. Pair again afterwards.
 
 ## 5. Capturing screens for the design review (unverified procedure)
 
@@ -82,3 +83,37 @@ The goal is to compare how it *feels*. It is not to copy anything. For the same 
    - How it goes away again.
 
 Note timings by eye or from a phone's slow-motion video. Label each finding as a **live observation**, with the date. Do not capture the reference app's account or playback screens.
+
+## 7. New in 1.2 (record what the log and the screen say)
+
+The log lines below are written for exactly this pass. None of these behaviours has run on the TV yet.
+
+**Measurement lines.** After one ordinary viewing, copy these lines from `/tmp/bloob-native.log`:
+- `[launch] window / fonts / service / home-data / home-frame at … ms`: cold start, stage by stage.
+- `[perf] keys n=… key->present p50/p95/max; frames … render …`: every 5 s while the UI moves. If it says `effects -> lite`, the TV measured itself slow and turned shadows and blur off for the session; note which screen you were on.
+- `[qoe] first frame …; stalls …; media watched …; seeks …; reloads …`: one line per viewing, on leaving the player.
+
+**Playback.**
+- [ ] **Start position (P5).** Resume something with saved progress. The log says either `started at … ms from the load request` (the TV honoured the start option) or `the load start was not honoured … seeking` (fallback). If it says `load with a start position refused`, playback still starts from the beginning and then the next line shows the reason; record it.
+- [ ] **Tracks after a reconnect (F7).** Choose a second audio track, press Home, wait 10 s, return. After *Reconnecting*, the same track plays (`audio track N (…)` in the log).
+- [ ] **Preferred languages.** Set Settings → Subtitles to English. Start a film with English subtitles: they come on by themselves. With a preferred audio language that the file has as a second track, that track starts.
+- [ ] **Subtitle position (U7).** With subtitles on, press Down: the subtitle line should rise above the controls, and drop back when they hide. If the log says `subtitle position not supported here`, record that.
+- [ ] **Reduced seek (U6).** With the controls hidden, press Right: only the timeline appears and it hides about 2 s after the seek lands. Resting on the Audio pill keeps the controls up for about 12 s.
+- [ ] **Up next prepared (U10).** Near the end of an episode, the log says `preparing S… · E… during the credits` and then `next episode is being prepared`. *Play now* reaches the picture faster than an ordinary start; time it. With Settings → *Play the next episode automatically* off, there is no countdown.
+- [ ] **Clock.** The wall clock (top right) and *Ends at* match the TV's own clock.
+- [ ] **ACG (P1).** Run `native/scripts/acg-lookup.sh` from the build machine and keep its output: it lists which permission groups this webOS build defines for the media, settings, connection-manager and TTS services. `requiredACG` is not yet set in `appinfo.json`; it will be filled from this output.
+
+**Questions only the TV can answer (record yes/no and the log line):**
+- [ ] **Frame rate.** On 23.976 fps content, does the panel switch to 24p (TV info overlay, or *Diagnostics → Panel*)? Bloob does not request it; the TV may do it on its own.
+- [ ] **TrueHD passthrough.** On a file whose first audio track is Dolby TrueHD Atmos, what does the soundbar or receiver show: Atmos, TrueHD, Dolby Digital Plus or PCM? The source screen warns this may play as standard sound.
+- [ ] **DTS.** On a version the source screen marks *No sound on this TV*, confirm there is indeed no sound (do not leave it playing).
+- [ ] **Which text-to-speech service speaks.** With LG's Audio Guidance on, does anything in Bloob speak? (Bloob does not yet call a TTS service; this is to know which one exists before we do.)
+- [ ] **Unknown media events.** Copy every `[media] unknown event key …` line and the `audio track fields: …` line. They show what this TV's pipeline reports that Bloob does not yet read.
+
+**Look and comfort.**
+- [ ] **First run.** On a TV that has never paired, Home shows the AllDebrid note once. *Later* dismisses it for good.
+- [ ] **Season row.** On a series with many seasons, every season is reachable with Right, and chevrons show more on either side.
+- [ ] **Search.** Type, then press Right into the results: the keyboard slides away, the query stays as a chip, four columns show. Left from the first column brings the keyboard back.
+- [ ] **Reduce motion.** With Settings → *Reduce motion* on, nothing slides, zooms or advances by itself.
+- [ ] **Small text.** The smallest text (episode numbers, badges, captions) is now 22 px; check it is readable from the sofa.
+- [ ] **Non-Latin titles.** A title with Polish, Czech, Greek or Cyrillic letters shows them correctly. Chinese and Japanese still show as `?` (no font for them yet).

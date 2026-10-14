@@ -16,34 +16,78 @@
 #pragma GCC diagnostic pop
 
 std::vector<unsigned> utf8_decode(const std::string &text) {
+  // Strict decoder: a bad lead byte, a missing or wrong continuation byte, an
+  // overlong form, a surrogate or a value above U+10FFFF skips one byte and
+  // resynchronises on the next, so malformed catalogue text never stops the
+  // rest of a string from drawing.
   std::vector<unsigned> out;
-  for (size_t i = 0; i < text.size();) {
+  out.reserve(text.size());
+  const size_t n = text.size();
+  for (size_t i = 0; i < n;) {
     unsigned char c = static_cast<unsigned char>(text[i]);
-    unsigned cp;
-    int extra;
-    if (c < 0x80) { cp = c; extra = 0; }
-    else if ((c & 0xE0) == 0xC0) { cp = c & 0x1F; extra = 1; }
-    else if ((c & 0xF0) == 0xE0) { cp = c & 0x0F; extra = 2; }
-    else if ((c & 0xF8) == 0xF0) { cp = c & 0x07; extra = 3; }
-    else { i++; continue; }
-    if (extra && i + static_cast<size_t>(extra) >= text.size()) break;  // truncated sequence
-    for (int k = 1; k <= extra; k++) cp = (cp << 6) | (static_cast<unsigned char>(text[i + static_cast<size_t>(k)]) & 0x3F);
+    if (c < 0x80) {
+      out.push_back(c);
+      i++;
+      continue;
+    }
+    unsigned cp, min;
+    size_t extra;
+    if ((c & 0xE0) == 0xC0) { cp = c & 0x1F; extra = 1; min = 0x80; }
+    else if ((c & 0xF0) == 0xE0) { cp = c & 0x0F; extra = 2; min = 0x800; }
+    else if ((c & 0xF8) == 0xF0) { cp = c & 0x07; extra = 3; min = 0x10000; }
+    else { i++; continue; }  // stray continuation byte or invalid lead
+    bool ok = i + extra < n;
+    for (size_t k = 1; ok && k <= extra; k++) {
+      unsigned char t = static_cast<unsigned char>(text[i + k]);
+      if ((t & 0xC0) != 0x80) ok = false;
+      else cp = (cp << 6) | (t & 0x3F);
+    }
+    if (!ok || cp < min || cp > 0x10FFFF || (cp >= 0xD800 && cp <= 0xDFFF)) {
+      i++;
+      continue;
+    }
     out.push_back(cp);
-    i += static_cast<size_t>(extra) + 1;
+    i += extra + 1;
   }
   return out;
 }
 
-// Code points baked into every atlas: Latin-1 plus the punctuation and arrows the UI uses.
-static std::vector<unsigned> atlas_codepoints() {
-  std::vector<unsigned> cps;
-  for (unsigned c = 32; c < 127; c++) cps.push_back(c);
-  for (unsigned c = 160; c < 256; c++) cps.push_back(c);
-  const unsigned extra[] = {0x2013, 0x2014, 0x2018, 0x2019, 0x201C, 0x201D, 0x2022, 0x2026, 0x2212,
-                            0x2190, 0x2191, 0x2192, 0x2193, 0x00D7, 0x2715, 0x2713};
+// Code points baked into every atlas up front: Latin-1 plus the punctuation
+// and arrows the UI uses, so common text never triggers a re-bake.
+static std::vector<int> base_codepoints() {
+  std::vector<int> cps;
+  for (int c = 32; c < 127; c++) cps.push_back(c);
+  for (int c = 160; c < 256; c++) cps.push_back(c);
+  const int extra[] = {0x2013, 0x2014, 0x2018, 0x2019, 0x201C, 0x201D, 0x2022, 0x2026, 0x2212,
+                       0x2190, 0x2191, 0x2192, 0x2193, 0x2715, 0x2713};
   cps.insert(cps.end(), std::begin(extra), std::end(extra));
   return cps;
 }
+
+static size_t base_count() {
+  static const size_t count = base_codepoints().size();
+  return count;
+}
+
+namespace {
+// On-demand glyphs per atlas (per pixel size) beyond the base set.
+constexpr int kMaxExtras = 2000;
+// Text sizes also load the rest of a missing glyph's 128-code-point block
+// (Latin Extended-A, Greek, Cyrillic…), so a page of Polish or Russian titles
+// costs one re-bake per block rather than one per new letter. Neighbours may
+// use at most this share of the budget; glyphs actually asked for get the rest.
+constexpr int kMaxPrefetchSize = 48;
+constexpr int kPrefetchBudget = kMaxExtras / 2;
+
+// Control and format characters that should take no space when the font has
+// no glyph for them (zero-width spaces, joiners, direction marks, BOM,
+// variation selectors, tags).
+bool invisible(unsigned cp) {
+  return cp < 0x20 || (cp >= 0x7F && cp < 0xA0) || (cp >= 0x200B && cp <= 0x200F) ||
+         (cp >= 0x2028 && cp <= 0x202E) || (cp >= 0x2060 && cp <= 0x206F) || (cp >= 0xFE00 && cp <= 0xFE0F) ||
+         cp == 0xFEFF || (cp >= 0xE0000 && cp <= 0xE0FFF);
+}
+}  // namespace
 
 Font::~Font() {
   for (auto &entry : atlases_) SDL_DestroyTexture(entry.second.texture);
@@ -68,60 +112,208 @@ bool Font::load(SDL_Renderer *renderer, const std::string &path) {
   return true;
 }
 
+// Packs `cps` into the smallest texture that holds them and, on success,
+// replaces the atlas texture and glyph table. On failure the atlas is left as
+// it was and false is returned.
+bool Font::bake(Atlas &a, const std::vector<int> &cps) {
+  auto *info = static_cast<stbtt_fontinfo *>(info_);
+  // 2× horizontal oversampling keeps stems even at text sizes; large display
+  // type does not need it.
+  const int ox = a.size <= 48 ? 2 : 1;
+  const int padding = 1;
+
+  // Estimate the packed area from glyph boxes (cheap: no rasterising) so the
+  // packer starts near the right texture size instead of failing upward.
+  double area = 0;
+  for (int cp : cps) {
+    int x0, y0, x1, y1;
+    stbtt_GetCodepointBitmapBox(info, cp, a.scale * ox, a.scale, &x0, &y0, &x1, &y1);
+    area += static_cast<double>(x1 - x0 + padding + ox - 1) * (y1 - y0 + padding);
+  }
+
+  int max_w = 4096, max_h = 4096;
+  SDL_RendererInfo rinfo;
+  if (renderer_ && SDL_GetRendererInfo(renderer_, &rinfo) == 0) {
+    if (rinfo.max_texture_width > 0) max_w = std::min(max_w, rinfo.max_texture_width);
+    if (rinfo.max_texture_height > 0) max_h = std::min(max_h, rinfo.max_texture_height);
+  }
+  // Candidate sizes in order of area; the texture is sized to the glyph set.
+  static const int dims[][2] = {{128, 128},   {256, 128},   {256, 256},   {512, 256},
+                                {512, 512},   {1024, 512},  {1024, 1024}, {2048, 1024},
+                                {2048, 2048}, {4096, 2048}, {4096, 4096}};
+  const int count = static_cast<int>(sizeof dims / sizeof dims[0]);
+  int last = -1;
+  for (int i = 0; i < count; i++)
+    if (dims[i][0] <= max_w && dims[i][1] <= max_h) last = i;
+
+  std::vector<stbtt_packedchar> packed(cps.size());
+  std::vector<unsigned char> pixels;
+  int w = 0, h = 0;
+  bool ok = false;
+  for (int i = 0; i <= last && !ok; i++) {
+    // Skip sizes the estimate says cannot hold the set (skyline packing wastes ~15%).
+    if (i < last && area > 0.85 * dims[i][0] * dims[i][1]) continue;
+    w = dims[i][0];
+    h = dims[i][1];
+    pixels.assign(static_cast<size_t>(w) * h, 0);
+    std::fill(packed.begin(), packed.end(), stbtt_packedchar{});
+    stbtt_pack_context pack{};
+    if (!stbtt_PackBegin(&pack, pixels.data(), w, h, 0, padding, nullptr)) return false;
+    stbtt_PackSetOversampling(&pack, static_cast<unsigned>(ox), 1);
+    stbtt_pack_range range{};
+    range.font_size = static_cast<float>(a.size);
+    range.array_of_unicode_codepoints = const_cast<int *>(cps.data());
+    range.num_chars = static_cast<int>(cps.size());
+    range.chardata_for_range = packed.data();
+    ok = stbtt_PackFontRanges(&pack, data_.data(), 0, &range, 1) != 0;
+    stbtt_PackEnd(&pack);
+  }
+  // The very first bake keeps whatever fitted (as before); later bakes must fit
+  // everything or leave the working atlas alone.
+  if (!ok && (a.texture || w == 0)) return false;
+
+  // White glyphs with coverage in alpha; colour comes from texture colour mod.
+  // Coverage is lifted slightly (gamma) because blending is done in linear
+  // space: light text on dark grounds otherwise looks thin and stepped.
+  static Uint8 lift[256];
+  static bool lift_ready = false;
+  if (!lift_ready) {
+    for (int i = 0; i < 256; i++) lift[i] = static_cast<Uint8>(std::lround(255.0 * std::pow(i / 255.0, 1.0 / 1.35)));
+    lift_ready = true;
+  }
+  std::vector<Uint32> rgba_pixels(pixels.size());
+  for (size_t i = 0; i < pixels.size(); i++) rgba_pixels[i] = (static_cast<Uint32>(lift[pixels[i]]) << 24) | 0x00FFFFFF;
+  SDL_Surface *surface = SDL_CreateRGBSurfaceFrom(rgba_pixels.data(), w, h, 32, w * 4, 0x00FF0000, 0x0000FF00,
+                                                  0x000000FF, 0xFF000000);
+  SDL_Texture *texture = surface ? SDL_CreateTextureFromSurface(renderer_, surface) : nullptr;
+  if (surface) SDL_FreeSurface(surface);
+  if (!texture && a.texture) {
+    logf("gfx", "atlas %dpx: texture %dx%d failed (%s)", a.size, w, h, SDL_GetError());
+    return false;
+  }
+  if (texture) SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_BLEND);
+  if (a.texture) SDL_DestroyTexture(a.texture);
+  a.texture = texture;
+  a.tex_w = w;
+  a.tex_h = h;
+  a.codepoints = cps;
+  a.glyphs.clear();
+  for (size_t i = 0; i < cps.size(); i++) {
+    const stbtt_packedchar &p = packed[i];
+    a.glyphs[static_cast<unsigned>(cps[i])] = {{p.x0, p.y0, p.x1 - p.x0, p.y1 - p.y0}, p.xoff, p.yoff, p.xoff2, p.yoff2, p.xadvance};
+  }
+  return true;
+}
+
 Font::Atlas *Font::atlas(int size) {
   auto found = atlases_.find(size);
   if (found != atlases_.end()) return &found->second;
   if (!info_) return nullptr;
   auto *info = static_cast<stbtt_fontinfo *>(info_);
 
-  Atlas atlas;
-  atlas.scale = stbtt_ScaleForPixelHeight(info, static_cast<float>(size));
+  Atlas &a = atlases_[size];
+  a.size = size;
+  a.scale = stbtt_ScaleForPixelHeight(info, static_cast<float>(size));
   int ascent, descent, gap;
   stbtt_GetFontVMetrics(info, &ascent, &descent, &gap);
-  atlas.ascent = ascent * atlas.scale;
-  atlas.line = (ascent - descent + gap) * atlas.scale;
+  a.ascent = ascent * a.scale;
+  a.line = (ascent - descent + gap) * a.scale;
+  if (!bake(a, base_codepoints())) logf("gfx", "atlas %dpx: base set could not be baked", size);
+  return &a;
+}
 
-  std::vector<unsigned> cps = atlas_codepoints();
-  std::vector<stbtt_packedchar> packed(cps.size());
-  std::vector<int> cp_ints(cps.begin(), cps.end());
-  // Smallest atlas that holds every glyph at this size (most sizes fit 512 or 1024).
-  int dim = 256;
-  std::vector<unsigned char> pixels;
-  for (;; dim *= 2) {
-    pixels.assign(static_cast<size_t>(dim) * dim, 0);
-    stbtt_pack_context pack{};
-    stbtt_PackBegin(&pack, pixels.data(), dim, dim, 0, 1, nullptr);
-    // 2× horizontal oversampling keeps stems even at text sizes; large display
-    // type does not need it.
-    stbtt_PackSetOversampling(&pack, size <= 48 ? 2 : 1, 1);
-    stbtt_pack_range range{};
-    range.font_size = static_cast<float>(size);
-    range.array_of_unicode_codepoints = cp_ints.data();
-    range.num_chars = static_cast<int>(cps.size());
-    range.chardata_for_range = packed.data();
-    int ok = stbtt_PackFontRanges(&pack, data_.data(), 0, &range, 1);
-    stbtt_PackEnd(&pack);
-    if (ok || dim >= 4096) break;
+void Font::collect(Atlas *a, const std::vector<unsigned> &cps) {
+  auto *info = static_cast<stbtt_fontinfo *>(info_);
+  for (unsigned cp : cps) {
+    if (a->glyphs.count(cp) || a->pending.count(cp) || missing_.count(cp) || a->refused.count(cp)) continue;
+    int glyph = stbtt_FindGlyphIndex(info, static_cast<int>(cp));
+    if (!glyph) {
+      missing_.insert(cp);  // remembered for every size: never looked up again
+      continue;
+    }
+    if (a->extras + static_cast<int>(a->pending.size()) >= kMaxExtras) {
+      a->refused.insert(cp);
+      if (!a->cap_logged) {
+        logf("gfx", "atlas %dpx: %d on-demand glyphs reached; further code points draw as '?'", a->size, kMaxExtras);
+        a->cap_logged = true;
+      }
+      continue;
+    }
+    // Same arithmetic stbtt_PackFontRanges uses for xadvance, so a measured
+    // width matches the drawn one exactly once the glyph is baked.
+    int advance, lsb;
+    stbtt_GetGlyphHMetrics(info, glyph, &advance, &lsb);
+    a->pending[cp] = a->scale * advance;
+  }
+}
+
+void Font::flush(Atlas *a) {
+  if (a->pending.empty()) return;
+  auto *info = static_cast<stbtt_fontinfo *>(info_);
+  std::vector<int> wanted;
+  for (auto &p : a->pending) wanted.push_back(static_cast<int>(p.first));
+  a->pending.clear();
+
+  std::vector<int> neighbours;
+  if (a->size <= kMaxPrefetchSize) {
+    std::set<unsigned> queued(wanted.begin(), wanted.end());
+    std::set<unsigned> blocks;
+    for (int cp : wanted) blocks.insert(static_cast<unsigned>(cp) & ~0x7Fu);
+    for (unsigned b : blocks)
+      for (unsigned cp = b; cp < b + 0x80; cp++) {
+        if (a->extras + static_cast<int>(wanted.size() + neighbours.size()) >= kPrefetchBudget) break;
+        if (invisible(cp) || a->glyphs.count(cp) || queued.count(cp) || missing_.count(cp) || a->refused.count(cp)) continue;
+        if (!stbtt_FindGlyphIndex(info, static_cast<int>(cp))) {
+          missing_.insert(cp);
+          continue;
+        }
+        neighbours.push_back(static_cast<int>(cp));
+        queued.insert(cp);
+      }
   }
 
-  // White glyphs with coverage in alpha; colour comes from texture colour mod.
-  // Coverage is lifted slightly (gamma) because blending is done in linear
-  // space: light text on dark grounds otherwise looks thin and stepped.
-  Uint8 lift[256];
-  for (int i = 0; i < 256; i++) lift[i] = static_cast<Uint8>(std::lround(255.0 * std::pow(i / 255.0, 1.0 / 1.35)));
-  std::vector<Uint32> rgba_pixels(pixels.size());
-  for (size_t i = 0; i < pixels.size(); i++) rgba_pixels[i] = (static_cast<Uint32>(lift[pixels[i]]) << 24) | 0x00FFFFFF;
-  SDL_Surface *surface = SDL_CreateRGBSurfaceFrom(rgba_pixels.data(), dim, dim, 32, dim * 4, 0x00FF0000,
-                                                  0x0000FF00, 0x000000FF, 0xFF000000);
-  atlas.texture = SDL_CreateTextureFromSurface(renderer_, surface);
-  SDL_FreeSurface(surface);
-  SDL_SetTextureBlendMode(atlas.texture, SDL_BLENDMODE_BLEND);
-
-  for (size_t i = 0; i < cps.size(); i++) {
-    const stbtt_packedchar &p = packed[i];
-    atlas.glyphs[cps[i]] = {{p.x0, p.y0, p.x1 - p.x0, p.y1 - p.y0}, p.xoff, p.yoff, p.xoff2, p.yoff2, p.xadvance};
+  const size_t before = a->codepoints.size();
+  std::vector<int> next = a->codepoints;
+  next.insert(next.end(), wanted.begin(), wanted.end());
+  const size_t without_neighbours = next.size();
+  next.insert(next.end(), neighbours.begin(), neighbours.end());
+  Uint32 t0 = SDL_GetTicks();
+  bool ok = bake(*a, next);
+  if (!ok && !neighbours.empty()) {
+    next.resize(without_neighbours);
+    ok = bake(*a, next);
   }
-  return &(atlases_[size] = std::move(atlas));
+  if (!ok) {
+    // Too large for the biggest texture at this size: draw these as '?' and
+    // never try them again.
+    for (int cp : wanted) a->refused.insert(static_cast<unsigned>(cp));
+    logf("gfx", "atlas %dpx: %zu glyphs did not fit; drawn as '?'", a->size, wanted.size());
+    return;
+  }
+  a->extras = static_cast<int>(a->codepoints.size() - base_count());
+  logf("gfx", "atlas %dpx: +%zu glyphs (%d on demand), %dx%d, %u ms", a->size, a->codepoints.size() - before, a->extras,
+       a->tex_w, a->tex_h, static_cast<unsigned>(SDL_GetTicks() - t0));
+}
+
+bool Font::advance_for(Atlas *a, unsigned cp, unsigned &key, float &advance) {
+  auto it = a->glyphs.find(cp);
+  if (it != a->glyphs.end()) {
+    key = cp;
+    advance = it->second.advance;
+    return true;
+  }
+  auto queued = a->pending.find(cp);
+  if (queued != a->pending.end()) {
+    key = cp;
+    advance = queued->second;
+    return true;
+  }
+  if (invisible(cp)) return false;
+  it = a->glyphs.find('?');
+  if (it == a->glyphs.end()) return false;
+  key = '?';
+  advance = it->second.advance;
+  return true;
 }
 
 int Font::line_height(int size) {
@@ -139,40 +331,52 @@ float Font::kern(Atlas *a, unsigned prev, unsigned cp) {
   return value;
 }
 
+// Measuring and drawing share collect() and advance_for(), so the same
+// glyphs, fallbacks, advances and kerning pairs are used by both. Measuring
+// never re-bakes: wrap() and ellipsize() measure many prefixes of one string,
+// and the next draw bakes everything they queued in one go.
 int Font::measure(const std::string &text, int size) {
   Atlas *a = atlas(size);
   if (!a) return 0;
+  std::vector<unsigned> cps = utf8_decode(text);
+  collect(a, cps);
   float x = 0;
   unsigned prev = 0;
-  for (unsigned cp : utf8_decode(text)) {
-    auto it = a->glyphs.find(cp);
-    if (it == a->glyphs.end()) it = a->glyphs.find('?');
-    x += kern(a, prev, cp) + it->second.advance;
-    prev = cp;
+  for (unsigned cp : cps) {
+    unsigned key = 0;
+    float advance = 0;
+    if (!advance_for(a, cp, key, advance)) continue;
+    x += kern(a, prev, key) + advance;
+    prev = key;
   }
   return static_cast<int>(std::ceil(x));
 }
 
 int Font::draw(const std::string &text, int x, int y, int size, Color color) {
   Atlas *a = atlas(size);
-  if (!a || !a->texture) return 0;
+  if (!a) return 0;
+  std::vector<unsigned> cps = utf8_decode(text);
+  collect(a, cps);
+  flush(a);  // may replace the texture: fetch it afterwards
+  if (!a->texture) return 0;
   SDL_SetTextureColorMod(a->texture, color.r, color.g, color.b);
   SDL_SetTextureAlphaMod(a->texture, color.a);
   float pen = static_cast<float>(x);
   float baseline = static_cast<float>(y) + a->ascent;
   unsigned prev = 0;
-  for (unsigned cp : utf8_decode(text)) {
-    auto it = a->glyphs.find(cp);
-    if (it == a->glyphs.end()) it = a->glyphs.find('?');
-    pen += kern(a, prev, cp);
-    prev = cp;
-    const Glyph &g = it->second;
+  for (unsigned cp : cps) {
+    unsigned key = 0;
+    float advance = 0;
+    if (!advance_for(a, cp, key, advance)) continue;
+    pen += kern(a, prev, key);
+    prev = key;
+    const Glyph &g = a->glyphs.find(key)->second;  // baked by flush() above
     if (g.src.w > 0 && g.src.h > 0) {
       int x0 = static_cast<int>(std::lround(pen + g.xoff)), y0 = static_cast<int>(std::lround(baseline + g.yoff));
       SDL_Rect dst{x0, y0, static_cast<int>(std::lround(pen + g.xoff2)) - x0, static_cast<int>(std::lround(baseline + g.yoff2)) - y0};
       SDL_RenderCopy(renderer_, a->texture, &g.src, &dst);
     }
-    pen += g.advance;
+    pen += advance;
   }
   return static_cast<int>(pen) - x;
 }
@@ -364,7 +568,7 @@ SDL_Texture *Gfx::shadow_texture(int radius, int blur) {
 }
 
 void Gfx::shadow(int x, int y, int w, int h, int radius, int blur, int dy, Uint8 alpha) {
-  if (alpha == 0 || w <= 0 || h <= 0) return;
+  if (!shadows || alpha == 0 || w <= 0 || h <= 0) return;
   radius = std::max(0, std::min(radius, std::min(w, h) / 2));
   SDL_Texture *t = shadow_texture(radius, blur);
   if (!t) return;

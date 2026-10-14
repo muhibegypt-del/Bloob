@@ -4,6 +4,7 @@
 // web engine uses, and reports source/track/time events.
 #include <functional>
 #include <memory>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -13,6 +14,13 @@ struct MediaTrack {
   std::string codec;
   int channels = 0;
   bool selected = false;
+  // Only when the TV reports them (field names are unverified on this TV;
+  // the first track's raw keys are logged so a run shows what exists).
+  std::string title;
+  bool forced = false;
+  bool hearing_impaired = false;
+  bool commentary = false;
+  bool is_default = false;
 };
 
 struct MediaInfo {
@@ -44,13 +52,19 @@ class UmsPlayer {
   using Listener = std::function<void(const MediaEvent &)>;
 
   // `load_type` is uMediaServer's pipeline type ("media" by default).
+  // `start_ms` asks the pipeline to begin there (LG's documented
+  // transmission.playTime.start option; unverified on this TV). If the TV
+  // refuses a load carrying it, the load is retried once without it.
   bool load(const std::string &uri, const std::string &app_id, const std::string &window_id,
-            const std::string &load_type, Listener listener);
+            const std::string &load_type, Listener listener, long long start_ms = 0);
   void play();
   void pause();
   void seek(long long position_ms);
   void select_track(const std::string &type, int index);
   void set_subtitles(bool enabled);
+  // Undocumented uMediaServer call (community-documented): -3 lowest .. 4 highest, 0 default.
+  // `done(false)` when the TV refuses it.
+  void set_subtitle_position(int position, std::function<void(bool ok)> done);
   void unload();
   // uMediaServer's resource policy follows the app's foreground state.
   void notify_foreground();
@@ -60,7 +74,7 @@ class UmsPlayer {
   const MediaInfo &info() const { return info_; }
 
  private:
-  void command(const char *method, const std::string &extra = "");
+  void command(const char *method, const std::string &extra = "", std::function<void(bool ok)> done = nullptr);
   void on_event(const std::string &payload);
 
   std::string media_id_;
@@ -69,6 +83,8 @@ class UmsPlayer {
   int subscription_ = 0;
   int generation_ = 0;  // bumps on unload so late load replies are discarded
   bool logged_keys_ = false;
+  bool logged_track_keys_ = false;
+  std::set<std::string> seen_keys_;
   bool lost_ = false;
   std::shared_ptr<int> alive_ = std::make_shared<int>(0);  // guards late luna replies
 };

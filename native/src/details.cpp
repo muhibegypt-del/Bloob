@@ -7,6 +7,7 @@
 
 #include "common.h"
 #include "log.h"
+#include "play.h"
 #include "screens.h"
 
 namespace {
@@ -23,7 +24,13 @@ class DetailsScreen : public Screen {
     meta_.item = item;
     backdrop_.set(item.backdrop, true);
     opened_at_ = ctx().now;
-    load();
+    if (const Json *cached = ctx().meta_cache.get(meta_key(item), ctx().now)) {
+      apply_meta(*cached);  // complete on the first frame (fetched while focus rested on Home)
+      logf("details", "ready from prefetch");
+      load_progress();      // then only what changes between visits
+    } else {
+      load();
+    }
   }
 
   const char *name() const override { return "details"; }
@@ -33,18 +40,23 @@ class DetailsScreen : public Screen {
     if (loaded_) load_progress();
   }
 
+  void apply_meta(const Json &j) {
+    Item original = meta_.item;
+    meta_ = parse_meta(j["meta"]);
+    if (meta_.item.description.empty()) meta_.item.description = original.description;
+    progress_ = parse_progress(j["progress"]);
+    loaded_ = true;
+    choose_start(true);
+  }
+
   void load() {
     ctx().api.get("/api/meta?type=" + meta_.item.type + "&id=" + meta_.item.id, [this](const ApiResult &r) {
       if (!r.ok()) {
         error_ = r.error;
         return;
       }
-      Item original = meta_.item;
-      meta_ = parse_meta(r.json["meta"]);
-      if (meta_.item.description.empty()) meta_.item.description = original.description;
-      progress_ = parse_progress(r.json["progress"]);
-      loaded_ = true;
-      choose_start(true);
+      ctx().meta_cache.put(meta_key(meta_.item), r.json, ctx().now);
+      apply_meta(r.json);
     }, alive_);
   }
 
@@ -56,67 +68,33 @@ class DetailsScreen : public Screen {
     }, alive_);
   }
 
-  // What the main button plays, and where the episode row starts.
+  // What the main button plays (decided by play::title_default), its label, and
+  // where the episode row starts.
   void choose_start(bool move_focus) {
-    start_ = PlayRequest{};
-    start_.item = meta_.item;
-    start_label_ = "Play";
-    has_resume_ = false;
+    start_ = play::title_default(meta_, progress_);
+    has_resume_ = start_.resume_ms > 0;
     resume_note_.clear();
+    if (has_resume_) {
+      auto it = progress_.find(start_.video_id);
+      if (it != progress_.end()) resume_note_ = minutes_left(it->second.duration - it->second.position);
+    }
     if (!meta_.item.series()) {
-      start_.video_id = meta_.item.id;
-      auto it = progress_.find(meta_.item.id);
-      if (it != progress_.end() && !it->second.watched && it->second.position >= 30000) {
-        start_.resume_ms = it->second.position;
-        start_label_ = "Resume";
-        has_resume_ = true;
-        resume_note_ = minutes_left(it->second.duration - it->second.position);
-      }
+      start_label_ = has_resume_ ? "Resume" : "Play";
       return;
     }
-    if (meta_.seasons.empty()) return;
-    const Episode *latest = nullptr;
-    long long latest_at = -1;
-    for (auto &s : meta_.seasons)
-      for (auto &e : s.episodes) {
-        auto it = progress_.find(e.id);
-        if (it != progress_.end() && it->second.updated > latest_at) {
-          latest = &e;
-          latest_at = it->second.updated;
-        }
-      }
-    const Episode *target = nullptr;
-    if (latest) {
-      const Watch &w = progress_[latest->id];
-      if (!w.watched && w.position >= 30000) {
-        target = latest;
-        start_.resume_ms = w.position;
-        start_label_ = "Resume " + episode_code(latest->season, latest->episode);
-        resume_note_ = minutes_left(w.duration - w.position);
-        has_resume_ = true;
-      } else if (auto next = next_episode(meta_, latest->id)) {
-        target = find_episode(next->video_id);
-        start_label_ = "Play " + episode_code(next->season, next->episode);
-      }
+    if (start_.video_id.empty()) {
+      start_label_ = "Play";
+      return;
     }
-    if (!target) {
-      for (auto &s : meta_.seasons)
-        if (s.season != 0) {
-          target = &s.episodes[0];
-          break;
-        }
-      if (!target) target = &meta_.seasons[0].episodes[0];
-      start_label_ = "Play " + episode_code(target->season, target->episode);
-    }
-    fill_episode(start_, *target);
-    if (!has_resume_) start_.resume_ms = 0;
+    start_label_ = (has_resume_ ? "Resume " : "Play ") + episode_code(start_.season, start_.episode);
     if (!move_focus) return;
     for (size_t i = 0; i < meta_.seasons.size(); i++)
       for (size_t k = 0; k < meta_.seasons[i].episodes.size(); k++)
-        if (&meta_.seasons[i].episodes[k] == target) {
+        if (meta_.seasons[i].episodes[k].id == start_.video_id) {
           season_ = static_cast<int>(i);
           episode_ = static_cast<int>(k);
           escroll_.snap(static_cast<float>(scroll_for(episode_)));
+          keep_season_visible(true);
         }
   }
 
@@ -125,16 +103,6 @@ class DetailsScreen : public Screen {
       for (auto &e : s.episodes)
         if (e.id == id) return &e;
     return nullptr;
-  }
-
-  void fill_episode(PlayRequest &req, const Episode &e) {
-    req.item = meta_.item;
-    req.video_id = e.id;
-    req.season = e.season;
-    req.episode = e.episode;
-    req.episode_title = e.title;
-    req.episode_thumbnail = e.thumbnail;
-    req.next = next_episode(meta_, e.id);
   }
 
   int episode_count() const {
@@ -231,28 +199,51 @@ class DetailsScreen : public Screen {
     episode_ = 0;
     prev_episode_ = -1;
     escroll_.snap(0);
+    keep_season_visible(false);
+  }
+
+  // Left edge of each season pill on the unscrolled strip, plus the strip's end.
+  std::vector<int> season_xs() const {
+    std::vector<int> xs;
+    int x = 0;
+    for (auto &s : meta_.seasons) {
+      xs.push_back(x);
+      x += pill_width(s.label) + 12;
+    }
+    xs.push_back(x);
+    return xs;
+  }
+
+  // Scroll the season strip so the selected pill is inside the safe area, with a
+  // glimpse of the next one. Every season is reachable however many there are.
+  void keep_season_visible(bool snap) {
+    if (meta_.seasons.size() < 2) return;
+    auto xs = season_xs();
+    int view = W - 2 * margin;
+    size_t i = static_cast<size_t>(season_);
+    int look = i + 1 < meta_.seasons.size() ? pill_width(meta_.seasons[i + 1].label) / 2 : 0;
+    float target = sscroll_.target;
+    if (xs[i] - target < 0) target = static_cast<float>(xs[i]);
+    if (xs[i + 1] - 12 + look - target > view) target = static_cast<float>(xs[i + 1] - 12 + look - view);
+    target = std::max(0.0f, std::min(target, static_cast<float>(std::max(0, xs.back() - 12 - view))));
+    if (snap || ctx().reduce_motion) sscroll_.snap(target);
+    else sscroll_.to(target);
   }
 
   void press_button(int index) {
     if (start_.video_id.empty()) return;
     PlayRequest req = start_;
-    if (index == 1) req.resume_ms = 0;
-    ctx().push(make_sources(req));
+    if (index == 1) req.resume_ms = 0;  // Start over
+    start_playback(req, PlayOrigin::Details);
   }
 
-  void play_episode(const Episode &e) {
-    PlayRequest req;
-    fill_episode(req, e);
-    auto it = progress_.find(e.id);
-    if (it != progress_.end() && !it->second.watched && it->second.position >= 30000) req.resume_ms = it->second.position;
-    ctx().push(make_sources(req));
-  }
+  void play_episode(const Episode &e) { start_playback(play::episode(meta_, e, progress_, false), PlayOrigin::Episodes); }
 
   // ---------------------------------------------------------------- frame
 
   void update(double dt) override {
     backdrop_.update(dt);
-    if (page_.step(dt) | escroll_.step(dt) | lift_.step(dt) | prev_lift_.step(dt)) ctx().animating = true;
+    if (page_.step(dt) | escroll_.step(dt) | sscroll_.step(dt) | lift_.step(dt) | prev_lift_.step(dt)) ctx().animating = true;
   }
 
   void draw() override {
@@ -317,15 +308,18 @@ class DetailsScreen : public Screen {
     // Seasons row: peeks at the bottom of the title page, then rises.
     int sy = static_cast<int>(lerp(790, 320, p));
     if (meta_.seasons.size() > 1) {
-      int sx = margin;
+      auto xs = season_xs();
+      int off = static_cast<int>(std::lround(sscroll_.value));
       for (size_t i = 0; i < meta_.seasons.size(); i++) {
+        int x = margin + xs[i] - off;
+        int w = xs[i + 1] - xs[i] - 12;
+        if (x + w < margin - 60 || x > W - margin + 60) continue;  // off screen
         bool selected = static_cast<int>(i) == season_;
-        bool focused = zone_ == Zone::Seasons && selected;
-        int w = pill_width(meta_.seasons[i].label);
-        if (sx + w > W - margin) break;
-        draw_pill(sx, sy, meta_.seasons[i].label, focused, selected);
-        sx += w + 12;
+        draw_pill(x, sy, meta_.seasons[i].label, zone_ == Zone::Seasons && selected, selected);
       }
+      // More seasons either side: a quiet chevron in the margin.
+      if (off > 0) c.icons.draw(Icon::ChevronLeft, margin - 56, sy + 10, 36, tertiary);
+      if (xs.back() - 12 - off > W - 2 * margin) c.icons.draw(Icon::ChevronRight, W - margin + 20, sy + 10, 36, tertiary);
     } else {
       text(Text::Headline, meta_.seasons[0].label, margin, sy + 10, primary);
     }
@@ -399,7 +393,7 @@ class DetailsScreen : public Screen {
   Zone zone_ = Zone::Buttons;
   int button_ = 0;
   int season_ = 0, episode_ = 0, prev_episode_ = -1;
-  Anim page_{page_rate}, escroll_{scroll_rate}, lift_{focus_rate, 1}, prev_lift_{focus_rate};
+  Anim page_{page_rate}, escroll_{scroll_rate}, sscroll_{scroll_rate}, lift_{focus_rate, 1}, prev_lift_{focus_out_rate};
   PlayRequest start_;
   std::string start_label_ = "Play", resume_note_;
   bool has_resume_ = false;

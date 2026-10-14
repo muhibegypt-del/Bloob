@@ -245,7 +245,16 @@ async function handleApi(req, res, url) {
     const id = String(input.videoId || '');
     if (!validVideoId(type, id)) return reply(res, 400, { error: 'Invalid title or episode ID' });
     const candidates = await discoverCached(type, id);
-    return reply(res, 200, Object.assign({ provider: PROVIDER }, rank(candidates, { language: input.language || 'English' })));
+    // Runtime for the bitrate estimate: the app's, else the cached catalogue's,
+    // else the ranker's typical film or episode length.
+    const sent = Number(input.runtimeMinutes);
+    const runtimeMinutes = sent > 0 && sent < 1000 ? sent : await catalog.cachedRuntime(type, id.split(':')[0]);
+    const prefs = { language: input.language || 'English', type, runtimeMinutes: runtimeMinutes || undefined };
+    return reply(res, 200, Object.assign({
+      provider: PROVIDER,
+      runtimeMinutes: runtimeMinutes || null,
+      runtimeFrom: sent > 0 && sent < 1000 ? 'app' : runtimeMinutes ? 'catalogue' : 'typical',
+    }, rank(candidates, prefs)));
   }
   if (pathname === '/api/resolve/start' && req.method === 'POST') {
     let source = null;
@@ -285,6 +294,13 @@ async function handleApi(req, res, url) {
     return reply(res, 200, { provider: PROVIDER, sources: await discover(type, id) });
   }
   if (pathname === '/api/account' && req.method === 'GET') {
+    return reply(res, 200, accountStatus());
+  }
+  if (pathname === '/api/account/unpair' && req.method === 'POST') {
+    // Forget the pairing: memory first, then overwrite every saved copy (never deletes).
+    apiKey = '';
+    pendingPin = null;
+    await accountStore.forget();
     return reply(res, 200, accountStatus());
   }
   if (pathname === '/api/pin/start' && req.method === 'POST') {

@@ -20,6 +20,7 @@
 #include "json.h"
 #include "keys.h"
 #include "log.h"
+#include "perf.h"
 #include "luna.h"
 #include "screens.h"
 #include "ui.h"
@@ -90,6 +91,7 @@ class App {
       logf("app", "SDL_CreateRenderer failed: %s", SDL_GetError());
       return false;
     }
+    c.mark("window");
     SDL_RendererInfo info{};
     SDL_GetRendererInfo(c.renderer, &info);
     logf("app", "video=%s renderer=%s window=%dx%d display=%dx%d@%d missing=[%s]", SDL_GetCurrentVideoDriver(), info.name, ww,
@@ -101,6 +103,7 @@ class App {
     c.fonts.semibold.load(c.renderer, fonts + "Inter-SemiBold.ttf");
     c.fonts.bold.load(c.renderer, fonts + "Inter-Bold.ttf");
     c.icons.init(c.renderer);
+    c.mark("fonts");
 
     wake_event_ = SDL_RegisterEvents(1);
     Uint32 wake = wake_event_;
@@ -137,6 +140,7 @@ class App {
                             }
                             logf("app", "system info: %s", cx.tv_model.c_str());
                           });
+    watch_network();
     start_service();
 
     roots_.resize(kTabCount);
@@ -155,6 +159,22 @@ class App {
     return true;
   }
 
+  // Online/offline and wired/Wi-Fi, pushed by the TV whenever they change.
+  void watch_network() {
+    Luna::instance().call("luna://com.webos.service.connectionmanager/getStatus", "{\"subscribe\":true}", [](const std::string &reply) {
+      Json j = Json::parse(reply);
+      if (!j.has("isInternetConnectionAvailable")) return;
+      Ctx &c = ctx();
+      bool online = j["isInternetConnectionAvailable"].as_bool(true);
+      std::string network = j["wired"]["state"].as_string() == "connected" ? "wired"
+                            : j["wifi"]["state"].as_string() == "connected" ? "wifi" : "";
+      if (online != c.online || network != c.network)
+        logf("net", "%s%s", online ? "online" : "offline", network.empty() ? "" : (" via " + network).c_str());
+      c.online = online;
+      c.network = network;
+    }, true);
+  }
+
   void start_service() {
     Ctx &c = ctx();
     service_started_at_ = static_cast<long long>(SDL_GetTicks());
@@ -166,15 +186,23 @@ class App {
       if (j["ready"].as_bool() && j["port"].as_int() > 0) {
         cx.api.set_port(static_cast<int>(j["port"].as_int()));
         logf("app", "service ready on port %d (version %s)", cx.api.port(), j["version"].as_string("?").c_str());
+        cx.mark("service");
         cx.api.get("/api/settings", [](const ApiResult &r) {
           if (!r.ok()) return;
           Ctx &x = ctx();
           x.language = r.json["language"].as_string("English");
+          x.subtitle_language = r.json["subtitleLanguage"].as_string("Off");
+          x.autoplay_next = r.json["autoplayNext"].as_bool(true);
+          x.reduce_motion = r.json["reduceMotion"].as_bool(false);
+          x.welcome_seen = r.json["welcomeSeen"].as_bool(false);
+          x.settings_loaded = true;
           x.recent_searches.clear();
           for (size_t i = 0; i < r.json["recentSearches"].size(); i++) x.recent_searches.push_back(r.json["recentSearches"][i].as_string());
         }, nullptr);
         cx.api.get("/api/account", [](const ApiResult &r) {
-          if (r.ok()) ctx().paired = r.json["paired"].as_bool();
+          if (!r.ok()) return;
+          ctx().paired = r.json["paired"].as_bool();
+          ctx().account_known = true;
         }, nullptr);
       } else if (!j["returnValue"].as_bool(true) || j.has("errorText")) {
         logf("app", "service start over the bus failed: %s", reply.c_str());
@@ -308,7 +336,7 @@ class App {
           stack_.push_back(std::move(op.screen));
           logf("nav", "push %s", stack_.back()->name());
           finish_leaving();
-          entering_.snap(animate ? 0.0f : 1.0f);
+          entering_.snap(animate && !ctx().reduce_motion ? 0.0f : 1.0f);
           entering_.to(1);
           break;
         }
@@ -319,7 +347,7 @@ class App {
           stack_.pop_back();
           finish_leaving();
           entering_.snap(1);
-          if (!gone->over_video() && !top()->over_video()) {
+          if (!gone->over_video() && !top()->over_video() && !ctx().reduce_motion) {
             leaving_ = std::move(gone);  // fades out over the screen it returns to
             leaving_fade_.snap(1);
             leaving_fade_.to(0);
@@ -343,6 +371,7 @@ class App {
   }
 
   void finish_leaving() { leaving_.reset(); }
+  PerfWindow perf_;
 
   void select_root(int index) {
     if (index == root_) return;
@@ -352,7 +381,7 @@ class App {
     tabs_wanted_ = true;
     roots_[static_cast<size_t>(root_)]->set_tabs_focus(tabs_focus_);
     roots_[static_cast<size_t>(root_)]->shown();
-    page_fade_.snap(0.0f);
+    page_fade_.snap(ctx().reduce_motion ? 1.0f : 0.0f);
     page_fade_.to(1);
   }
 
@@ -376,6 +405,7 @@ class App {
       return;
     }
     dirty_ = true;
+    perf_.key(static_cast<long long>(event.timestamp));
     if (key == Key::Exit) {
       running_ = false;
       return;
@@ -506,7 +536,9 @@ class App {
 
   void render() {
     Ctx &c = ctx();
+    long long render_started = static_cast<long long>(SDL_GetTicks());
     c.images.begin_frame(c.now);
+    c.gfx.shadows = !c.lite();
     c.gfx.begin_frame();
     Screen *screen = top();
     bool entering = entering_.value < 0.999f && below_top();
@@ -534,6 +566,24 @@ class App {
     if (c.images.end_frame()) c.animating = true;
     SDL_RenderPresent(c.renderer);
     dirty_ = false;
+    long long presented = static_cast<long long>(SDL_GetTicks());
+    perf_.frame(presented, presented - render_started);
+    if (c.marks.count("home-data") && !c.marks.count("home-frame")) c.mark("home-frame");
+    if (perf_.due(presented)) {
+      std::string line = perf_.flush(presented);
+      c.perf_line = line;
+      if (perf_.last_frames() > 0) logf("perf", "%s", line.c_str());
+      // Two slow windows in a row: lighter effects for the rest of the session.
+      // BLOOB_EFFECTS=full pins the tier (desktop renders are software and always slow).
+      static const bool pinned = std::getenv("BLOOB_EFFECTS") && std::string(std::getenv("BLOOB_EFFECTS")) == "full";
+      if (!pinned && c.effects == Ctx::Effects::Full && perf_.last_frames() >= 20) {
+        c.slow_windows = perf_.last_render_p95() > 25 ? c.slow_windows + 1 : 0;
+        if (c.slow_windows >= 2) {
+          c.effects = Ctx::Effects::Lite;
+          logf("perf", "effects -> lite (render p95 %lld ms)", perf_.last_render_p95());
+        }
+      }
+    }
   }
 
   // ---------------------------------------------------------------- scripted runs

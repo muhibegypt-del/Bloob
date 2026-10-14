@@ -95,18 +95,27 @@ async function forTitle(id) {
   return result;
 }
 
-// App settings (preferred audio language, recent searches): one small document.
+// App settings (audio and subtitle language, motion, autoplay, recent searches):
+// one small document.
 const settingsStore = accountStore.createFileStore('settings.json', accountStore.defaultLocations);
+const SETTINGS_DEFAULTS = { language: 'English', subtitleLanguage: 'Off', reduceMotion: false, autoplayNext: true, welcomeSeen: false, recentSearches: [] };
+const LANGUAGE = /^[A-Za-z ]{2,30}$/;
 let settings = null;
 
 async function getSettings() {
-  if (!settings) settings = Object.assign({ language: 'English', recentSearches: [] }, (await settingsStore.read().catch(() => null)) || {});
+  if (!settings) settings = Object.assign({}, SETTINGS_DEFAULTS, (await settingsStore.read().catch(() => null)) || {});
   return settings;
 }
 
+/** Merge known, well-typed fields; anything else is ignored. */
 async function saveSettings(input) {
+  input = input || {};
   const current = await getSettings();
-  if (typeof input.language === 'string' && /^[A-Za-z ]{2,30}$/.test(input.language)) current.language = input.language;
+  if (typeof input.language === 'string' && LANGUAGE.test(input.language)) current.language = input.language;
+  if (typeof input.subtitleLanguage === 'string' && LANGUAGE.test(input.subtitleLanguage)) current.subtitleLanguage = input.subtitleLanguage;
+  if (typeof input.reduceMotion === 'boolean') current.reduceMotion = input.reduceMotion;
+  if (typeof input.autoplayNext === 'boolean') current.autoplayNext = input.autoplayNext;
+  if (typeof input.welcomeSeen === 'boolean') current.welcomeSeen = input.welcomeSeen;
   if (Array.isArray(input.recentSearches)) current.recentSearches = input.recentSearches.filter(s => typeof s === 'string').map(s => s.slice(0, 60)).slice(0, 8);
   await settingsStore.write(current);
   return current;

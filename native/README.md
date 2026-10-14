@@ -1,4 +1,4 @@
-# Bloob native 1.1 (Buna N2)
+# Bloob native 1.2 (Buna N2)
 
 A native webOS app (`com.muhib.bloob`, "Bloob Native") written in C++ against the community webOS NDK. It is the whole app: catalogue, search, details with seasons and episodes, source choice, AllDebrid pairing and resolution, and playback through the TV's own media pipeline. It draws its own UI and owns playback with the native Buna session. The map of every layer of the app, with its current state, gaps and next increments, is in [`APP-MAP.md`](APP-MAP.md). The visual system, with screen layouts and states, is in [`DESIGN.md`](DESIGN.md). The TV test script, including the hand-the-remote-over acceptance task, is in [`TV-TEST.md`](TV-TEST.md).
 
@@ -26,20 +26,24 @@ The service is the same code as the web app's (`tv-app/service`), staged as the 
 | Toolkit | `theme.h`, `ui.*`, `common.*`, `gfx.*`, `icons.*` | Design tokens, type scale, text layout (wrap, ellipsis, kerning, oversampled glyphs with gamma), eased animations, cards, buttons, pills, focus rings, soft shadows, blurred backdrops, exact-size anti-aliased shapes and line icons |
 | Artwork | `images.*` | Fetched through the service, decoded and scaled on worker threads to the exact size drawn, rounded corners and title shading baked in, faded in, least-recently-drawn textures released over a 192 MB budget |
 | Plumbing | `http.*`, `tasks.*`, `api.*`, `model.*`, `json.*` | Localhost HTTP client, worker pools whose results land on the UI thread, typed service API, data model |
-| Playback | `media.*`, `session.*`, `luna.*` | uMediaServer over luna (`load`, `subscribe`, `play`, `pause`, `seek`, `selectTrack`, `setSubtitleEnable`, `unload`); native Buna session (clock, seek preview/commit, stall watchdog, errors) |
+| Playback | `media.*`, `session.*`, `play.*`, `luna.*` | uMediaServer over luna (`load`, `subscribe`, `play`, `pause`, `seek`, `selectTrack`, `setSubtitleEnable`, `unload`); native Buna session (clock, seek preview/commit, stall watchdog, errors) |
 
 ### Behaviour worth knowing
 
 - **Play** on a title goes to *Choose how to watch*, with the recommended source focused. It always names exactly what it plays: "Resume S2 · E4", "Play S1 · E8" (next episode), or "Play".
 - **Pairing**: if AllDebrid is not connected, pressing Play shows a PIN and continues to that source once paired. Settings can reconnect at any time.
 - **Progress** is saved every 15 s while playing, on pause and on exit. Home's *Continue watching* resumes unfinished titles and offers the next episode for finished ones. Playback resumes automatically (a *Start over* button appears).
-- **Up next**: when an episode ends, the next one starts after a 10 s countdown (Back to stay).
+- **Up next**: in the last 150 s of an episode, Bloob ranks the next one's sources and starts preparing the recommended version, so it starts quickly. When the episode ends, it starts after a 10 s countdown (Back to stay). Settings can turn the countdown off.
 - **Back**:
   - **Player:** closes menus, then hides the controls, then exits to where you came from.
   - **Rows:** back to the top, then the tabs.
   - **Tabs:** go to Home. A second Back exits Bloob, after a prompt.
 - **LG quick menu, volume and other overlays** leave playback alone. Going to the background (Home, another app) pauses and saves. If the TV releases the media pipeline meanwhile, the player shows *Reconnecting* and reopens at the same position, at most three times a minute.
-- **Audio and subtitles** list the file's real tracks from the TV's media pipeline.
+- **Audio and subtitles** list the file's real tracks from the TV's media pipeline, naming commentary, forced and SDH tracks. The preferred audio and subtitle languages (Settings) choose the starting tracks, and the viewer's choice survives a reconnect.
+- **Controls**: any key shows the title, timeline, clock, "Ends at" and the controls row. Left or Right from a clear picture shows only the timeline, which hides 2 s after the seek lands.
+- **Settings**: preferred audio language, subtitles, play next automatically, Reduce motion, Disconnect AllDebrid, About (version, credits, licences) and Diagnostics.
+- **Effects**: if drawing is measured slow (two 5 s windows with render p95 over 25 ms), shadows and blur turn off for the session. `BLOOB_EFFECTS=full` pins full effects (desktop renders).
+- **Log lines for measurement**: `[launch]` stages, `[perf]` key-to-present and render times every 5 s, and one `[qoe]` line per viewing (first frame, stalls, watched time, seeks, reloads).
 
 ## Build
 
@@ -48,7 +52,8 @@ The service is the same code as the web app's (`tv-app/service`), staged as the 
 curl -L -o /tmp/sdk.tgz https://github.com/openlgtv/buildroot-nc4/releases/download/webos-a38c582/arm-webos-linux-gnueabi_sdk-buildroot-x86_64.tar.gz
 tar xzf /tmp/sdk.tgz -C /opt && /opt/arm-webos-linux-gnueabi_sdk-buildroot/relocate-sdk.sh
 
-native/scripts/build.sh          # unit tests → cross build → ABI guard → service staging → artifacts/com.muhib.bloob_<v>_arm.ipk
+native/scripts/build.sh          # unit tests → cross build → ABI guard → service staging → IPK with 755/644 modes → artifacts/com.muhib.bloob_<v>_arm.ipk
+native/scripts/acg-lookup.sh     # read-only: which permission groups the TV defines for the services Bloob calls
 native/scripts/ui-tour.sh [dir]  # desktop tour of the whole app, following the acceptance task: real service + live catalogue,
                                  # fixture sources, scripted remote, quick-menu / Home / pipeline-lost events; 1920×1080 PNGs
 native/scripts/ui-snapshots.sh   # desktop player states with simulated TV media events
@@ -62,7 +67,7 @@ The built binary needs only `GLIBC_2.4` and no `GLIBCXX`, because the C++ runtim
 
 ```bat
 cd /d %USERPROFILE%\Downloads
-ares-install -d rootedTV com.muhib.bloob_1.1.0_arm.ipk
+ares-install -d rootedTV com.muhib.bloob_1.2.0_arm.ipk
 ares-launch -d rootedTV com.muhib.bloob
 ssh root@192.168.1.26 "cat /tmp/bloob-native.log"
 ```
@@ -81,6 +86,7 @@ ares-launch -d rootedTV com.muhib.bloob -p "{\"uri\":\"https://...\",\"title\":\
 - **Not yet verified:**
   - **0.4.0 / 1.1.0:** the bundled service starting on the TV, and artwork and catalogue loading there.
   - **1.1.0:** the fix for the quick menu (user report on 0.4: playback died after opening it), legibility at viewing distance, and the acceptance task. See `TV-TEST.md`.
+  - **1.2.0:** everything in `IMPLEMENTATION-UX.md` *Status in 1.2.0*, including the start-position load option and subtitle position, which rely on TV behaviour nobody has confirmed. See `TV-TEST.md` §7.
   - **AllDebrid on the native app:** pairing and resolving.
   - **Real films:** seeking, and audio and subtitle switching, on real content.
 

@@ -12,6 +12,8 @@ class Json {
   Json() = default;
   static Json parse(const std::string &text, bool *ok = nullptr);
   static std::string quote(const std::string &value);
+  // Compact JSON text (for logs and request bodies).
+  static std::string stringify(const Json &value);
 
   Type type() const { return type_; }
   bool is_null() const { return type_ == Type::Null; }

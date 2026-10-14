@@ -49,12 +49,12 @@ Inter, in four weights. Glyphs are rasterised at their exact size, with 2× hori
 | Headline | SemiBold | 28 / 36 | Shelf headers, row labels, settings rows |
 | Body | Regular | 26 / 38 | Descriptions, at most 2–3 lines |
 | Callout | Medium | 24 / 32 | Meta lines, episode titles, option rows |
-| Caption | Medium | 21 / 28 | Episode summaries, secondary notes |
-| Footnote | Medium | 19 / 26 | Episode numbers, badges, small print |
-| Eyebrow | SemiBold | 19 / 24, capitals | Section labels such as BEST MATCH, OTHER VERSIONS, ABOUT |
+| Caption | Medium | 23 / 30 | Episode summaries, secondary notes |
+| Footnote | Medium | 22 / 28 | Episode numbers, badges, small print |
+| Eyebrow | SemiBold | 22 / 28, capitals | Section labels such as BEST MATCH, OTHER VERSIONS, ABOUT |
 | Button | SemiBold | 26 / 32 | Buttons and pills |
 
-Text never goes below 19 px, because that is the floor for reading from a sofa at about 2.5 m on a 55″ panel. Long text is ellipsised or wrapped to a fixed number of lines. It never overlaps.
+Text never goes below 22 px, the size TV 10-foot guidance treats as the floor for reading from a sofa at about 2.5–3 m on a 55″ panel. Long text is ellipsised or wrapped to a fixed number of lines. It never overlaps.
 
 ## Space and layout
 
@@ -126,7 +126,7 @@ Transitions are brief and purposeful. Nothing bounces, nothing slides in from of
 
 ## What the reference informed, and what it did not
 
-The "Elements of A" UI study (`research/Elements-of-A-UI-responsiveness.md` on the `bloob-v1` branch; user observation plus static evidence) informed the *organisation* of Bloob. Specifically:
+The "Elements of A" UI study (`research/Elements-of-A-UI-responsiveness.md` and `research/Elements-of-A-UI-UX-code-study.md`, brought over from `bloob-v1`; user observation plus static evidence) informed the *organisation* of Bloob. Specifically:
 
 - The artwork-led title page.
 - Focus that drives the backdrop after a dwell.

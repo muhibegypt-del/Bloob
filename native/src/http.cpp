@@ -46,9 +46,12 @@ bool dechunk(const std::string &in, std::string &out) {
     unsigned long size = std::strtoul(in.substr(pos, eol - pos).c_str(), nullptr, 16);
     pos = eol + 2;
     if (size == 0) return true;
-    if (pos + size > in.size()) return false;
+    // Compare against what is left, never `pos + size`: a huge size would wrap around.
+    if (size > in.size() - pos || in.size() - pos - size < 2) return false;
     out.append(in, pos, size);
-    pos += size + 2;
+    pos += size;
+    if (in.compare(pos, 2, "\r\n") != 0) return false;  // each chunk ends with CRLF
+    pos += 2;
   }
   return false;
 }

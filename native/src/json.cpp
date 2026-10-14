@@ -190,3 +190,34 @@ std::string Json::quote(const std::string &value) {
   }
   return out + "\"";
 }
+
+std::string Json::stringify(const Json &v) {
+  switch (v.type_) {
+    case Type::Null: return "null";
+    case Type::Bool: return v.bool_ ? "true" : "false";
+    case Type::Number: {
+      char buf[32];
+      if (v.number_ == static_cast<double>(static_cast<long long>(v.number_)) && v.number_ < 9e15 && v.number_ > -9e15)
+        std::snprintf(buf, sizeof buf, "%lld", static_cast<long long>(v.number_));
+      else
+        std::snprintf(buf, sizeof buf, "%.6g", v.number_);
+      return buf;
+    }
+    case Type::String: return quote(v.string_);
+    case Type::Array: {
+      std::string out = "[";
+      for (size_t i = 0; i < v.array_.size(); i++) out += (i ? "," : "") + stringify(v.array_[i]);
+      return out + "]";
+    }
+    case Type::Object: {
+      std::string out = "{";
+      bool first = true;
+      for (auto &item : v.object_) {
+        out += (first ? "" : ",") + quote(item.first) + ":" + stringify(item.second);
+        first = false;
+      }
+      return out + "}";
+    }
+  }
+  return "null";
+}

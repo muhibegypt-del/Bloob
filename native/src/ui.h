@@ -5,6 +5,8 @@
 #include <SDL.h>
 
 #include <functional>
+#include <map>
+#include <set>
 #include <memory>
 #include <string>
 #include <vector>
@@ -58,7 +60,58 @@ struct Ctx {
   std::string last_key = "Press any remote key";
   std::string service_error;   // set when the background service cannot start
   bool paired = false;          // AllDebrid paired (refreshed on demand)
-  std::string language = "English";            // preferred audio language for ranking
+  bool account_known = false;   // the service has answered about the pairing at least once
+  bool settings_loaded = false; // saved settings have arrived from the service
+  bool welcome_seen = false;    // the one-time AllDebrid note was shown
+  std::string language = "English";            // preferred audio language: ranking and the starting track
+  std::string subtitle_language = "Off";        // subtitles to switch on at start ("Off" = none)
+  bool autoplay_next = true;                    // Up next starts the next episode by itself
+  bool reduce_motion = false;                   // no auto-advancing hero, page movement or focus zoom
+
+  // Effects tier: Full until rendering is measured to be slow, then Lite for the session
+  // (no soft shadows, plain dimmed backdrops, a once-a-second player clock).
+  enum class Effects { Full, Lite };
+  Effects effects = Effects::Full;
+  int slow_windows = 0;
+  std::string perf_line;                        // last interaction-timing window, for Diagnostics
+  bool lite() const { return effects == Effects::Lite; }
+
+  // Network state from the TV's connection manager (unknown until it answers).
+  bool online = true;
+  std::string network = "";                     // "wired", "wifi" or ""
+
+  // Launch stages, logged once each with the time since start.
+  std::set<std::string> marks;
+  void mark(const char *stage);
+
+  // Title details fetched ahead of need (Home dwell), reused by Details.
+  struct MetaCache {
+    struct Entry {
+      Json json;
+      long long at = 0;
+    };
+    std::map<std::string, Entry> entries;
+    std::set<std::string> in_flight;
+    const Json *get(const std::string &key, long long now) const {
+      auto it = entries.find(key);
+      return it != entries.end() && now - it->second.at < 10 * 60 * 1000 ? &it->second.json : nullptr;
+    }
+    void put(const std::string &key, Json json, long long now) {
+      if (entries.size() >= 24 && !entries.count(key)) {
+        auto oldest = entries.begin();
+        for (auto it = entries.begin(); it != entries.end(); ++it)
+          if (it->second.at < oldest->second.at) oldest = it;
+        entries.erase(oldest);
+      }
+      entries[key] = {std::move(json), now};
+    }
+  } meta_cache;
+
+  // An episode resolved ahead of time during the credits (Up next), for Sources to pick up.
+  struct Prepared {
+    std::string video_id, job_id, headline;
+    long long at = 0;
+  } prepared_next;
   std::vector<std::string> recent_searches;     // newest first
   void save_settings();
   long long now = 0;

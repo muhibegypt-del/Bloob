@@ -153,6 +153,22 @@ function meta(type, id) {
   });
 }
 
+/** Minutes from Cinemeta's runtime text ("148 min", "2h 28min"), or 0. */
+function runtimeMinutes(text) {
+  const value = String(text || '');
+  const hours = /(\d+)\s*h/i.exec(value);
+  const mins = /(\d+)\s*m/i.exec(value);
+  const total = (hours ? Number(hours[1]) * 60 : 0) + (mins ? Number(mins[1]) : 0);
+  return total > 0 && total < 1000 ? total : 0;
+}
+
+/** Runtime of a title already in the cache, without fetching. Resolves 0 when unknown. */
+function cachedRuntime(type, id) {
+  const hit = cache.get(`meta:${type}:${id}`);
+  if (!hit || hit.expires <= Date.now()) return Promise.resolve(0);
+  return hit.value.then(m => runtimeMinutes(m.runtime), () => 0);
+}
+
 function search(query) {
   const q = String(query || '').trim().slice(0, 80);
   if (q.length < 2) return Promise.resolve({ items: [] });
@@ -169,4 +185,4 @@ function search(query) {
     });
 }
 
-module.exports = { calmTitle, home, browse, meta, search, art };
+module.exports = { calmTitle, home, browse, meta, search, art, runtimeMinutes, cachedRuntime };

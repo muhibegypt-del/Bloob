@@ -79,6 +79,28 @@ Layers 23 (external services) and 24 (the legacy web app) are not scored. One is
 | 15 | Service core and security | 3 | 3 | 3 | – | – | 2 | 3 | **2.80** |
 | 20 | Platform and packaging | 3 | 3 | – | – | – | 3 | 4 | **3.25** |
 
+## Re-score after 1.2.0 (14 October 2026)
+
+1.2.0 built the consolidated implementation list (see `IMPLEMENTATION-UX.md`, *Status in 1.2.0*). Nothing in it has run on the TV, so **E stays where it was for every layer**, and **P only moves where something is now measured in the log**, not because it is faster. The table above is the 1.1 baseline; these are the layers whose scores changed.
+
+| # | Layer | Changed dimensions | Why | 1.1 → **1.2** |
+| --- | --- | --- | --- | --- |
+| 8 | Settings and diagnostics | C 1→3, I 2→3 | Preferred audio now chooses the starting track; subtitles, autoplay, Reduce motion, Disconnect and About exist | 1.50 → **2.00** |
+| 4 | Search | C 2→3, I 2→3 | Distinct empty state; the keyboard gives way to a 4-column result grid | 1.57 → **1.86** |
+| 5 | Details, seasons, episodes | C 1→2, M 1→2 | Season strip scrolls (untested on a long show); the main button's choice is unit-tested | 1.57 → **1.86** |
+| 9 | Player engine (Buna) | C 2→3, R 2→3, M 3 | Tracks restored after reconnects, preferences applied; `policyAction` handled; refused start option retried; QoE accounting unit-tested | 1.83 → **2.17** |
+| 12 | Rendering engine | C 1→2, A 0→2 | Every Latin, Greek and Cyrillic glyph Inter has; CJK still missing; effects step down when slow | 1.83 → **2.33** |
+| 1 | UX: journeys and remote rules | A 1→2, M 2→3 | Reduce motion; one tested owner for Play | 1.86 → **2.14** |
+| 2 | UI: visual system | I 2→3, A 1→2 | 22 px floor; Reduce motion | 2.00 → **2.33** |
+| 6 | Sources and pairing | C 2→3 | Warnings for what this TV cannot play (DTS, disc Dolby Vision, very high bitrate) | 2.00 → **2.14** |
+| 7 | Player screen | C 2→3 | Clock, "Ends at", clearer track labels, legible title, reduced seek mode | 2.00 → **2.14** |
+| 22 | Observability | C 2→3, P 1→2 | `[launch]`, `[perf]` and `[qoe]` lines exist; TV numbers still to collect | 2.00 → **2.40** |
+| 10 | App shell and lifecycle | R 2→3 | Network status known; offline errors say so | 2.17 → **2.33** |
+| 17 | Sources and ranking (service) | C 2→3 | TV profile table; parser claims for 3D, disc images, samples | 2.20 → **2.40** |
+| 14 | Data, workers and bus | R 2→3 | Chunk overflow closed; timeout and not-responding errors told apart | 2.40 → **2.60** |
+
+Unchanged: **21 Testing and tooling (1.33)** is now the clear weakest layer, because the QA items were deliberately skipped. **A** is still the weakest dimension (no CJK font, no text size, no voice or pointer), and **E** cannot move until `TV-TEST.md` §7 is run.
+
 ## Ranking, weakest first
 
 Scores within about 0.15 of each other are effectively tied. The heuristic is a structured judgement, not a measurement, so read the tiers rather than the decimals.

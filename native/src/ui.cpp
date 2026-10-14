@@ -3,6 +3,8 @@
 #include <cmath>
 #include <cstdio>
 
+#include "log.h"
+
 Ctx &ctx() {
   static Ctx instance;
   return instance;
@@ -11,7 +13,15 @@ Ctx &ctx() {
 void Ctx::save_settings() {
   std::string list;
   for (auto &s : recent_searches) list += (list.empty() ? "" : ",") + Json::quote(s);
-  api.post("/api/settings", "{\"language\":" + Json::quote(language) + ",\"recentSearches\":[" + list + "]}");
+  api.post("/api/settings", "{\"language\":" + Json::quote(language) + ",\"subtitleLanguage\":" + Json::quote(subtitle_language) +
+                                ",\"autoplayNext\":" + (autoplay_next ? "true" : "false") +
+                                ",\"reduceMotion\":" + (reduce_motion ? "true" : "false") +
+                                ",\"welcomeSeen\":" + (welcome_seen ? "true" : "false") + ",\"recentSearches\":[" + list + "]}");
+}
+
+void Ctx::mark(const char *stage) {
+  if (!marks.insert(stage).second) return;
+  logf("launch", "%s at %u ms", stage, SDL_GetTicks());
 }
 
 bool Anim::step(double dt) {
@@ -40,9 +50,10 @@ Spec spec(Text style) {
     case Text::Headline: return {2, 28, 36};
     case Text::Body: return {0, 26, 38};
     case Text::Callout: return {1, 24, 32};
-    case Text::Caption: return {1, 21, 28};
-    case Text::Footnote: return {1, 19, 26};
-    case Text::Eyebrow: return {2, 19, 24};
+    // Nothing below 22 px: the smallest size that stays readable at three metres.
+    case Text::Caption: return {1, 23, 30};
+    case Text::Footnote: return {1, 22, 28};
+    case Text::Eyebrow: return {2, 22, 28};
     case Text::Button: return {2, 26, 32};
   }
   return {0, 24, 32};
@@ -159,7 +170,8 @@ int button_width(const ButtonSpec &b) {
 int draw_button(int x, int y, const ButtonSpec &b) {
   Ctx &c = ctx();
   int w = button_width(b), h = b.h;
-  float s = b.focused ? 1.0f + 0.05f * b.lift : 1.0f;
+  // Reduce motion keeps the white fill but drops the zoom.
+  float s = b.focused && !c.reduce_motion ? 1.0f + 0.05f * b.lift : 1.0f;
   int gw = static_cast<int>(w * s), gh = static_cast<int>(h * s);
   int gx = x - (gw - w) / 2, gy = y - (gh - h) / 2;
   if (b.focused) {
@@ -205,7 +217,7 @@ void draw_focus_frame(int x, int y, int w, int h, int radius, float alpha) {
 
 SDL_Rect draw_card(int x, int y, const CardSpec &cs) {
   Ctx &c = ctx();
-  float s = 1.0f + (theme::card_lift - 1.0f) * cs.focus;
+  float s = c.reduce_motion ? 1.0f : 1.0f + (theme::card_lift - 1.0f) * cs.focus;
   int w = static_cast<int>(cs.w * s), h = static_cast<int>(cs.h * s);
   int cx = x - (w - cs.w) / 2, cy = y - (h - cs.h) / 2;
   if (cs.focus > 0.01f) c.gfx.shadow(cx, cy, w, h, cs.radius, 28, 16, static_cast<Uint8>(170 * cs.focus * cs.alpha));

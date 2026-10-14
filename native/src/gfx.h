@@ -6,6 +6,7 @@
 
 #include <map>
 #include <memory>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -21,7 +22,8 @@ class Font {
  public:
   ~Font();
   bool load(SDL_Renderer *renderer, const std::string &path);
-  // Width in pixels of `text` at `size`.
+  // Width in pixels of `text` at `size`. Measuring and drawing load the same
+  // glyphs and lay them out identically, so widths always match what is drawn.
   int measure(const std::string &text, int size);
   // Draws with the top of the line box at `y`. Returns the advance width.
   int draw(const std::string &text, int x, int y, int size, Color color);
@@ -33,19 +35,39 @@ class Font {
     float xoff, yoff, xoff2, yoff2;  // destination box relative to the pen, in pixels
     float advance;
   };
+  // One atlas per pixel size. It starts with the Latin-1 base set; any other
+  // code point the font has is queued on first use (measuring lays it out from
+  // the font's own metrics) and the next draw re-bakes the atlas once with
+  // every queued code point.
   struct Atlas {
+    int size = 0;
     SDL_Texture *texture = nullptr;
+    int tex_w = 0, tex_h = 0;
     std::map<unsigned, Glyph> glyphs;
     std::map<unsigned long long, float> kerning;  // pair -> pixels, filled on first use
+    std::vector<int> codepoints;                  // baked set: base first, then extras
+    std::map<unsigned, float> pending;            // queued for the next bake -> advance
+    std::set<unsigned> refused;                   // over the cap or did not fit: never retried
+    int extras = 0;
+    bool cap_logged = false;
     float ascent = 0, line = 0, scale = 0;
   };
   Atlas *atlas(int size);
+  bool bake(Atlas &atlas, const std::vector<int> &codepoints);
+  // Queues every code point of `cps` the font has but the atlas lacks.
+  void collect(Atlas *atlas, const std::vector<unsigned> &cps);
+  // Re-bakes the atlas once with everything queued.
+  void flush(Atlas *atlas);
+  // Advance for `cp` and the code point used for it (itself, or the '?'
+  // fallback); false for an invisible control or format character.
+  bool advance_for(Atlas *atlas, unsigned cp, unsigned &key, float &advance);
   float kern(Atlas *atlas, unsigned prev, unsigned cp);
 
   SDL_Renderer *renderer_ = nullptr;
   std::vector<unsigned char> data_;
   void *info_ = nullptr;  // stbtt_fontinfo
   std::map<int, Atlas> atlases_;
+  std::set<unsigned> missing_;  // code points this font has no glyph for (any size)
 };
 
 class Gfx {
@@ -70,6 +92,8 @@ class Gfx {
   void bars(int x, int y, int size, Color color);
   // Soft drop shadow for a rounded box: `blur` px of falloff, offset by (dx, dy).
   void shadow(int x, int y, int w, int h, int radius, int blur, int dy, Uint8 alpha);
+  // Off in the Lite effects tier: depth comes from fills and focus colour alone.
+  bool shadows = true;
   // Colour with alpha running from a0 to a1, left→right or top→bottom.
   void gradient_h(int x, int y, int w, int h, Color color, Uint8 a0, Uint8 a1);
   void gradient_v(int x, int y, int w, int h, Color color, Uint8 a0, Uint8 a1);

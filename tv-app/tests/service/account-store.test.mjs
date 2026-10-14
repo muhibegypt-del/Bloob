@@ -65,6 +65,21 @@ describe('account store', () => {
     expect(await store.load()).toBe('');
   });
 
+  it('forget() marks the pairing as removed so a shared pairing is not reused', async () => {
+    const own = temp('own');
+    const shared = temp('shared');
+    writeFileSync(join(shared, 'account.json'), JSON.stringify({ apiKey: 'other-app' }));
+    const locations = () => [{ id: 'app-data', dir: own, durable: true }, { id: 'shared:x', dir: shared, durable: true, readOnly: true }];
+    const store = createStore(locations);
+    expect(await store.load()).toBe('other-app');
+    expect(await store.forget()).toBe('app-data');
+    expect(await createStore(locations).load()).toBe('');
+    expect(JSON.parse(readFileSync(join(shared, 'account.json'), 'utf8'))).toEqual({ apiKey: 'other-app' });
+    // Pairing again replaces the mark.
+    await store.save('new');
+    expect(await createStore(locations).load()).toBe('new');
+  });
+
   it('keeps the original TV location first so existing pairings still load', () => {
     const previous = process.env.TV_APP_DATA_DIR;
     delete process.env.TV_APP_DATA_DIR;

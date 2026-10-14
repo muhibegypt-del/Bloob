@@ -40,7 +40,7 @@ Availability availability(const SourceOption &o) {
   int seeders = std::atoi(o.availability.c_str());
   if (seeders >= 20) return {"Readily available", good};
   if (seeders >= 5) return {"Available", good};
-  if (o.availability.find("seeders") != std::string::npos) return {"Slow to prepare", caution};
+  if (o.availability.find("seeder") != std::string::npos) return {"Slow to prepare", caution};
   return {"Availability unknown", tertiary};
 }
 
@@ -80,7 +80,10 @@ class SourcesScreen : public Screen {
     state_ = State::Loading;
     loading_since_ = ctx().now;
     std::string body = "{\"type\":" + Json::quote(req_.item.type) + ",\"videoId\":" + Json::quote(req_.video_id) +
-                       ",\"language\":" + Json::quote(ctx().language) + "}";
+                       ",\"language\":" + Json::quote(ctx().language);
+    // The service judges bitrate from size over running time.
+    if (int minutes = runtime_minutes(req_.item.runtime)) body += ",\"runtimeMinutes\":" + std::to_string(minutes);
+    body += "}";
     ctx().api.post("/api/sources/ranked", body, [this](const ApiResult &r) {
       if (!r.ok()) {
         state_ = State::Error;
@@ -138,6 +141,16 @@ class SourcesScreen : public Screen {
     step_label_ = "Starting\xE2\x80\xA6";
     fraction_ = -1;
     saw_caching_ = false;
+    // Up next already started this one during the credits: carry on with that job.
+    Ctx::Prepared &prep = ctx().prepared_next;
+    if (!prep.job_id.empty() && prep.video_id == req_.video_id && chosen_.headline == prep.headline &&
+        ctx().now - prep.at < 10 * 60 * 1000) {
+      job_id_ = prep.job_id;
+      prep = Ctx::Prepared{};
+      logf("sources", "continuing the job prepared during the credits");
+      poll();
+      return;
+    }
     std::string body = "{\"candidate\":" + Json::quote(chosen_.id);
     if (req_.item.series()) body += ",\"season\":" + std::to_string(req_.season) + ",\"episode\":" + std::to_string(req_.episode);
     body += "}";
@@ -588,4 +601,14 @@ bool &player_wants_another_source() { return SourcesScreen::choose_another(); }
 
 std::unique_ptr<Screen> make_sources(const PlayRequest &request, bool autostart) {
   return std::make_unique<SourcesScreen>(request, autostart);
+}
+
+void start_playback(const PlayRequest &req, PlayOrigin origin, bool replace_top, bool autostart) {
+  if (req.video_id.empty()) return;
+  static const char *names[] = {"home-hero", "home-row", "details", "episodes", "up-next"};
+  logf("play", "intent from %s: %s resume=%lld", names[static_cast<int>(origin)], req.label().c_str(), req.resume_ms);
+  // Gates belong here and nowhere else (pairing, TV format profile, household limits).
+  auto screen = make_sources(req, autostart);
+  if (replace_top) ctx().replace(std::move(screen));
+  else ctx().push(std::move(screen));
 }

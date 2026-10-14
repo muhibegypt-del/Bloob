@@ -26,7 +26,7 @@ STEPS=(
   'media:{"error":{"errorCode":304,"errorText":"The TV could not decode this stream."}}' "wait:50" "snap:09-error" "quit"
 )
 SCRIPT=$(IFS='|'; echo "${STEPS[*]}")
-SDL_VIDEODRIVER=dummy BLOOB_WINDOW=${BLOOB_WINDOW:-1280x720} BLOOB_SNAPSHOT_DIR="$OUT" BLOOB_SCRIPT="$SCRIPT" \
+BLOOB_EFFECTS=full SDL_VIDEODRIVER=dummy BLOOB_WINDOW=${BLOOB_WINDOW:-1280x720} BLOOB_SNAPSHOT_DIR="$OUT" BLOOB_SCRIPT="$SCRIPT" \
   timeout 60 "$STAGE/bin/bloob_host" '{"uri":"https://example.invalid/film.mkv","title":"Test film","autoplay":true}' > "$OUT/run.log" 2>&1
 # Fill the transparent video hole with a still from the bundled clip.
 STILL="$OUT/.still.png"

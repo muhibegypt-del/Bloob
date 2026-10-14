@@ -33,9 +33,14 @@ function defaultLocations() {
   return list;
 }
 
-async function readKey(file) {
+async function readSaved(file) {
   const saved = JSON.parse(await fs.readFile(file, 'utf8'));
-  return saved && typeof saved.apiKey === 'string' ? saved.apiKey : '';
+  return {
+    key: saved && typeof saved.apiKey === 'string' ? saved.apiKey : '',
+    // Written by forget(): the owner unpaired, so later locations (another
+    // Bloob app's pairing) must not pair this one again.
+    unpaired: !!(saved && saved.unpaired === true),
+  };
 }
 
 async function writeVerified(location, value) {
@@ -65,12 +70,13 @@ function createStore(getLocations) {
     const attempts = [];
     for (const location of getLocations()) {
       try {
-        const key = await readKey(path.join(location.dir, FILE));
-        if (key) {
+        const saved = await readSaved(path.join(location.dir, FILE));
+        if (saved.key) {
           status = { location: location.id, durable: location.durable, attempts };
-          return key;
+          return saved.key;
         }
-        attempts.push({ location: location.id, result: 'empty' });
+        attempts.push({ location: location.id, result: saved.unpaired ? 'unpaired' : 'empty' });
+        if (saved.unpaired) break;
       } catch (error) {
         attempts.push({ location: location.id, result: error.code === 'ENOENT' ? 'none' : error.code || 'unreadable' });
       }
@@ -108,7 +114,24 @@ function createStore(getLocations) {
     status = { location: null, durable: false, attempts: [] };
   }
 
-  return { load, save, clear, getStatus, locations: getLocations };
+  /**
+   * The owner unpaired: clear every saved key, then leave an "unpaired" mark in
+   * the most durable writable location so a shared pairing is not picked up
+   * again. Overwrites; never deletes. Resolves with the location marked, or null.
+   */
+  async function forget() {
+    await clear();
+    for (const location of getLocations()) {
+      if (location.readOnly) continue;
+      try {
+        await writeVerified(location, { unpaired: true });
+        return location.id;
+      } catch (_) { /* try the next */ }
+    }
+    return null;
+  }
+
+  return { load, save, clear, forget, getStatus, locations: getLocations };
 }
 
 /**

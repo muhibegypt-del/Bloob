@@ -26,4 +26,18 @@ node scripts/stage-service.mjs build-webos/service "$VERSION"
 ARES=${ARES_PACKAGE:-../tv-app/node_modules/.bin/ares-package}
 mkdir -p artifacts
 "$ARES" build-webos/pkg build-webos/service -o artifacts
+
+# ares-package stores everything as 0777/0666 and the TV installs it that way.
+# Nothing in the IPK may be writable by other users (the service holds the AllDebrid key).
+IPK="artifacts/com.muhib.bloob_${VERSION}_arm.ipk"
+python3 scripts/fix-ipk-modes.py "$IPK"
+
+# Check what was actually packaged.
+CHECK=$(mktemp -d)
+(cd "$CHECK" && ar x "$OLDPWD/$IPK" && tar tvzf data.tar.gz) > "$CHECK/list"
+if grep -E '^.{5}w|^.{8}w' "$CHECK/list" | grep -q .; then
+  echo "error: group- or world-writable entries in $IPK:" >&2
+  grep -E '^.{5}w|^.{8}w' "$CHECK/list" >&2
+  exit 1
+fi
 ls -la artifacts

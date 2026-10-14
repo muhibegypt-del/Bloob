@@ -1,6 +1,6 @@
 # UX implementation map: responsiveness and continuity
 
-This map turns the Elements of A UI studies into concrete changes to Bloob native. The studies are on `bloob-v1`:
+This map turns the Elements of A UI studies into concrete changes to Bloob native. The studies came from `bloob-v1` and are now in `research/` on this branch too (U0):
 - `research/Elements-of-A-UI-UX-code-study.md` (commit `32c2ebc`);
 - `research/Elements-of-A-UI-responsiveness.md` (commit `59348e3`).
 
@@ -13,10 +13,47 @@ Every item below has six parts:
 6. what to check on the TV.
 
 **About the code:**
-- It is written against `claude/sleepy-ptolemy-o87vgv` at `3fd3b02`, using the real names in `native/src`. It has **not been compiled yet**.
+- It was written against `claude/sleepy-ptolemy-o87vgv` at `3fd3b02`, using the real names in `native/src`. It has since been built (see Status).
 - Each item says how to build and test it.
 - The timings are Bloob's own starting values, to tune on the TV. They are not the reference app's values.
 - No reference code, assets or text are used.
+
+## Status in 1.2.0
+
+The owner asked for the whole consolidated list, minus QA work, in one go (14 October 2026). It is all built in **1.2.0**: it compiles for the TV, the unit tests and service tests pass (native session and play tests; 90 service tests), and the desktop tour runs through it. **None of it has run on the TV.** `TV-TEST.md` §7 is the pass for it. The code below was the plan; where the shipped code differs, the shipped code is the reference.
+
+| ID | Item | Where | Evidence |
+| --- | --- | --- | --- |
+| F1 | Chunked-response length can no longer overflow | `http.cpp` | Desktop |
+| F2 | IPK entries 755/644, build fails on writable entries | `scripts/fix-ipk-modes.py`, `build.sh` | Build |
+| F3 / U5 | Season strip scrolls, with chevrons | `details.cpp` | Untested (no many-season title in the tour) |
+| F4 / U3 | Home focus kept by identity | `browse.cpp` | Desktop |
+| F5 | "1 seeder", plain digits | `rank.js`, `sources.cpp` | Unit tests |
+| F6 | HUD title on a solid scrim band | `player.cpp` | Desktop render |
+| F7 | Tracks restored after a reconnect; preferred audio and subtitles at start | `player.cpp` | Desktop (simulated events) |
+| F8 | Glyphs beyond Latin-1 | `gfx.cpp` | Desktop render |
+| P1 | `requiredACG`: read-only lookup script, value not guessed | `scripts/acg-lookup.sh` | Untested |
+| P2 | `policyAction` → reload; unknown event keys logged once | `media.cpp` | Desktop |
+| P3 | TV format profile in the ranker (DTS, TrueHD, disc DV, bitrate vs 95 Mbps) | `tv-profile.js`, `rank.js` | Unit tests |
+| P4 | Parser: 3D, disc image, sample; ambiguous words after the title only | `release.js` | Unit tests |
+| P5 | Start position in the load request, seek fallback, retry without it if refused | `media.cpp`, `player.cpp` | Desktop; TV unverified |
+| P6 | Connection Manager status; offline and timeout error classes | `main.cpp`, `api.cpp` | Untested |
+| U0 | Research notes on this branch; `DESIGN.md` citation fixed | `research/` | — |
+| U1 | `[launch]`, `[perf]` and `[qoe]` lines; session QoE accounting | `perf.h`, `session.*`, `player.cpp`, `main.cpp` | Unit tests, desktop log |
+| U2 | One Play owner | `play.*`, `start_playback` in `sources.cpp` | Unit tests |
+| U4 | Title details prefetched on dwell, reused by Details | `common.cpp`, `browse.cpp`, `details.cpp` | Desktop |
+| U6 | Timeout classes and the reduced seek HUD | `player.cpp`, `theme.h` | Desktop |
+| U7 | Subtitle position follows the HUD, switches itself off when refused | `player.cpp`, `media.cpp` | Untested |
+| U8 | Effects tiers (Full/Lite, measured) and Reduce motion | `main.cpp`, `gfx.*`, `common.cpp`, `ui.cpp`, `browse.cpp` | Desktop |
+| U9 | Search keyboard gives way; four content states | `search.cpp` | Desktop render |
+| U10 | Next episode ranked and resolved in the last 150 s; Sources picks the job up | `player.cpp`, `sources.cpp` | Untested |
+| G1 | One-time AllDebrid note on Home (no QR code) | `browse.cpp` | Desktop render |
+| G2 | Track labels: roles, codecs, languages, "#2" | `player.cpp`, `media.cpp` | Desktop render |
+| G3 | Wall clock and "Ends at" | `player.cpp` | Desktop render |
+| G4 | Settings: subtitles, autoplay, Disconnect, About and licences | `settings.cpp`, `server.js`, `account-store.js` | Desktop render, route test |
+| G5 | 22 px type floor | `ui.cpp`, `DESIGN.md` | Desktop render |
+
+Not done, by choice: the QA items (tour assertions, CI, the extra tour snaps listed under each item below, TV automation, re-running the audits).
 
 ## Order and dependencies
 

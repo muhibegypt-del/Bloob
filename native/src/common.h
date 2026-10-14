@@ -32,3 +32,8 @@ int draw_title(const Item &item, int x, int top, int box_w, int box_h, float alp
 // technical facts are elsewhere, on request.
 std::string meta_line(const Item &item);
 std::string runtime_text(const std::string &runtime);
+int runtime_minutes(const std::string &runtime);  // 0 when unknown
+
+// Title details ahead of need: Home asks once focus rests on a card, Details reuses it.
+std::string meta_key(const Item &item);
+void prefetch_meta(const Item &item);

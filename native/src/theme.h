@@ -44,6 +44,7 @@ constexpr int episode_w = 400, episode_h = 225;
 
 // ---- motion: rates for eased values (settle ≈ 4.6 / rate seconds)
 constexpr float focus_rate = 33.0f;     // ≈140 ms: focus answers the key at once
+constexpr float focus_out_rate = 16.0f; // ≈290 ms: focus leaves more gently than it arrives
 constexpr float scroll_rate = 18.0f;    // ≈260 ms: shelves and lists
 constexpr float page_rate = 14.0f;      // ≈320 ms: page-level moves
 constexpr float fade_rate = 23.0f;      // ≈200 ms: overlays, HUD
@@ -51,6 +52,8 @@ constexpr float backdrop_rate = 13.0f;  // ≈350 ms crossfade once decoded
 constexpr long long dwell_ms = 250;     // focus rest before the backdrop follows
 constexpr long long spinner_delay_ms = 400;
 constexpr long long hud_timeout_ms = 5000;
+constexpr long long hud_controls_timeout_ms = 12000;  // focus resting on the controls row
+constexpr long long hud_reduced_timeout_ms = 2000;   // timeline-only, after the seek lands
 
 }  // namespace theme
 

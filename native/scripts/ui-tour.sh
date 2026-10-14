@@ -25,7 +25,7 @@ run() {  # run <name> <unpaired 0|1> <steps...>
   sleep 1
   local script
   script=$(IFS='|'; echo "$*")
-  SDL_VIDEODRIVER=dummy BLOOB_WINDOW=1280x720 BLOOB_SERVICE_PORT=$PORT BLOOB_SNAPSHOT_DIR="$OUT" BLOOB_SCRIPT="$script" \
+  BLOOB_EFFECTS=full SDL_VIDEODRIVER=dummy BLOOB_WINDOW=1280x720 BLOOB_SERVICE_PORT=$PORT BLOOB_SNAPSHOT_DIR="$OUT" BLOOB_SCRIPT="$script" \
     timeout 240 "$STAGE/bin/bloob_host" > "$OUT/$name.log" 2>&1 || { echo "$name: app exited with $?"; tail -30 "$OUT/$name.log"; }
   kill $service 2>/dev/null || true
   wait $service 2>/dev/null || true
@@ -73,7 +73,7 @@ run task 0 \
 
 # Film path, pairing and failure states.
 run states 1 \
-  "wait:8000" "key:down" "wait:1500" "key:ok" "wait:4000" "snap:30-details-film" \
+  "wait:8000" "snap:29-welcome" "key:right" "key:ok" "wait:400" "key:down" "wait:1500" "key:ok" "wait:4000" "snap:30-details-film" \
   "key:ok" "wait:2000" "key:ok" "wait:1500" "snap:31-pairing" \
   "key:back" "wait:300" "key:back" "key:back" "wait:800" \
   "key:up" "key:up" "key:up" "wait:300" "key:right" "key:right" "key:right" "wait:800" "snap:32-settings" \
