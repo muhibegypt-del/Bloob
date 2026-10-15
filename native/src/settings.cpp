@@ -167,7 +167,8 @@ class SettingsScreen : public Screen {
     if (scroll_.step(dt)) ctx().animating = true;
   }
 
-  static constexpr int kRowH = 112, kGap = 14;
+  // List buttons [EoA R1-R5]: multiline 120 high, radius 33, padding 30, 14 apart.
+  static constexpr int kRowH = 120, kGap = 14, kRowR = 33, kRowPad = 30;
   static int row_top(int i) { return 270 + i * (kRowH + kGap); }
 
   void draw() override {
@@ -176,7 +177,7 @@ class SettingsScreen : public Screen {
     c.gfx.clear(plain);
     int x = safe_x, w = 1180;
     int off = static_cast<int>(std::lround(scroll_.value));
-    text(Text::Title2, "Settings", x, 172 - off, label(Label::Primary));
+    text(Text::Title2, "Settings", x, 172 - off, label(Label::Secondary));  // Emphasized.Title2, secondary [EoA R6]
     auto list = rows();
     for (size_t i = 0; i < list.size(); i++) {
       int y = row_top(static_cast<int>(i)) - off;
@@ -184,10 +185,10 @@ class SettingsScreen : public Screen {
       bool f = row_ == static_cast<int>(i) && !tabs_ && !pairing_.active();
       // Glass rows: white with a soft lift when focused, a faint white fill at rest.
       if (f) {
-        c.gfx.shadow(x, y, w, kRowH, 24, 24, 10, 130);
-        c.gfx.fill_round(x, y, w, kRowH, 24, rgba(0xffffff));
+        if (!c.lite()) c.gfx.shadow(x, y, w, kRowH, kRowR, theme::shadow_blur, theme::shadow_dy, theme::shadow_alpha);
+        c.gfx.fill_round(x, y, w, kRowH, kRowR, theme::button_focus);  // White90
       } else {
-        c.gfx.fill_round(x, y, w, kRowH, 24, theme::settings_platter);
+        c.gfx.fill_round(x, y, w, kRowH, kRowR, theme::settings_platter);
       }
       std::string title, value, action;
       bool choice = false;
@@ -246,21 +247,24 @@ class SettingsScreen : public Screen {
       }
       Color fg = f ? rgba(0x000000) : label(Label::Primary);
       Color fg2 = f ? rgba(0x000000, 166) : label(Label::Secondary);
-      text(Text::Headline, title, x + 40, y + 16, fg);
-      text(Text::Callout, value, x + 40, y + 64, fg2, 860);
+      // Title Regular.Body, subtitle Regular.Caption1, 5 apart, centred as a block.
+      int block = line_for(Text::BodySemi) + 5 + line_for(Text::Caption1Semi);
+      int ty = y + (kRowH - block) / 2;
+      text(Text::BodySemi, title, x + kRowPad, ty, fg);
+      text(Text::Caption1Semi, value, x + kRowPad, ty + line_for(Text::BodySemi) + 5, fg2, 860);
       if (toggle >= 0) {
         // A switch: white knob, filled track when on.
-        int sw = 84, sh = 48, sx = x + w - 40 - sw, sy = y + (kRowH - sh) / 2;
+        int sw = 84, sh = 48, sx = x + w - kRowPad - sw, sy = y + (kRowH - sh) / 2;
         Color track = toggle ? (f ? rgba(0x000000) : rgba(0xffffff)) : (f ? rgba(0x000000, 40) : rgba(0xffffff, 50));
         c.gfx.fill_round(sx, sy, sw, sh, sh / 2, track);
         int kx = toggle ? sx + sw - sh / 2 : sx + sh / 2;
         Color knob = toggle ? (f ? rgba(0xffffff) : rgba(0x000000)) : rgba(0xffffff);
         c.gfx.fill_circle(kx, sy + sh / 2, sh / 2 - 5, knob);
       } else if (choice) {
-        c.icons.draw(Icon::ChevronLeft, x + w - 150, y + 38, 36, f ? fg : label(Label::Tertiary));
-        c.icons.draw(Icon::ChevronRight, x + w - 76, y + 38, 36, f ? fg : label(Label::Tertiary));
+        c.icons.draw(Icon::ChevronLeft, x + w - kRowPad - 110, y + (kRowH - 36) / 2, 36, f ? fg : label(Label::Tertiary));
+        c.icons.draw(Icon::ChevronRight, x + w - kRowPad - 36, y + (kRowH - 36) / 2, 36, f ? fg : label(Label::Tertiary));
       } else {
-        text_right(Text::Callout, action, x + w - 40, y + (kRowH - line_for(Text::Callout)) / 2, f ? fg : label(Label::Tertiary));
+        text_right(Text::Body, action, x + w - kRowPad, text_y_centered(Text::Body, y + kRowH / 2), f ? fg : label(Label::Tertiary));
       }
     }
     int y = row_top(static_cast<int>(list.size())) - off;

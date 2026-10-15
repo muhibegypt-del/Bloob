@@ -18,7 +18,16 @@ namespace {
 using namespace theme;
 
 constexpr int STRIDE = card_w + card_gap;
-constexpr int ROW_H = 330;
+// Shelves [EoA H11-H14]: header block 72 (text 20 down), 14 to the cards, 55 below;
+// the first shelf starts at 742 under the hero.
+constexpr int kHeaderH = 72, kHeaderTop = 20, kHeaderToItems = 14, kShelfBottom = 55;
+constexpr int ROW_H = kHeaderH + kHeaderToItems + card_h + kShelfBottom;  // 321
+constexpr int kFirstShelf = 742;
+// Hero text block [EoA H1-H8]: logo at most 420 × 126 (283 × 85 when compact),
+// title → metadata 13, metadata → description 18, description 570 wide in 3
+// lines, description → buttons 32. The block ends 32 above the first shelf.
+constexpr int kLogoW = 420, kLogoH = 126, kLogoSmallW = 283, kLogoSmallH = 85;
+constexpr int kTitleToMeta = 13, kMetaToBody = 18, kBodyToButtons = 32, kBodyW = 570, kBodyLines = 3;
 constexpr int X0 = safe_x;
 constexpr long long kAutoAdvanceMs = 9000;
 constexpr int kFeatured = 6;
@@ -363,8 +372,9 @@ class BrowseScreen : public Screen {
     connect.focused = welcome_button_ == 0;
     later.label = "Later";
     later.focused = welcome_button_ == 1;
+    connect.variant = later.variant = ButtonStyle::Default;  // on a panel [EoA B11]
     int bx = x + 56, by = y + h - 124;
-    bx += draw_glass_button(bx, by, connect) + theme::control_gap;
+    bx += draw_glass_button(bx, by, connect) + theme::stack_gap;
     draw_glass_button(bx, by, later);
     (void)c;
   }
@@ -524,6 +534,7 @@ class BrowseScreen : public Screen {
     backdrop_.draw(0.22f * m);
     // Scrims follow the art: bright pictures get a stronger wash behind the text.
     float s = scrim_for(backdrop_.luma());
+    draw_hero_overlay(backdrop_.luma());
     draw_scrims(s, static_cast<int>(lerp(560, 330, m)), std::min(1.0f, 0.55f + 0.45f * s + 0.2f * m));
     draw_top(m);
     draw_rows(m);
@@ -535,14 +546,16 @@ class BrowseScreen : public Screen {
     Ctx &c = ctx();
     c.gfx.clear(plain);
     float pulse = 0.5f + 0.5f * static_cast<float>(std::sin(c.now / 1600.0 * 6.2831853));
-    Color tone = mix(rgba(0x18181b), rgba(0x232326), pulse);
-    c.gfx.fill_round(X0, 300, 560, 160, 18, tone);
-    c.gfx.fill_round(X0, 492, 420, 30, 15, tone);
-    c.gfx.fill_round(X0, 546, 820, 26, 13, tone);
-    c.gfx.fill_round(X0, 584, 680, 26, 13, tone);
-    c.gfx.fill_round(X0, 690, 210, 80, 40, tone);
-    c.gfx.fill_round(X0 + 230, 690, 190, 80, 40, tone);
-    for (int i = 0; i < 5; i++) c.gfx.fill_round(X0 + i * STRIDE, 846, card_w, card_h, card_radius, tone);
+    // The artwork placeholder grey, 29,29,29 [EoA C14], in the shapes of the hero below.
+    Color tone = mix(rgba(0x1d1d1d), rgba(0x262627), pulse);
+    c.gfx.fill_round(X0, 327, kLogoW, kLogoH, 18, tone);
+    c.gfx.fill_round(X0, 466, 420, 26, 13, tone);
+    c.gfx.fill_round(X0, 516, kBodyW, 24, 12, tone);
+    c.gfx.fill_round(X0, 548, 520, 24, 12, tone);
+    c.gfx.fill_round(X0, 580, 460, 24, 12, tone);
+    c.gfx.fill_round(X0, 644, theme::title_button_min_w, theme::button_h, theme::button_h / 2, tone);
+    c.gfx.fill_round(X0 + theme::title_button_min_w + theme::title_button_gap, 644, theme::title_button_min_w, theme::button_h, theme::button_h / 2, tone);
+    for (int i = 0; i < 5; i++) c.gfx.fill_round(X0 + i * STRIDE, kFirstShelf + kHeaderH + kHeaderToItems, card_w, card_h, card_radius, tone);
   }
 
   void draw_top(float m) {
@@ -550,21 +563,6 @@ class BrowseScreen : public Screen {
     const Shown &s = shown_;
     if (s.item.id.empty()) return;
     float t = text_in_.value;  // new title text eases in
-    int box_top = static_cast<int>(lerp(300, 140, m));
-    int box_h = static_cast<int>(lerp(200, 140, m));
-    int box_w = static_cast<int>(lerp(760, 520, m));
-
-    // Why this title is here, in plain words.
-    std::string why;
-    if (s.has_resume) why = s.resume.kind == "upcoming" ? "You\xE2\x80\x99re up to date"
-                            : s.resume.reason == "new" ? "New episode"
-                            : s.resume.kind == "next" ? "Up next" : "Continue watching";
-    else if (hero_) why = kind_ == Browse::Series ? "Popular series" : kind_ == Browse::Movies ? "Popular film" : (s.item.series() ? "Popular series" : "Popular film");
-    float hero_only = std::max(0.0f, 1.0f - 2.0f * m);
-    if (!why.empty() && hero_only > 0.01f) text(Text::Caption1, why, X0, box_top - 44, label(Label::Secondary, hero_only * t));
-
-    int y = draw_title(s.item, X0, box_top, box_w, box_h, t);
-    y += 22;
     std::string meta = meta_line(s.item);
     if (s.has_resume && s.item.series()) {
       const Resume &r = s.resume;
@@ -573,12 +571,34 @@ class BrowseScreen : public Screen {
       else if (r.kind == "next" && r.next) meta = episode_code(r.next->season, r.next->episode) + " \xC2\xB7 " + r.next->title;
       else meta = join({episode_code(r.season, r.episode), r.episode_title});
     }
-    text(Text::Callout, meta, X0, y, label(Label::Secondary, t), 1100);
-    y += 50;
-    paragraph(Text::Body, s.item.description, X0, y, label(Label::Primary, 0.86f * t), 860, 2);
+    // Hero positions, laid out from the bottom so the block always ends in the same place.
+    int lines = std::max(1, static_cast<int>(wrap(font_for(Text::Caption1), s.item.description, size_for(Text::Caption1), kBodyW, kBodyLines).size()));
+    int line = line_for(Text::Caption1);
+    int hero_by = kFirstShelf - kBodyToButtons - theme::button_h;
+    int hero_box_top = hero_by - kBodyToButtons - lines * line - kMetaToBody - line - kTitleToMeta - kLogoH;
+    int box_top = static_cast<int>(lerp(static_cast<float>(hero_box_top), 140, m));
+    int box_h = static_cast<int>(lerp(kLogoH, kLogoSmallH, m));
+    int box_w = static_cast<int>(lerp(kLogoW, kLogoSmallW, m));
+
+    // Why this title is here, in plain words: Emphasized.Headline, secondary [EoA H9].
+    std::string why;
+    if (s.has_resume) why = s.resume.kind == "upcoming" ? "You\xE2\x80\x99re up to date"
+                            : s.resume.reason == "new" ? "New episode"
+                            : s.resume.kind == "next" ? "Up next" : "Continue watching";
+    else if (hero_) why = kind_ == Browse::Series ? "Popular series" : kind_ == Browse::Movies ? "Popular film" : (s.item.series() ? "Popular series" : "Popular film");
+    float hero_only = std::max(0.0f, 1.0f - 2.0f * m);
+    if (!why.empty() && hero_only > 0.01f)
+      text(Text::Headline, why, X0, box_top - 18 - line_for(Text::Headline), label(Label::Secondary, hero_only * t));
+
+    int y = draw_title(s.item, X0, box_top, box_w, box_h, t);
+    y += kTitleToMeta;
+    // Metadata Standard.Caption1 primary; description Standard.Caption1 secondary [EoA H6, H7].
+    text(Text::Caption1, meta, X0, y, label(Label::Primary, t), 1100);
+    y += line + kMetaToBody;
+    paragraph(Text::Caption1, s.item.description, X0, y, label(Label::Secondary, t), kBodyW, m > 0.5f ? 2 : kBodyLines);
 
     if (hero_only > 0.01f) {
-      int by = 690;
+      int by = hero_by;
       int bx = X0;
       auto buttons = hero_buttons();
       for (size_t i = 0; i < buttons.size(); i++) {
@@ -588,13 +608,15 @@ class BrowseScreen : public Screen {
         b.focused = hero_ && !tabs_ && static_cast<int>(i) == button_;
         b.lift = button_lift_.value;
         b.alpha = hero_only;
-        bx += draw_glass_button(bx, by, b) + theme::control_gap;
+        b.min_w = theme::title_button_min_w;
+        b.max_w = theme::title_button_max_w;
+        bx += draw_glass_button(bx, by, b) + theme::title_button_gap;
       }
       if (s.has_resume && s.resume.kind == "resume" && s.resume.duration > 0) {
         bx += 14;
-        draw_progress(bx, by + 30, 200, 5, static_cast<double>(s.resume.position) / s.resume.duration, fade(rgba(0xffffff), hero_only),
+        draw_progress(bx, by + theme::button_h / 2 - 3, 200, 5, static_cast<double>(s.resume.position) / s.resume.duration, fade(rgba(0xffffff), hero_only),
                       fade(with_alpha(rgba(0xffffff), 72), hero_only));
-        text(Text::Caption2, minutes_left(s.resume.duration - s.resume.position), bx, by + 44, label(Label::Secondary, hero_only));
+        text(Text::Caption2, minutes_left(s.resume.duration - s.resume.position), bx, by + theme::button_h / 2 + 8, label(Label::Secondary, hero_only));
       }
       // Page dots for the featured picks, right-aligned on the button line.
       int pages = static_cast<int>(featured_.size());
@@ -611,7 +633,7 @@ class BrowseScreen : public Screen {
   }
 
   void draw_rows(float m) {
-    float base = lerp(790, 500, m);
+    float base = lerp(kFirstShelf, 500, m);
     for (size_t i = 0; i < rows_.size(); i++) {
       float y = base + (static_cast<float>(i) - vscroll_.value) * ROW_H;
       if (y > H || y < -ROW_H) continue;
@@ -620,8 +642,9 @@ class BrowseScreen : public Screen {
       if (alpha <= 0.01f) continue;
       bool focused_row = !hero_ && static_cast<int>(i) == row_;
       int hy = static_cast<int>(y);
-      text(Text::Headline, rows_[i].title, X0, hy, label(focused_row ? Label::Primary : Label::Secondary, alpha));
-      draw_shelf(i, hy + 58, alpha, focused_row);
+      // Header: Emphasized.Callout, secondary [EoA H12]; the focused shelf's is primary.
+      text(Text::CalloutBold, rows_[i].title, X0, hy + kHeaderTop, label(focused_row ? Label::Primary : Label::Secondary, alpha));
+      draw_shelf(i, hy + kHeaderH + kHeaderToItems, alpha, focused_row);
     }
   }
 
@@ -671,7 +694,7 @@ class BrowseScreen : public Screen {
       }
       draw_card(x, y, cs);
       if (focused) {
-        int ly = y + card_h + 22;
+        int ly = y + card_h + 24;  // 14 for the focused card's growth, then 10 [EoA K8]
         text(Text::Caption1, it.name, x, ly, label(Label::Primary, alpha), card_w + 40);
         std::string under = row.continue_row() ? sub : join({it.year, it.series() ? "Series" : "Film"});
         if (!under.empty()) text(Text::Caption2, under, x, ly + 34, label(Label::Secondary, alpha), card_w + 40);

@@ -33,11 +33,47 @@ void Ctx::mark(const char *stage) {
   logf("launch", "%s at %u ms", stage, SDL_GetTicks());
 }
 
+static float ease(Ease e, float p) {
+  switch (e) {
+    case Ease::Linear: return p;
+    case Ease::In: return p * p;
+    case Ease::Out: return p * (2 - p);
+    case Ease::InOut: return p < 0.5f ? 2 * p * p : 1 - 2 * (1 - p) * (1 - p);
+  }
+  return p;
+}
+
+void Anim::to(float v) {
+  if (v == target) return;
+  target = v;
+  from_ = value;
+  t_ms_ = 0;
+}
+
 bool Anim::step(double dt) {
-  if (value == target) return false;
-  float k = 1.0f - static_cast<float>(std::exp(-rate * dt));
-  value += (target - value) * k;
-  if (std::fabs(target - value) < 0.002f * std::max(1.0f, std::fabs(target))) {
+  if (value == target && velocity_ == 0) return false;
+  if (motion.spring) {
+    // Semi-implicit Euler in steps of at most 1/120 s; settles inside 0.2% of the move.
+    double left = dt;
+    while (left > 0) {
+      float h = static_cast<float>(std::min(left, 1.0 / 120));
+      float force = -motion.stiffness * (value - target) - motion.damping * velocity_;
+      velocity_ += force / motion.mass * h;
+      value += velocity_ * h;
+      left -= h;
+    }
+    float scale = std::max(1.0f, std::fabs(target));
+    if (std::fabs(target - value) < 0.002f * scale && std::fabs(velocity_) < 0.01f * scale) {
+      value = target;
+      velocity_ = 0;
+      return false;
+    }
+    return true;
+  }
+  t_ms_ += dt * 1000.0;
+  float p = motion.ms <= 0 ? 1.0f : static_cast<float>(std::min(1.0, t_ms_ / motion.ms));
+  value = from_ + (target - from_) * ease(motion.ease, p);
+  if (p >= 1.0f) {
     value = target;
     return false;
   }
@@ -54,18 +90,25 @@ struct Spec {
 Spec spec(Text style) {
   switch (style) {
     // Nothing below 22 px: the smallest size that stays readable at three metres.
+    // Headings are the Emphasized roles (Bold); text is Standard (Medium) [EoA T12].
     case Text::Display: return {3, 104, 112};
     case Text::Title1: return {3, 76, 96};
     case Text::Title2: return {3, 57, 66};
-    case Text::Title3: return {2, 48, 56};
-    case Text::Headline: return {2, 38, 46};
+    case Text::Title3: return {3, 48, 56};
+    case Text::Title3Std: return {1, 48, 56};      // Standard.Title3: keyboard keys [EoA S4]
+    case Text::Headline: return {3, 38, 46};
     case Text::Callout: return {1, 31, 38};
+    case Text::CalloutBold: return {3, 31, 38};     // Emphasized.Callout: shelf headers, pills [EoA T13]
+    case Text::BodyBold: return {3, 29, 36};        // Emphasized.Body: player controls
+    case Text::BodySemi: return {2, 29, 36};        // Regular.Body: settings titles, buttons
+    case Text::Caption1Semi: return {2, 25, 32};    // Regular.Caption1: settings subtitles
+    case Text::Caption2Bold: return {3, 23, 30};    // Emphasized.Caption2: player times
     case Text::Body: return {1, 29, 36};
     case Text::Caption1: return {1, 25, 32};
     case Text::Caption2: return {1, 23, 30};
     case Text::Caption3: return {1, 21, 28};  // [EoA T9]; only where text is fitted, never body copy
     case Text::Button: return {2, 29, 36};
-    case Text::Pill: return {2, 31, 38};      // Emphasized Callout [EoA P2]
+    case Text::Pill: return {3, 31, 38};      // Emphasized.Callout, Bold [EoA P2]
   }
   return {0, 24, 32};
 }
@@ -205,10 +248,16 @@ void draw_missing_art(int x, int y, int w, int h, int radius, const std::string 
 
 SDL_Rect draw_card(int x, int y, const CardSpec &cs) {
   Ctx &c = ctx();
-  float s = c.reduce_motion ? 1.0f : 1.0f + (theme::card_lift - 1.0f) * cs.focus;
-  int w = static_cast<int>(cs.w * s), h = static_cast<int>(cs.h * s);
+  // Focus grows the card 50 wider, height in proportion, about its centre [EoA K2].
+  float s = c.reduce_motion ? 1.0f : 1.0f + static_cast<float>(theme::card_grow) / cs.w * cs.focus;
+  int w = static_cast<int>(std::lround(cs.w * s)), h = static_cast<int>(std::lround(cs.h * s));
   int cx = x - (w - cs.w) / 2, cy = y - (h - cs.h) / 2;
-  if (cs.focus > 0.01f) c.gfx.shadow(cx, cy, w, h, cs.radius, 28, 16, static_cast<Uint8>(170 * cs.focus * cs.alpha));
+  // Two shadows, blended by focus: a light one at rest, a deep one when focused [EoA K4].
+  float f = std::max(0.0f, std::min(1.0f, cs.focus));
+  int blur = static_cast<int>(theme::card_shadow_blur + (theme::card_focus_shadow_blur - theme::card_shadow_blur) * f);
+  int dy = static_cast<int>(theme::card_shadow_dy + (theme::card_focus_shadow_dy - theme::card_shadow_dy) * f);
+  float sa = theme::card_shadow_alpha + (theme::card_focus_shadow_alpha - theme::card_shadow_alpha) * f;
+  if (!c.lite()) c.gfx.shadow(cx, cy, w, h, cs.radius, blur, dy, static_cast<Uint8>(sa * cs.alpha));
   ImageRef img = cs.art.empty() ? ImageRef{} : c.images.get(cs.art, cs.w, cs.h, cs.radius, Fit::Cover, cs.title_on_art);
   if ((img.failed || cs.art.empty()) && !cs.fallback_art.empty())
     img = c.images.get(cs.fallback_art, cs.w, cs.h, cs.radius, Fit::Cover, cs.title_on_art);
@@ -219,17 +268,19 @@ SDL_Rect draw_card(int x, int y, const CardSpec &cs) {
     if (img.alpha < 255) c.gfx.fill_round(cx, cy, w, h, cs.radius, fade(rgba(0xffffff, 18), cs.alpha));
     if (img.texture) c.gfx.texture(img.texture, cx, cy, w, h, static_cast<Uint8>(img.alpha * cs.alpha));
     if (cs.title_on_art && !cs.title.empty()) {
-      int ty = cy + h - (cs.progress >= 0 ? 30 : 16) - line_for(Text::Caption2);
+      const int pad = theme::card_text_pad;
+      int ty = cy + h - (cs.progress >= 0 ? theme::progress_pad_y + 5 + 10 : pad) - line_for(Text::Caption2);
       int sw = cs.sub.empty() ? 0 : measure(Text::Caption2, cs.sub);
-      if (sw) text(Text::Caption2, cs.sub, cx + w - 16 - sw, ty, label(Label::Secondary, cs.alpha * 1.2f));
-      text(Text::Caption2, cs.title, cx + 16, ty, label(Label::Primary, cs.alpha), w - 44 - sw);
+      if (sw) text(Text::Caption2, cs.sub, cx + w - pad - sw, ty, label(Label::Secondary, cs.alpha * 1.2f));
+      text(Text::Caption2, cs.title, cx + pad, ty, label(Label::Primary, cs.alpha), w - 2 * pad - 12 - sw);
     }
   }
   if (cs.progress >= 0) {
-    int pw = w - 32;
-    c.gfx.fill_round(cx + 16, cy + h - 18, pw, 5, 2, fade(with_alpha(rgba(0xffffff), 72), cs.alpha));
+    // Progress inset 18 / 12 inside the card [EoA K6]; tertiary under primary [EoA K7].
+    int pw = w - 2 * theme::progress_pad_x, py = cy + h - theme::progress_pad_y - 5;
+    c.gfx.fill_round(cx + theme::progress_pad_x, py, pw, 5, 2, fade(theme::progress_back, cs.alpha));
     int fw = static_cast<int>(pw * std::max(0.0, std::min(1.0, cs.progress)));
-    if (fw > 0) c.gfx.fill_round(cx + 16, cy + h - 18, std::max(5, fw), 5, 2, fade(rgba(0xffffff), cs.alpha));
+    if (fw > 0) c.gfx.fill_round(cx + theme::progress_pad_x, py, std::max(5, fw), 5, 2, fade(rgba(0xffffff), cs.alpha));
   }
   // Focus: the lift and shadow above, plus a diagonal sheen across the art.
   if (cs.focus > 0.01f && !missing) c.gfx.sheen(cx, cy, w, h, cs.radius, cs.w, cs.h, static_cast<Uint8>(56 * cs.focus * cs.alpha));
@@ -281,9 +332,9 @@ ButtonLayout layout_of(const GlassButton &b) {
   ButtonLayout l{};
   l.style = b.pill ? Text::Pill : b.style;
   l.h = b.pill ? theme::pill_h : b.h;
-  l.pad = b.pill ? theme::pill_pad : l.h >= 72 ? 48 : 30;
-  l.icon = l.h >= 72 ? 30 : 26;
-  l.gap = 12;
+  l.pad = b.pill ? theme::pill_pad : theme::button_pad;          // 30 at every size [EoA B2]
+  l.icon = l.h >= theme::button_h ? 26 : 22;                       // hero play icon 26 [EoA B13]
+  l.gap = l.h <= theme::button_small_h ? 8 : theme::button_icon_gap;
   l.label_w = b.label.empty() ? 0 : measure(l.style, b.label);
   l.check_w = b.candidate && !b.pill ? 28 + l.gap : 0;
   if (b.label.empty()) {
@@ -293,6 +344,12 @@ ButtonLayout layout_of(const GlassButton &b) {
   }
   l.content = (b.icon >= 0 ? l.icon + l.gap : 0) + l.label_w + l.check_w;
   l.w = l.content + 2 * l.pad;
+  if (b.min_w > 0) l.w = std::max(l.w, b.min_w);
+  if (b.max_w > 0 && l.w > b.max_w) {
+    l.label_w = std::max(0, l.label_w - (l.w - b.max_w));  // the label is truncated to fit
+    l.content = (b.icon >= 0 ? l.icon + l.gap : 0) + l.label_w + l.check_w;
+    l.w = b.max_w;
+  }
   return l;
 }
 }  // namespace
@@ -303,32 +360,31 @@ int draw_glass_button(int x, int y, const GlassButton &b) {
   Ctx &c = ctx();
   ButtonLayout l = layout_of(b);
   int w = l.w, h = l.h;
-  int gx = x, gy = y, gw = w, gh = h;
-  if (b.pill) {
-    // Pills grow sideways when focused, by a fixed amount [EoA P4].
-    int grow = b.focused && !c.reduce_motion ? static_cast<int>(std::lround(theme::pill_focus_grow * b.lift)) : 0;
-    gx = x - grow / 2;
-    gw = w + grow;
-  } else {
-    float lift = b.focused && !c.reduce_motion ? 1.0f + (theme::control_lift - 1.0f) * b.lift : 1.0f;
-    gw = static_cast<int>(std::lround(w * lift));
-    gh = static_cast<int>(std::lround(h * lift));
-    gx = x - (gw - w) / 2;
-    gy = y - (gh - h) / 2;
-  }
-  int radius = b.pill ? theme::pill_radius * gh / theme::pill_h : gh / 2;
+  // Focus grows the button sideways by a fixed amount; there is no scale [EoA B4, P4].
+  int grow_by = b.pill ? theme::pill_focus_grow : theme::button_grow;
+  int grow = b.focused && !c.reduce_motion ? static_cast<int>(std::lround(grow_by * b.lift)) : 0;
+  int gx = x - grow / 2, gy = y, gw = w + grow, gh = h;
+  int radius = gh / 2;
+  Color rest = b.variant == ButtonStyle::Player ? theme::button_player
+               : b.variant == ButtonStyle::Default ? theme::button_default : theme::button_dark;
+  Color cand = b.pill ? theme::candidate
+               : b.variant == ButtonStyle::Player ? theme::button_player_candidate
+               : b.variant == ButtonStyle::Default ? theme::button_default_candidate : theme::button_dark_candidate;
+  // The shadow shows when focused or candidate [EoA B14]; pills only when focused.
+  if (b.focused || (b.candidate && !b.pill))
+    c.gfx.shadow(gx, gy, gw, gh, radius, theme::shadow_blur, theme::shadow_dy, static_cast<Uint8>(theme::shadow_alpha * b.alpha * (b.focused ? 1.0f : 0.5f)));
   if (b.focused) {
-    c.gfx.shadow(gx, gy, gw, gh, radius, 30, 14, static_cast<Uint8>(150 * b.alpha));
-    c.gfx.fill_round(gx, gy, gw, gh, radius, fade(rgba(0xffffff), b.alpha));
+    c.gfx.fill_round(gx, gy, gw, gh, radius, fade(b.pill ? rgba(0xffffff) : theme::button_focus, b.alpha));
   } else if (b.pill) {
-    if (b.candidate) c.gfx.fill_round(gx, gy, gw, gh, radius, fade(theme::candidate, b.alpha));
+    if (b.candidate) c.gfx.fill_round(gx, gy, gw, gh, radius, fade(cand, b.alpha));
   } else {
-    c.gfx.fill_round(gx, gy, gw, gh, radius, fade(b.candidate ? theme::candidate : with_alpha(rgba(0xffffff), 36), b.alpha));
-    c.gfx.stroke_round(gx, gy, gw, gh, radius, 1, fade(c.high_contrast ? theme::hairline_high : theme::frost_hairline, b.alpha));
+    c.gfx.fill_round(gx, gy, gw, gh, radius, fade(b.candidate ? cand : rest, b.alpha));
+    if (b.variant != ButtonStyle::Default && !b.candidate)
+      c.gfx.stroke_round(gx, gy, gw, gh, radius, 1, fade(c.high_contrast ? theme::hairline_high : theme::frost_hairline, b.alpha));
   }
   // Pills: secondary at rest, primary as candidate [EoA P5].
-  Label rest = b.disabled ? Label::Disabled : b.pill && !b.candidate ? Label::Secondary : Label::Primary;
-  Color fg = b.focused ? fade(rgba(0x000000), b.alpha) : label(rest, b.alpha);
+  Label rest_label = b.disabled ? Label::Disabled : b.pill && !b.candidate ? Label::Secondary : Label::Primary;
+  Color fg = b.focused ? fade(rgba(0x000000), b.alpha) : label(rest_label, b.alpha);
   int cy = gy + gh / 2, isz = l.icon;
   if (b.label.empty()) {
     if (b.icon == kPlayIcon) c.gfx.triangle_right(gx + gw / 2 - isz / 3, cy - isz / 2, isz, fg);
@@ -345,7 +401,7 @@ int draw_glass_button(int x, int y, const GlassButton &b) {
     c.icons.draw(static_cast<Icon>(b.icon), tx, cy - isz / 2, isz, fg);
     tx += isz + l.gap;
   }
-  text(l.style, b.label, tx, text_y_centered(l.style, cy), fg);
+  text(l.style, b.label, tx, text_y_centered(l.style, cy), fg, l.label_w + 1);
   if (l.check_w) c.icons.draw(Icon::Check, tx + l.label_w + l.gap, cy - 14, 28, fg);
   return w;
 }

@@ -1,4 +1,4 @@
-# Bloob visual system 2.0: Glass
+# Bloob visual system 2.3: Glass on Elements of A values
 
 This is the design system for the native app. `src/theme.h` holds the tokens; `src/ui.cpp` holds the type scale, the label roles and the shared components (`draw_glass`, `draw_glass_button`, `draw_glass_badge`, `draw_card`). If you change a value, change it here and in the code at the same time. `GLASS-PLAN.md` records how Glass was built, phase by phase (G0–G8).
 
@@ -7,6 +7,25 @@ The renders below come from `scripts/ui-tour.sh`, which drives the real app on t
 **Sources:**
 - Apple's public tvOS Human Interface Guidelines for the shared tvOS conventions: type sizes, the safe area, the 5-column grid, focus lift.
 - The Elements of A studies for **values as well as principles**. Owner's rule (15 October 2026): measured values are copied wherever the studies record them. That covers spacing, padding, sizes, radii, type sizes, opacities, colours, timings and geometry. Code, artwork, icons, fonts, written text and branding are never copied. Every copied value is listed with its source in `TOKENS.md`. Bloob picks its own value only where the studies record none.
+
+## 2.3: Elements of A values
+
+2.3.0 applied the full extracted catalogue (`research/Elements-of-A-design-tokens.md`); `TOKENS.md` lists every value with its line. Where this document gives older numbers, `theme.h` and `TOKENS.md` win.
+
+**Values that now come from the catalogue:**
+- buttons (66 high, padding 30, 8 px focus growth, White90);
+- cards (radius 20, 50 px focus growth, two shadows);
+- type weights (headings Bold, text Medium);
+- the hero and title-page blocks (logo 420 × 126, Caption1 metadata and description);
+- shelves (742, pitch 321);
+- the player (no panel, gradient to 60%, 14 px bar, 454 track menu);
+- search, settings, notifications;
+- motion (ease-in arrival, ease-out departure, springs for scrolling, 300 ms linear crossfades).
+
+**Glass stays where the owner chose it:**
+- the tab bar;
+- How to watch;
+- the version sheets and pairing.
 
 ## The constraint that shapes everything
 

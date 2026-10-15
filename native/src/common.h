@@ -35,6 +35,8 @@ class Backdrop {
 
 // Readable gradients over art: from the left (where text sits) and from the bottom.
 void draw_scrims(float left = 1.0f, int bottom_from = 520, float bottom = 1.0f);
+// Black over the whole hero: 55% on very bright art, else 20% [EoA H16].
+void draw_hero_overlay(float luma, float alpha = 1.0f);
 
 // Logo art when the title has one (bottom-aligned in the box), else the name in
 // display type. Returns the y just below the box.

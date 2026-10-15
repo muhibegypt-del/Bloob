@@ -61,6 +61,17 @@ The owner chose native. `native/` is a C++ webOS app (`com.muhib.bloob`, "Bloob 
   - the 0.55/0.2 artwork blend under card titles, and the 10% settings platter.
 
   Buttons now measure once and centre their label on its capital-letter height, which fixes uneven margins. `native/scripts/eoa-token-export.py` is a read-only script for the owner's PC. It exports the values the studies don't record (button, card, radius, easing) as numbers only, never code.
+- **2.3.0 full Elements of A token pass (15 October 2026, built, not yet on the TV).** It applies the full catalogue `research/Elements-of-A-design-tokens.md` (from `bloob-v1` `a505b7b`), row by row in `native/TOKENS.md`:
+  - type weights;
+  - buttons: 66 high, padding 30, +8 width on focus, White90, Dark/Default/Player variants;
+  - cards: radius 20, +50 width on focus, two-level shadows;
+  - the hero and title page: logo 420×126, Caption1 metadata and description, 742 first shelf, 321 pitch, the reference gradient stops and overlay;
+  - the player: no panel, gradient to 60%, 14 px bar, Title2 Gray92 header, 66-high controls 25 apart, 454-wide track menu, 454×460 Up next;
+  - search: 432-wide keyboard, 200 ms query;
+  - settings rows, notifications;
+  - motion: ease-in/ease-out timed curves, springs 30/150/1, 300 ms linear crossfades.
+
+  Glass stays on the tab bar, How to watch and sheets.
 - **Design (2.0, Glass):** the visual system, with materials, tokens, type, focus, motion, states, the spoken interface and per-screen layouts, is in `native/DESIGN.md`. The tokens live in `native/src/theme.h`, the type scale, label roles and components in `ui.cpp`, and the frost bake in `images.cpp`.
 - **Rendering and playback:**
   - The TV's SDL2 provides the window and remote. Bloob draws with its own renderer: Inter via stb_truetype with oversampling and gamma, exact-size anti-aliased shapes, and artwork via stb_image scaled on worker threads, on a 1920×1080 offscreen canvas.
@@ -77,7 +88,7 @@ The owner chose native. `native/` is a C++ webOS app (`com.muhib.bloob`, "Bloob 
   - watch progress and settings.
   If the bus will not start the service, the app runs it directly with the TV's Node and stops it on exit.
 - **Build and test scripts:**
-  - `native/scripts/build.sh`: tests, cross-build, ABI guard (GLIBC_2.4 only, no GLIBCXX), service staging, IPK with fixed modes (`native/artifacts/com.muhib.bloob_2.2.1_arm.ipk`).
+  - `native/scripts/build.sh`: tests, cross-build, ABI guard (GLIBC_2.4 only, no GLIBCXX), service staging, IPK with fixed modes (`native/artifacts/com.muhib.bloob_2.3.0_arm.ipk`).
   - `native/scripts/ui-tour.sh`: drives the whole app on the desktop through the acceptance task, plus quick-menu, Home and pipeline-lost events, against the real service with fixture sources.
   - `native/scripts/ui-snapshots.sh`: covers player states.
   - `native/TV-TEST.md`: the TV pass, with the acceptance task, viewing distance and lifecycle.

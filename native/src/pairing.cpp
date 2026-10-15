@@ -123,6 +123,6 @@ void Pairing::draw() {
   GlassButton cancel;
   cancel.label = "Cancel";
   cancel.focused = true;
-  cancel.h = 64;
+  cancel.variant = ButtonStyle::Default;
   draw_glass_button(x + w - 64 - glass_button_width(cancel), y + h - 100, cancel);
 }

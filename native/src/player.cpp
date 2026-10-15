@@ -803,37 +803,36 @@ class PlayerScreen : public Screen {
     return out;
   }
 
-  // ---------------------------------------------------------------- Glass HUD
-  // A smoked-glass bar floating above the bottom edge: title, meta and controls
-  // on top, the timeline below. Video plays in the TV's plane under this window,
-  // so the glass is smoked (a dark tint), never frosted.
+  // ---------------------------------------------------------------- HUD
+  // Elements of A's transport [EoA V14-V22]: no panel, a black gradient behind
+  // the controls, a 14 px bar 110 above the bottom edge with time labels below
+  // it, the controls row 22 above the bar, and the title above the controls on
+  // the left. Video plays in the TV's plane under this window.
 
-  static constexpr int kBarX = safe_x, kBarW = W - 2 * safe_x, kBarBottom = 56;
-  static constexpr int kPadX = 36, kPadTop = 30, kPadBottom = 28, kRow1 = 84, kRowGap = 22, kRow2 = 32;
+  static constexpr int kBarX = safe_x, kBarRight = W - 100, kBarW = kBarRight - safe_x;  // right padding 100
+  static constexpr int kTrackH = 14, kTrackBottom = 110;         // bar 14 high, radius 7
+  static constexpr int kTimeBaseline = 32;                       // bar to time-label baseline
+  static constexpr int kControlsGap = 22;                        // bar to controls
+  static constexpr int kControlGap = 25;                         // between controls
+  static constexpr int kHeaderGap = 12;                          // header to subheader
+  static constexpr int kGradientH = 384;                         // protection gradient [EoA V15]
+  const Color kGray92 = rgba(0xebebeb);                          // header colour [EoA V16]
 
-  int bar_h(bool reduced) const { return reduced ? kPadTop + kRow2 + kPadBottom - 8 : kPadTop + kRow1 + kRowGap + kRow2 + kPadBottom; }
-  int bar_y(bool reduced) const { return H - kBarBottom - bar_h(reduced); }
+  int track_y() const { return H - kTrackBottom - kTrackH; }
+  int controls_y() const { return track_y() - kControlsGap - theme::button_h; }
+  // Top of everything the HUD draws, for the track menu and subtitles.
+  int bar_y(bool reduced) const { return reduced ? track_y() - 24 : controls_y(); }
 
   void draw_hud(float a, Phase phase) {
     bool reduced = hud_mode_ == HudMode::Reduced;
-    int y = bar_y(reduced), h = bar_h(reduced);
-    // A soft floor so a bright frame never fights the bar's edge.
-    ctx().gfx.gradient_v(0, y - 120, W, H - y + 120, rgba(0x000000), 0, static_cast<Uint8>(110 * a));
-    GlassSpec g;
-    g.x = kBarX;
-    g.y = y;
-    g.w = kBarW;
-    g.h = h;
-    g.radius = 36;
-    g.kind = GlassKind::Smoke;
-    g.alpha = a;
-    draw_glass(g);
+    // Black 0 → 60% behind the transport [EoA V15].
+    ctx().gfx.gradient_v(0, H - kGradientH, W, kGradientH, rgba(0x000000), 0, static_cast<Uint8>(153 * a));
     if (!reduced) {
       draw_clock_pill(a, phase);
-      draw_hud_title(a, phase, y + kPadTop);
-      draw_controls(a, phase, y + kPadTop + (kRow1 - 60) / 2);
+      draw_controls(a, phase, controls_y());
+      draw_hud_title(a, phase, controls_y() + theme::button_h);
     }
-    draw_timeline(a, phase, y + h - kPadBottom - kRow2 + (reduced ? 4 : 0));
+    draw_timeline(a, phase, track_y());
   }
 
   // Time now and when this ends, in a small smoked pill top right.
@@ -858,7 +857,7 @@ class PlayerScreen : public Screen {
     if (!ends.empty()) text(Text::Caption1, ends, tx, ty, label(Label::Secondary, a));
   }
 
-  void draw_hud_title(float a, Phase phase, int y) {
+  void draw_hud_title(float a, Phase phase, int bottom) {
     std::string title = req_.item.series() ? req_.episode_title.empty() ? req_.item.name : req_.episode_title : req_.item.name;
     std::vector<std::string> meta;
     if (phase == Phase::Paused) meta.push_back("Paused");
@@ -872,15 +871,18 @@ class PlayerScreen : public Screen {
       if (!req_.item.genres.empty()) meta.push_back(req_.item.genres[0]);
     }
     for (auto &b : badges()) meta.push_back(b);
-    int x = kBarX + kPadX, w = right_controls_x(y) - x - 40;
-    text(Text::Headline, title, x, y, label(Label::Primary, a), w);
-    text(Text::Caption1, join(meta), x, y + 50, label(Label::Secondary, a), w);
+    // Header Emphasized.Title2 and subheader Standard.Caption1, both Gray92 [EoA V16].
+    int x = kBarX, w = right_controls_x(0) - x - 40;
+    int sub_y = bottom - line_for(Text::Caption1), head_y = sub_y - kHeaderGap - line_for(Text::Title2);
+    text(Text::Title2, title, x, head_y, fade(kGray92, a), w);
+    text(Text::Caption1, join(meta), x, sub_y, fade(kGray92, a), w);
   }
 
   GlassButton control_button(Ctl ctl, bool focused, Phase phase, float a) const {
+    // Transport controls: DarkPlayer buttons, 66 high, Emphasized.Body labels [EoA V13].
     GlassButton b;
-    b.h = 60;
-    b.style = Text::Caption1;
+    b.variant = ButtonStyle::Player;
+    b.style = Text::BodyBold;
     b.focused = focused;
     b.lift = 1.0f;
     b.alpha = a;
@@ -899,8 +901,8 @@ class PlayerScreen : public Screen {
     Phase phase = session_.phase();
     int total = 0;
     auto ctl = controls();
-    for (size_t i = 0; i < ctl.size(); i++) total += glass_button_width(control_button(ctl[i], false, phase, 1.0f)) + (i ? 14 : 0);
-    return kBarX + kBarW - kPadX - total;
+    for (size_t i = 0; i < ctl.size(); i++) total += glass_button_width(control_button(ctl[i], false, phase, 1.0f)) + (i ? kControlGap : 0);
+    return kBarRight - total;
   }
 
   void draw_controls(float a, Phase phase, int y) {
@@ -908,31 +910,34 @@ class PlayerScreen : public Screen {
     int x = right_controls_x(y);
     for (size_t i = 0; i < ctl.size(); i++) {
       bool f = zone_ == Zone::Controls && static_cast<int>(i) == control_ && panel_ == Panel::None;
-      x += draw_glass_button(x, y, control_button(ctl[i], f, phase, a)) + 14;
+      x += draw_glass_button(x, y, control_button(ctl[i], f, phase, a)) + kControlGap;
     }
   }
 
-  void draw_timeline(float a, Phase phase, int row_y) {
+  void draw_timeline(float a, Phase phase, int bar_top) {
     (void)phase;
     Ctx &c = ctx();
     long long t = c.now;
     long long display = session_.display_ms(t), duration = session_.duration_ms(), position = session_.position_ms(t);
-    int left_w = 110;
     std::string now_text = clock_text(display);
     std::string left_text = duration > 0 ? "\xE2\x88\x92" + clock_text(std::max(0LL, duration - display)) : "--:--";
-    int x0 = kBarX + kPadX;
-    int tx = x0 + left_w + 22, tw = kBarX + kBarW - kPadX - left_w - 22 - tx, ty = row_y + kRow2 / 2;
-    text(Text::Caption1, now_text, x0, row_y, label(Label::Primary, a));
-    text_right(Text::Caption1, left_text, kBarX + kBarW - kPadX, row_y, label(Label::Secondary, a));
     bool timeline = zone_ == Zone::Timeline && panel_ == Panel::None;
-    int th = 8;
-    c.gfx.fill_round(tx, ty - th / 2, tw, th, th / 2, fade(rgba(0xffffff, 64), a));
+    // Time labels: Emphasized.Caption2, white when the bar has focus, else 50% [EoA V18].
+    Color time_fg = fade(rgba(0xffffff, timeline ? 255 : 128), a);
+    int baseline = bar_top + kTrackH + kTimeBaseline;
+    int label_y = baseline - static_cast<int>(font_for(Text::Caption2Bold).ascent(size_for(Text::Caption2Bold)));
+    text(Text::Caption2Bold, now_text, kBarX, label_y, time_fg);
+    text_right(Text::Caption2Bold, left_text, kBarRight, label_y, time_fg);
+    // Track 14 high, radius 7. Colours A / C from the reference; which one is
+    // played and which remaining is not recorded, so the brighter one is played.
+    int tx = kBarX, tw = kBarW, th = kTrackH, ty = bar_top + th / 2;
+    c.gfx.fill_round(tx, bar_top, tw, th, th / 2, fade(rgba(0xececec, 66), a));
     double frac = duration > 0 ? std::min(1.0, std::max(0.0, static_cast<double>(display) / duration)) : 0;
-    c.gfx.fill_round(tx, ty - th / 2, std::max(th, static_cast<int>(tw * frac)), th, th / 2, fade(rgba(0xffffff), a));
+    c.gfx.fill_round(tx, bar_top, std::max(th, static_cast<int>(tw * frac)), th, th / 2, fade(rgba(0xf4f4f4, 143), a));
     int kx = tx + static_cast<int>(tw * frac);
     bool seeking = session_.preview_ms() || session_.pending_ms();
     if (timeline || seeking) {
-      int r = timeline ? 11 : 9;
+      int r = timeline ? 13 : 10;  // playhead 26 large, 20 [EoA V17]
       c.gfx.shadow(kx - r, ty - r, 2 * r, 2 * r, r, 10, 2, static_cast<Uint8>(90 * a));
       c.gfx.fill_circle(kx, ty, r, fade(rgba(0xffffff), a));
     }
@@ -944,7 +949,7 @@ class PlayerScreen : public Screen {
       std::string target = clock_text(display);
       int lw = std::max(measure(Text::Headline, target), measure(Text::Caption2, d)) + 48;
       int lh = 88;
-      int lx = std::max(kBarX, std::min(kBarX + kBarW - lw, kx - lw / 2));
+      int lx = std::max(kBarX, std::min(kBarRight - lw, kx - lw / 2));
       int ly = ty - 30 - lh;
       c.gfx.shadow(lx, ly, lw, lh, 22, 22, 10, static_cast<Uint8>(150 * a));
       c.gfx.fill_round(lx, ly, lw, lh, 22, fade(rgba(0xffffff), a));
@@ -954,33 +959,33 @@ class PlayerScreen : public Screen {
   }
 
   // Audio and subtitle choices: a smoked panel standing on the bar, right side.
+  // Audio and subtitle choices: the shared floating menu [EoA V19-V22]. 454 wide,
+  // radius 54, RGB(30,30,30) at 90%, rows 66 high 4 apart, Gray92 when focused,
+  // 20 above the controls.
+  static constexpr int kMenuW = 454, kMenuRadius = 54, kMenuPad = 21, kMenuHeader = 59, kRowH = 66, kRowGap = 4, kMenuMaxH = 600;
+
   void draw_panel_tracks(float a) {
     Ctx &c = ctx();
     const MediaInfo &info = ums_.info();
     int rows = panel_rows();
-    int w = 620, x = kBarX + kBarW - w;
-    int bottom = bar_y(false) - 24 + static_cast<int>((1.0f - a) * 30);
-    int h = std::min(bottom - 120, 100 + std::max(1, rows) * 72 + 24 + (panel_ == Panel::Subtitles && info.text.empty() ? 60 : 0));
+    bool empty = (panel_ == Panel::Audio && rows == 0) || (panel_ == Panel::Subtitles && info.text.empty());
+    int list_h = std::max(1, rows) * (kRowH + kRowGap) - kRowGap + (empty ? 70 : 0);
+    int h = std::min(kMenuMaxH, kMenuPad + kMenuHeader + list_h + kMenuPad);
+    int w = kMenuW, x = kBarRight - w;
+    int bottom = controls_y() - 20 + static_cast<int>((1.0f - a) * 30);
     int y = bottom - h;
-    GlassSpec g;
-    g.x = x;
-    g.y = y;
-    g.w = w;
-    g.h = h;
-    g.kind = GlassKind::Smoke;
-    g.alpha = a;
-    draw_glass(g);
-    // A touch darker than the bar: it carries a list.
-    c.gfx.fill_round(x, y, w, h, glass_radius, fade(rgba(0x000000, 60), a));
-    text(Text::Headline, panel_ == Panel::Audio ? "Audio" : "Subtitles", x + 36, y + 30, label(Label::Primary, a));
-    int ry = y + 100;
-    if (panel_ == Panel::Audio && rows == 0) paragraph(Text::Callout, "This video reports no audio tracks.", x + 36, ry, label(Label::Secondary, a), w - 72, 2);
+    if (!c.lite()) c.gfx.shadow(x, y, w, h, kMenuRadius, 30, 10, static_cast<Uint8>(77 * a));
+    Color bg = c.reduce_transparency ? rgba(0x262626) : rgba(0x1e1e1e, 230);
+    c.gfx.fill_round(x, y, w, h, kMenuRadius, fade(bg, a));
+    c.gfx.stroke_round(x, y, w, h, kMenuRadius, 1, fade(c.high_contrast ? theme::hairline_high : theme::hairline, a));
+    // Header: Standard.Caption2 at 50% [EoA V20].
+    text(Text::Caption2, panel_ == Panel::Audio ? "Audio" : "Subtitles", x + kMenuPad + 25, y + kMenuPad + 22, fade(rgba(0xffffff, 128), a));
+    int ry = y + kMenuPad + kMenuHeader;
+    if (panel_ == Panel::Audio && rows == 0) paragraph(Text::Caption1, "This video reports no audio tracks.", x + kMenuPad + 25, ry, label(Label::Secondary, a), w - 2 * kMenuPad - 50, 2);
     auto labels = distinct_labels(panel_ == Panel::Audio ? info.audio : info.text, panel_ == Panel::Audio);
-    // Rows that fit between the header (100) and the bottom padding (24). This
-    // used to subtract 130, one row too many: with Off and one subtitle, or two
-    // audio tracks, only the first row showed until you scrolled (TV, 2.2.0).
-    int visible = std::max(1, (h - 124) / 72);
+    int visible = std::max(1, (h - kMenuPad * 2 - kMenuHeader + kRowGap) / (kRowH + kRowGap));
     int first = std::max(0, std::min(panel_index_ - visible / 2, rows - visible));
+    int rx = x + kMenuPad, rw = w - 2 * kMenuPad;
     for (int i = first; i < std::min(rows, first + visible); i++) {
       bool f = i == panel_index_;
       std::string name;
@@ -996,16 +1001,17 @@ class PlayerScreen : public Screen {
         selected = session_.subtitle_index() == i - 1;
       }
       if (f) {
-        c.gfx.shadow(x + 16, ry, w - 32, 62, 31, 18, 8, static_cast<Uint8>(120 * a));
-        c.gfx.fill_round(x + 16, ry, w - 32, 62, 31, fade(rgba(0xffffff), a));
+        if (!c.lite()) c.gfx.shadow(rx, ry, rw, kRowH, kRowH / 2, theme::shadow_blur, theme::shadow_dy, static_cast<Uint8>(theme::shadow_alpha * a));
+        c.gfx.fill_round(rx, ry, rw, kRowH, kRowH / 2, fade(kGray92, a));
       }
       Color fg = f ? fade(rgba(0x000000), a) : label(Label::Primary, a);
-      text(Text::Callout, name, x + 44, ry + (62 - line_for(Text::Callout)) / 2, fg, w - 150);
-      if (selected) c.icons.draw(Icon::Check, x + w - 80, ry + 15, 32, fg);
-      ry += 72;
+      // Leading box 66 holds the check (20 high); title Standard.Caption1 [EoA V21].
+      if (selected) c.icons.draw(Icon::Check, rx + (66 - 20) / 2, ry + (kRowH - 20) / 2, 20, fg);
+      text(Text::Caption1, name, rx + 66, text_y_centered(Text::Caption1, ry + kRowH / 2), fg, rw - 66 - 20);
+      ry += kRowH + kRowGap;
     }
     if (panel_ == Panel::Subtitles && info.text.empty())
-      paragraph(Text::Caption1, "This video has no built-in subtitles.", x + 36, ry + 8, label(Label::Tertiary, a), w - 72, 2);
+      paragraph(Text::Caption1, "This video has no built-in subtitles.", x + kMenuPad + 25, ry + 8, label(Label::Tertiary, a), w - 2 * kMenuPad - 50, 2);
   }
 
   void draw_startup() {
@@ -1048,41 +1054,35 @@ class PlayerScreen : public Screen {
       GlassButton b;
       b.label = names[i];
       b.focused = error_focus_ == i;
-      b.h = 72;
-      bx += draw_glass_button(bx, y + h - 120, b) + 16;
+      b.variant = ButtonStyle::Player;
+      bx += draw_glass_button(bx, y + h - 120, b) + theme::title_button_gap;
     }
   }
 
-  // Up next: a smoked glass card bottom right, over the credits.
+  // Up next: the post-play lockup [EoA V23], 454 × 460, bottom right over the
+  // credits. Title Emphasized.Title2, body Standard.Body, buttons 66.
   void draw_up_next() {
     Ctx &c = ctx();
     const NextEpisode &n = *req_.next;
-    c.gfx.gradient_v(0, H - 520, W, 520, rgba(0x000000), 0, 140);
+    c.gfx.gradient_v(0, H - 520, W, 520, rgba(0x000000), 0, 128);  // autoplay background Black50 [EoA V24]
     long long elapsed = c.now - up_next_at_;
     long long left = std::max(0LL, (kUpNextMs - elapsed + 999) / 1000);
-    int w = 720, h = 300, x = W - safe_x - w, y = H - kBarBottom - h;
-    GlassSpec g;
-    g.x = x;
-    g.y = y;
-    g.w = w;
-    g.h = h;
-    g.radius = 36;
-    g.kind = GlassKind::Smoke;
-    draw_glass(g);
-    int px = x + 40, py = y + 32;
-    text(Text::Caption1, "Up next", px, py, label(Label::Secondary));
-    text(Text::Title3, episode_code(n.season, n.episode), px, py + 36, label(Label::Primary), w - 80);
-    text(Text::Callout, n.title, px, py + 96, label(Label::Secondary), w - 80);
+    int w = 454, h = 460, x = kBarRight - w, y = H - kTrackBottom - h;
+    if (!c.lite()) c.gfx.shadow(x, y, w, h, glass_radius, 30, 10, 77);
+    c.gfx.fill_round(x, y, w, h, glass_radius, c.reduce_transparency ? rgba(0x262626) : rgba(0x1e1e1e, 230));
+    int px = x + 40, pw = w - 80, py = y + 40;
+    text(Text::Caption1, "Up next \xC2\xB7 " + episode_code(n.season, n.episode), px, py, label(Label::Secondary));
+    py += line_for(Text::Caption1) + 18;
+    py = paragraph(Text::Title2, n.title.empty() ? episode_code(n.season, n.episode) : n.title, px, py, label(Label::Primary), pw, 3);
     GlassButton play;
     play.label = "Play now";
     play.icon = kPlayIcon;
     play.focused = true;
-    play.h = 72;
-    int bw = draw_glass_button(px, y + h - 32 - 72, play);
+    int by = y + h - 40 - theme::button_h - (c.autoplay_next ? 44 : 0);
+    draw_glass_button(px, by, play);
     std::string note = c.autoplay_next ? "Starts in " + std::to_string(left) + " s \xC2\xB7 Back to stay" : "Back to stay";
-    text(Text::Caption1, note, px + bw + 24, y + h - 32 - 72 + (72 - line_for(Text::Caption1)) / 2, label(Label::Secondary));
-    if (c.autoplay_next)
-      draw_progress(x + 36, y + h - 14, w - 72, 4, static_cast<double>(elapsed) / kUpNextMs, rgba(0xffffff), rgba(0xffffff, 50));
+    text(Text::Caption1, note, px, by + theme::button_h + 14, label(Label::Secondary), pw);
+    if (c.autoplay_next) draw_progress(x + 40, y + h - 24, w - 80, 4, static_cast<double>(elapsed) / kUpNextMs, rgba(0xffffff), rgba(0xffffff, 50));
   }
 
  private:

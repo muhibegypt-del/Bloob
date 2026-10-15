@@ -126,7 +126,7 @@ class App {
     c.replace = [this](std::unique_ptr<Screen> s) { ops_.push_back({Op::Replace, std::move(s)}); };
     c.toast = [this](const std::string &text) {
       toast_ = text;
-      toast_until_ = ctx().now + 3500;
+      toast_until_ = ctx().now + 3000;  // notification hold [EoA N1]
     };
     c.quit = [this] { running_ = false; };
     c.focus_tabs = [this] { set_tabs_focus(true); };
@@ -534,6 +534,8 @@ class App {
 
   // ---------------------------------------------------------------- drawing
 
+  static constexpr int kTabGap = 8;
+
   void draw_tabs() {
     float a = tabs_alpha_.value;
     if (a <= 0.01f) return;
@@ -552,8 +554,8 @@ class App {
       return t;
     };
     int total = 0;
-    for (int i = 0; i < kTabCount; i++) total += glass_button_width(pill(i)) + (i ? theme::control_gap : 0);
-    int pad = 8, h = theme::pill_h;
+    for (int i = 0; i < kTabCount; i++) total += glass_button_width(pill(i)) + (i ? kTabGap : 0);
+    int pad = 9, h = theme::pill_h;  // segment platter: padding 9, buttons 8 apart [EoA N2]
     int bw = total + pad * 2, bh = h + pad * 2, bx = (W - bw) / 2, by = theme::safe_y + dy;
     GlassSpec bar;
     bar.x = bx;
@@ -564,7 +566,7 @@ class App {
     bar.alpha = a;
     top()->shell_glass(bar);
     int x = bx + pad;
-    for (int i = 0; i < kTabCount; i++) x += draw_glass_button(x, by + pad, pill(i)) + theme::control_gap;
+    for (int i = 0; i < kTabCount; i++) x += draw_glass_button(x, by + pad, pill(i)) + kTabGap;
   }
 
   void draw_screen(Screen *s, bool layer, float alpha, int dy) {
@@ -588,7 +590,7 @@ class App {
     if (entering) {
       // The new screen rises and fades in over the one it came from.
       below_top()->draw();
-      draw_screen(screen, true, entering_.value, static_cast<int>((1.0f - entering_.value) * 28));
+      draw_screen(screen, true, entering_.value, 0);  // a plain crossfade [EoA M10]
     } else {
       if (stack_.empty() && page_fade_.value < 0.999f) {
         c.gfx.clear(theme::black);
@@ -597,18 +599,26 @@ class App {
         screen->draw();
       }
       if (stack_.empty()) draw_tabs();
-      if (leaving_) draw_screen(leaving_.get(), true, leaving_fade_.value, static_cast<int>((1.0f - leaving_fade_.value) * 20));
+      if (leaving_) draw_screen(leaving_.get(), true, leaving_fade_.value, 0);
     }
     if (!toast_.empty() && c.now < toast_until_) {
-      int w = measure(Text::Callout, toast_) + 72, th = 72;
-      GlassSpec g;
-      g.x = W / 2 - w / 2;
-      g.y = H - theme::safe_y - th - 40;
-      g.w = w;
-      g.h = th;
-      g.radius = th / 2;
-      top()->shell_glass(g);
-      text_center(Text::Callout, toast_, W / 2, g.y + (th - line_for(Text::Callout)) / 2, label(Label::Primary));
+      // Notification [EoA N1]: 200–600 wide, at least 112 high, radius 30,
+      // SystemGray5 with a hairline and a soft shadow, text padding 30 / 40,
+      // Standard.Caption1; top right inside the safe area, 57 from the top.
+      auto lines = wrap(font_for(Text::Caption1), toast_, size_for(Text::Caption1), 600 - 80, 3);
+      int tw = 0;
+      for (auto &l : lines) tw = std::max(tw, measure(Text::Caption1, l));
+      int w = std::max(200, std::min(600, tw + 80));
+      int th = std::max(112, static_cast<int>(lines.size()) * line_for(Text::Caption1) + 60);
+      int tx = W - theme::safe_x - w, ty = 57;
+      if (!c.lite()) c.gfx.shadow(tx, ty, w, th, 30, 36, 15, 38);
+      c.gfx.fill_round(tx, ty, w, th, 30, rgba(0x2c2c2e));
+      c.gfx.stroke_round(tx, ty, w, th, 30, 1, c.high_contrast ? theme::hairline_high : theme::hairline);
+      int ly = ty + (th - static_cast<int>(lines.size()) * line_for(Text::Caption1)) / 2;
+      for (auto &l : lines) {
+        text(Text::Caption1, l, tx + 40, ly, label(Label::Primary));
+        ly += line_for(Text::Caption1);
+      }
       c.redraw_at(toast_until_);
     }
     c.gfx.end_frame();
@@ -807,7 +817,7 @@ class App {
   bool in_background_ = false;
   long long exit_armed_at_ = 0;
   Anim entering_{theme::fade_rate, 1};
-  Anim leaving_fade_{theme::fade_rate * 1.2f, 0};
+  Anim leaving_fade_{theme::fade_rate, 0};
   Anim page_fade_{theme::fade_rate, 1};
   Anim tabs_alpha_{theme::fade_rate, 1};
   std::string toast_;

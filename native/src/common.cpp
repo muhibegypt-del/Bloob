@@ -105,12 +105,37 @@ void draw_scrims(float left, int bottom_from, float bottom) {
   Gfx &g = ctx().gfx;
   auto a = [](float v) { return static_cast<Uint8>(std::max(0.0f, std::min(255.0f, v))); };
   if (left > 0) {
-    // Dense where the text sits, gone by two-thirds across.
+    // Dense where the text sits, gone by two-thirds across (Bloob's; the
+    // reference's principal radial is not reproduced).
     g.gradient_h(0, 0, 420, H, theme::black, a(240 * left), a(200 * left));
     g.gradient_h(420, 0, 520, H, theme::black, a(200 * left), a(70 * left));
     g.gradient_h(940, 0, 360, H, theme::black, a(70 * left), 0);
   }
-  if (bottom > 0 && bottom_from < H) g.gradient_v(0, bottom_from, W, H - bottom_from, theme::black, 0, a(255 * bottom));
+  if (bottom > 0 && bottom_from < H) {
+    // The hero's bottom gradient, stop for stop [EoA H15]: clear to 64%, then
+    // 0.03, 0.14, 0.27, 0.41, 0.54 and 0.68 at the bottom edge; `bottom` scales it.
+    static const float pos[] = {0.64f, 0.71f, 0.78f, 0.84f, 0.91f, 0.95f, 1.0f};
+    static const float alpha[] = {0.0f, 0.03f, 0.14f, 0.27f, 0.41f, 0.54f, 0.68f};
+    int span = H - bottom_from;
+    // The stops describe the whole stage; map 64%..100% onto bottom_from..H.
+    for (int i = 0; i + 1 < 7; i++) {
+      float t0 = (pos[i] - 0.64f) / 0.36f, t1 = (pos[i + 1] - 0.64f) / 0.36f;
+      int y0 = bottom_from + static_cast<int>(span * t0), y1 = bottom_from + static_cast<int>(span * t1);
+      // The reference's stage ends at 716 and its shelves sit on the solid page;
+      // Bloob's art is full-bleed, so at full strength the curve reaches solid
+      // black at the bottom edge instead of 0.68.
+      float k = std::min(1.0f, bottom) / 0.68f;
+      g.gradient_v(0, y0, W, std::max(1, y1 - y0), theme::black, a(255 * alpha[i] * k), a(255 * alpha[i + 1] * k));
+    }
+  }
+}
+
+// The hero overlay [EoA H16]: black at 55% over very bright artwork (luminosity
+// at least 0.9), else 20%.
+void draw_hero_overlay(float luma, float alpha) {
+  if (luma < 0) return;
+  Uint8 a = static_cast<Uint8>((luma >= 0.9f ? 0.55f : 0.2f) * 255 * std::max(0.0f, std::min(1.0f, alpha)));
+  ctx().gfx.fill_rect(0, 0, W, H, with_alpha(theme::black, a));
 }
 
 int draw_title(const Item &item, int x, int top, int box_w, int box_h, float alpha, bool centred) {

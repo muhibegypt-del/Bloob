@@ -35,15 +35,27 @@ class Screen;
 struct GlassSpec;
 
 // Eases toward a target; exponential approach, frame-rate independent.
+// An animated value. Two kinds, as Elements of A uses them [EoA M7, M8]:
+//  - timed: a fixed duration with an easing curve (linear, ease-in p², ease-out
+//    p(2−p), ease-in-out), restarted from the current value when the target moves;
+//  - spring: damping / stiffness / mass, for scrolling, which retargets smoothly.
 struct Anim {
   float value = 0, target = 0;
-  float rate = 14.0f;  // higher is snappier (theme:: *_rate)
+  Motion motion;
   Anim() = default;
-  explicit Anim(float r, float v = 0) : value(v), target(v), rate(r) {}
-  void snap(float v) { value = target = v; }
-  void to(float v) { target = v; }
+  explicit Anim(Motion m, float v = 0) : value(v), target(v), motion(m) {}
+  void snap(float v) {
+    value = target = from_ = v;
+    velocity_ = 0;
+    t_ms_ = 0;
+  }
+  void to(float v);
   bool step(double dt);  // true while moving
   bool settled() const { return value == target; }
+
+ private:
+  float from_ = 0, velocity_ = 0;
+  double t_ms_ = 0;
 };
 
 struct Ctx {
@@ -210,6 +222,10 @@ struct GlassSpec {
 void draw_glass(const GlassSpec &g);
 // Glass control (button or pill): focused = white with dark label and lift;
 // candidate = chosen but not focused (20% white, check); otherwise glass.
+// Button variants [EoA B10-B12]: Dark over artwork (hero, title page, Up next),
+// Default on panels and sheets, Player on the transport bar.
+enum class ButtonStyle { Dark, Default, Player };
+
 struct GlassButton {
   std::string label;
   int icon = -1;          // Icon value, kPlayIcon, or -1 (icon-only when label is empty)
@@ -218,8 +234,10 @@ struct GlassButton {
   bool disabled = false;
   float lift = 1.0f;      // 0..1 focus animation
   float alpha = 1.0f;
-  int h = 80;
+  int h = theme::button_h;
   Text style = Text::Button;
+  ButtonStyle variant = ButtonStyle::Dark;
+  int min_w = 0, max_w = 0;  // labelled buttons only; 0 = none
   // Season-pill treatment [EoA P1-P6]: 66 high, 30 padding, no fill at rest,
   // 10% white as candidate, white when focused, growing 8 px wide.
   bool pill = false;

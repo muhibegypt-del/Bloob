@@ -218,6 +218,10 @@ class DetailsScreen : public Screen {
   int version_tiles() const { return versions_state_ == Versions::Ready ? static_cast<int>(versions_.size()) : 0; }
 
   void focus_moved() {
+    // Each kind of control keeps its own focus timing: buttons 75 / 150 ms,
+    // season pills 100 / 200, cards the shared 85 / 230 [EoA B6, P6, M1].
+    lift_.motion = zone_ == Zone::Buttons ? button_in_rate : zone_ == Zone::Seasons ? pill_in_rate : focus_in_rate;
+    prev_lift_.motion = zone_ == Zone::Buttons ? button_leave_rate : zone_ == Zone::Seasons ? pill_out_rate : focus_leave_rate;
     lift_.snap(0);
     lift_.to(1);
   }
@@ -376,26 +380,36 @@ class DetailsScreen : public Screen {
     float p = page_.value;  // 0: title page, 1: episodes
     backdrop_.draw(0.3f * p, p);
     float sc = scrim_for(backdrop_.luma());
+    draw_hero_overlay(backdrop_.luma());
     draw_scrims(sc, static_cast<int>(lerp(520, 200, p)), std::min(1.0f, 0.6f + 0.4f * sc));
 
     const Item &it = meta_.item;
+    // Title page, the canonical lockup [EoA H1-H8]: logo at most 420 × 126,
+    // title → metadata 13, metadata (Standard.Caption1, primary) → description 18,
+    // description (Standard.Caption1, secondary) 667 wide in 4 lines → buttons 32.
+    // Laid out from the buttons up so they always sit in the same place, above
+    // the seasons peeking below (series) or How to watch (films).
+    constexpr int kTitleToMeta = 13, kMetaToBody = 18, kBodyToButtons = 32, kBodyW = 667, kBodyLines = 4;
+    int line = line_for(Text::Caption1);
+    int lines = std::max(1, static_cast<int>(wrap(font_for(Text::Caption1), it.description, size_for(Text::Caption1), kBodyW, kBodyLines).size()));
+    int by = kPanelY - kBodyToButtons - theme::button_h - (has_episodes() ? 46 : 0);
+    int hero_top = by - kBodyToButtons - lines * line - kMetaToBody - line - kTitleToMeta - 126;
     // Title art shrinks and rises as the page continues into episodes.
-    int box_top = static_cast<int>(lerp(150, 80, p));
-    int box_h = static_cast<int>(lerp(210, 120, p));
-    int box_w = static_cast<int>(lerp(760, 420, p));
+    int box_top = static_cast<int>(lerp(static_cast<float>(hero_top), 80, p));
+    int box_h = static_cast<int>(lerp(126, 85, p));
+    int box_w = static_cast<int>(lerp(420, 283, p));
     int y = draw_title(it, X0, box_top, box_w, box_h);
 
     float top_only = std::max(0.0f, 1.0f - 1.6f * p);
     if (top_only > 0.01f) {
-      y += 24;
+      y += kTitleToMeta;
       std::string facts = meta_line(it);
-      int mw = text(Text::Callout, facts, X0, y, label(Label::Secondary, top_only), 1100);
-      if (!it.rating.empty()) draw_glass_badge(X0 + mw + 24, y, "IMDb " + it.rating, top_only);
-      y += 54;
-      y = paragraph(Text::Body, it.description, X0, y, label(Label::Primary, 0.86f * top_only), 900, 3);
-      int by = std::min(std::max(y + 36, 560), kPanelY - (has_episodes() ? 150 : 120));
+      int mw = text(Text::Caption1, facts, X0, y, label(Label::Primary, top_only), 1100);
+      if (!it.rating.empty()) draw_glass_badge(X0 + mw + 18, y - 2, "IMDb " + it.rating, top_only);
+      y += line + kMetaToBody;
+      paragraph(Text::Caption1, it.description, X0, y, label(Label::Secondary, top_only), kBodyW, kBodyLines);
       draw_buttons(by, top_only);
-      if (has_episodes()) draw_version_line(by + 100, top_only);
+      if (has_episodes()) draw_version_line(by + theme::button_h + 18, top_only);
       if (has_versions_panel()) draw_versions(top_only);
     }
     if (has_episodes()) draw_episodes(p);
@@ -419,9 +433,11 @@ class DetailsScreen : public Screen {
       b.focused = zone_ == Zone::Buttons && static_cast<int>(i) == button_;
       b.lift = lift_.value;
       b.alpha = alpha;
-      bx += draw_glass_button(bx, by, b) + theme::control_gap;
+      b.min_w = theme::title_button_min_w;
+      b.max_w = theme::title_button_max_w;
+      bx += draw_glass_button(bx, by, b) + theme::title_button_gap;
     }
-    if (has_resume_) text(Text::Caption1, resume_note_, bx + 8, by + (80 - line_for(Text::Caption1)) / 2, label(Label::Secondary, alpha));
+    if (has_resume_) text(Text::Caption1, resume_note_, bx, text_y_centered(Text::Caption1, by + theme::button_h / 2), label(Label::Secondary, alpha));
   }
 
   // Under the buttons of a show: what Play will look like and why, or that
@@ -513,7 +529,7 @@ class DetailsScreen : public Screen {
       if (off > 0) c.icons.draw(Icon::ChevronLeft, X0 - 56, sy + 12, 36, label(Label::Tertiary));
       if (xs.back() - 12 - off > W - 2 * X0) c.icons.draw(Icon::ChevronRight, W - X0 + 20, sy + 12, 36, label(Label::Tertiary));
     } else {
-      text(Text::Headline, meta_.seasons[0].label, X0, sy + 8, label(Label::Primary));
+      text(Text::CalloutBold, meta_.seasons[0].label, X0, sy + 16, label(Label::Primary));
     }
 
     const Season &season = meta_.seasons[static_cast<size_t>(season_)];
@@ -547,10 +563,14 @@ class DetailsScreen : public Screen {
         c.icons.draw(Icon::Check, box.x + box.w - 43, box.y + 17, 26, rgba(0xffffff));
       }
       // Under the card: number, title, then a short summary once the page has risen.
-      int ty = ey + episode_h + (focused ? 24 : 16);
-      text(Text::Caption2, e.season == 0 ? "Special" : "Episode " + std::to_string(e.episode), x, ty, label(Label::Secondary));
-      text(Text::Callout, e.title.empty() ? "Episode " + std::to_string(e.episode) : e.title, x, ty + 32, label(focused ? Label::Primary : Label::Secondary), episode_w);
-      if (p > 0.05f) paragraph(Text::Caption1, e.overview, x, ty + 76, label(Label::Secondary, p * (focused ? 1.0f : 0.75f)), episode_w, 3);
+      // The 16:9 lockup with description [EoA K9, inferred]: eyebrow Caption3,
+      // title Caption1, description Caption2 in up to 5 lines, 2 apart; text 4
+      // below the card at rest, 24 when focused (growth 14 + separation 10).
+      int ty = ey + episode_h + (focused ? 24 : 4);
+      text(Text::Caption3, e.season == 0 ? "Special" : "Episode " + std::to_string(e.episode), x, ty, label(Label::Secondary));
+      ty += line_for(Text::Caption3) + 2;
+      text(Text::Caption1, e.title.empty() ? "Episode " + std::to_string(e.episode) : e.title, x, ty, label(focused ? Label::Primary : Label::Secondary), episode_w);
+      if (p > 0.05f) paragraph(Text::Caption2, e.overview, x, ty + line_for(Text::Caption1) + 2, label(Label::Secondary, p * (focused ? 1.0f : 0.75f)), episode_w, 5);
     }
     if (count > 4 && hs + 4 < count) c.icons.draw(Icon::ChevronRight, W - 64, ey + episode_h / 2 - 20, 40, label(Label::Tertiary));
 

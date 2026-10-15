@@ -657,14 +657,14 @@ class SourcesScreen : public Screen {
       GlassButton cancel;
       cancel.label = "Cancel";
       cancel.focused = sheet_focus_ == 0;
-      cancel.h = 64;
+      cancel.variant = ButtonStyle::Default;
       cancel.alpha = a;
-      int bx = x + 56 + draw_glass_button(x + 56, y + h - 100, cancel) + theme::control_gap;
+      int bx = x + 56 + draw_glass_button(x + 56, y + h - 100, cancel) + theme::stack_gap;
       if (can_show_others()) {
         GlassButton others;
         others.label = "Other versions";
         others.focused = sheet_focus_ == 1;
-        others.h = 64;
+        others.variant = ButtonStyle::Default;
         others.alpha = a;
         draw_glass_button(bx, y + h - 100, others);
       }
@@ -705,12 +705,14 @@ class SourcesScreen : public Screen {
       next.focused = fail_focus_ == 0;
       next.lift = lift_.value;
       next.alpha = a;
-      bx += draw_glass_button(bx, y + h - 112, next) + theme::control_gap;
+      next.variant = ButtonStyle::Default;
+      bx += draw_glass_button(bx, y + h - 112, next) + theme::stack_gap;
       GlassButton again;
       again.label = "Try again";
       again.focused = fail_focus_ == 1;
       again.lift = lift_.value;
       again.alpha = a;
+      again.variant = ButtonStyle::Default;
       draw_glass_button(bx, y + h - 112, again);
     }
   }

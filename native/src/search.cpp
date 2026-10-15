@@ -15,13 +15,16 @@ namespace {
 
 using namespace theme;
 
-constexpr int KX = safe_x, KW = 640;
+// Keyboard [EoA S1-S6]: 432 wide, keys 54-55 × 64 on a 74 pitch (gap 20), rows 76
+// apart; the query runs 200 ms after the last key.
+constexpr int KX = safe_x, KW = 432;
 constexpr int KCOLS = 6;
-constexpr int KEY_H = 66, KEY_GAP = 10;
-constexpr int RX = 840;
+constexpr int KEY_H = 64, KEY_GAP_X = 20, KEY_GAP_Y = 12;
+constexpr int FIELD_H = 85;
+constexpr int RX = KX + KW + 108;  // results beside the narrower keyboard
 constexpr int RGAP = card_gap;
 constexpr int TOP = 170;
-constexpr long long kDebounceMs = 450;
+constexpr long long kDebounceMs = 200;
 
 float lerp(float a, float b, float t) { return a + (b - a) * t; }
 
@@ -274,8 +277,7 @@ class SearchScreen : public Screen {
       GlassButton chip;
       chip.label = query_;
       chip.icon = static_cast<int>(Icon::Search);
-      chip.h = 60;
-      chip.style = Text::Callout;
+      chip.variant = ButtonStyle::Default;
       chip.alpha = 1.0f - k;
       draw_glass_button(safe_x, TOP - 84, chip);
     }
@@ -286,9 +288,9 @@ class SearchScreen : public Screen {
     Ctx &c = ctx();
     // The keyboard sits on one solid glass panel.
     int pad = 28, iy = TOP;
-    int kw = (KW - (KCOLS - 1) * KEY_GAP) / KCOLS;
-    int ky = iy + 120;
-    int ay = ky + key_rows() * (KEY_H + KEY_GAP);
+    int kw = (KW - (KCOLS - 1) * KEY_GAP_X) / KCOLS;
+    int ky = iy + 112;  // input to content 112 [EoA S6]
+    int ay = ky + key_rows() * (KEY_H + KEY_GAP_Y);
     GlassSpec g;
     g.x = x0 - pad;
     g.y = iy - pad;
@@ -298,25 +300,26 @@ class SearchScreen : public Screen {
     g.alpha = a;
     draw_glass(g);
     // Field.
-    c.gfx.fill_round(x0, iy, KW, 84, 42, fade(rgba(0xffffff, 26), a));
-    c.icons.draw(Icon::Search, x0 + 26, iy + 25, 34, label(Label::Secondary, a));
-    int qx = x0 + 80;
-    int qy = iy + (84 - line_for(Text::Title3)) / 2;
-    int qw = text(Text::Title3, query_, qx, qy, label(Label::Primary, a), KW - 110);
-    if (query_.empty()) text(Text::Title3, "Films and series", qx, qy, label(Label::Tertiary, a));
-    if (zone_ == Zone::Keys && !tabs_ && caret_) c.gfx.fill_rect(qx + qw + 4, iy + 20, 3, 44, fade(rgba(0xffffff), a));
+    // Field 85 high, White10, padding 20 [EoA S5].
+    c.gfx.fill_round(x0, iy, KW, FIELD_H, FIELD_H / 2, fade(rgba(0xffffff, 26), a));
+    c.icons.draw(Icon::Search, x0 + 20, iy + (FIELD_H - 34) / 2, 34, label(Label::Secondary, a));
+    int qx = x0 + 70;
+    int qy = text_y_centered(Text::Title3Std, iy + FIELD_H / 2);
+    int qw = text(Text::Title3Std, query_, qx, qy, label(Label::Primary, a), KW - 90);
+    if (query_.empty()) text(Text::Title3Std, "Search", qx, qy, label(Label::Tertiary, a));
+    if (zone_ == Zone::Keys && !tabs_ && caret_) c.gfx.fill_rect(qx + qw + 4, iy + 20, 3, FIELD_H - 40, fade(rgba(0xffffff), a));
 
     // Keys.
     for (int r = 0; r < key_rows(); r++)
       for (int k = 0; k < row_length(r); k++) {
         bool f = zone_ == Zone::Keys && !tabs_ && krow_ == r && kcol_ == k;
-        draw_key(x0 + k * (kw + KEY_GAP), ky + r * (KEY_H + KEY_GAP), kw, std::string(1, kKeys[r * KCOLS + k]), f, false, a);
+        draw_key(x0 + k * (kw + KEY_GAP_X), ky + r * (KEY_H + KEY_GAP_Y), kw, std::string(1, kKeys[r * KCOLS + k]), f, false, a);
       }
-    int aw = (KW - 2 * KEY_GAP) / 3;
+    int aw = (KW - 2 * KEY_GAP_X) / 3;
     const char *actions[3] = {"Space", "Delete", "Clear"};
     for (int k = 0; k < 3; k++) {
       bool f = zone_ == Zone::Keys && !tabs_ && krow_ == key_rows() && kcol_ == k;
-      draw_key(x0 + k * (aw + KEY_GAP), ay, aw, actions[k], f, true, a);
+      draw_key(x0 + k * (aw + KEY_GAP_X), ay, aw, actions[k], f, true, a);
     }
     // Recent searches, under the panel.
     auto &list = ctx().recent_searches;
@@ -327,8 +330,7 @@ class SearchScreen : public Screen {
       for (size_t i = 0; i < list.size(); i++) {
         GlassButton b;
         b.label = list[i];
-        b.h = 60;
-        b.style = Text::Callout;
+        b.variant = ButtonStyle::Default;
         b.focused = zone_ == Zone::Recent && static_cast<int>(i) == recent_index_ && !tabs_;
         b.lift = lift_.value;
         b.alpha = a;
@@ -339,15 +341,18 @@ class SearchScreen : public Screen {
     }
   }
 
+  // Keys [EoA S3, S4]: no platter at rest (secondary text); focused, a white
+  // platter (radius 20) grows 6 × 6 with black text and the focus shadow.
   void draw_key(int x, int y, int w, const std::string &name, bool focused, bool small = false, float a = 1.0f) {
     Ctx &c = ctx();
-    float s = focused && !c.reduce_motion ? 1.0f + 0.08f * lift_.value : 1.0f;
-    int gw = static_cast<int>(w * s), gh = static_cast<int>(KEY_H * s);
-    int gx = x - (gw - w) / 2, gy = y - (gh - KEY_H) / 2;
-    if (focused) c.gfx.shadow(gx, gy, gw, gh, 16, 16, 8, static_cast<Uint8>(140 * a));
-    c.gfx.fill_round(gx, gy, gw, gh, 16, fade(focused ? rgba(0xffffff) : rgba(0xffffff, 20), a));
-    Text style = small ? Text::Callout : Text::Title3;
-    text_center(style, name, gx + gw / 2, gy + (gh - line_for(style)) / 2, focused ? fade(rgba(0x000000), a) : label(Label::Primary, a));
+    int grow = focused && !c.reduce_motion ? static_cast<int>(std::lround(6 * lift_.value)) : 0;
+    int gx = x - grow / 2, gy = y - grow / 2, gw = w + grow, gh = KEY_H + grow;
+    if (focused) {
+      if (!c.lite()) c.gfx.shadow(gx, gy, gw, gh, 20, theme::shadow_blur, theme::shadow_dy, static_cast<Uint8>(77 * a));
+      c.gfx.fill_round(gx, gy, gw, gh, 20, fade(rgba(0xffffff), a));
+    }
+    Text style = small ? Text::Body : Text::Title3Std;
+    text_center(style, name, gx + gw / 2, text_y_centered(style, gy + gh / 2), focused ? fade(rgba(0x000000), a) : label(Label::Secondary, a));
   }
 
   // Four states: landing (type something), waiting (old results dimmed),
