@@ -52,7 +52,10 @@ function pictureOn(candidate, profile) {
   const hdr = c.hdr || [];
   const dv = hdr.indexOf('DV') >= 0;
   // Disc Dolby Vision (profile 7) on a TV without it plays the HDR10 base layer.
-  const disc = candidate.sourceType === 'REMUX' || (candidate.sourceType === 'BluRay' && c.resolution === '4K');
+  // Only a remux (or a disc image) keeps the disc's profile 7; Blu-ray encodes
+  // with Dolby Vision are normally converted to profile 8, which this TV plays.
+  // (2.2.0 treated every 4K Blu-ray as disc Dolby Vision and ranked it as HDR10.)
+  const disc = candidate.sourceType === 'REMUX' || !!c.discImage;
   const profile8 = /\b(dv|dovi)[ .-]?p8\b|\bprofile[ .-]?8\b/i.test(textOf(candidate));
   if (dv && disc && !profile8 && profile.dolbyVisionProfile7 !== 'yes') {
     return { label: 'HDR10 (disc Dolby Vision unsupported)', short: 'HDR10', bonus: WEIGHTS.hdr, discDolbyVision: true };

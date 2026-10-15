@@ -68,7 +68,7 @@ The built binary needs only `GLIBC_2.4` and no `GLIBCXX`, because the C++ runtim
 
 ```bat
 cd /d %USERPROFILE%\Downloads
-ares-install -d rootedTV com.muhib.bloob_2.2.0_arm.ipk
+ares-install -d rootedTV com.muhib.bloob_2.2.1_arm.ipk
 ares-launch -d rootedTV com.muhib.bloob
 ssh root@192.168.1.26 "cat /tmp/bloob-native.log"
 ```

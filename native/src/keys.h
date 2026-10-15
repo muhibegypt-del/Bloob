@@ -10,6 +10,8 @@ enum class Key { None, Up, Down, Left, Right, Ok, Back, Exit, Play, Pause, PlayP
 
 constexpr int kScancodeWebosBack = 482;
 constexpr int kScancodeWebosExit = 505;
+constexpr int kScancodeWebosCursorShow = 484;  // the Magic Remote's pointer appeared
+constexpr int kScancodeWebosCursorHide = 485;
 constexpr int kScancodeWebosRed = 486;
 constexpr int kScancodeWebosGreen = 487;
 constexpr int kScancodeWebosYellow = 488;

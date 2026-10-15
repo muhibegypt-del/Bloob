@@ -77,7 +77,7 @@ The owner chose native. `native/` is a C++ webOS app (`com.muhib.bloob`, "Bloob 
   - watch progress and settings.
   If the bus will not start the service, the app runs it directly with the TV's Node and stops it on exit.
 - **Build and test scripts:**
-  - `native/scripts/build.sh`: tests, cross-build, ABI guard (GLIBC_2.4 only, no GLIBCXX), service staging, IPK with fixed modes (`native/artifacts/com.muhib.bloob_2.2.0_arm.ipk`).
+  - `native/scripts/build.sh`: tests, cross-build, ABI guard (GLIBC_2.4 only, no GLIBCXX), service staging, IPK with fixed modes (`native/artifacts/com.muhib.bloob_2.2.1_arm.ipk`).
   - `native/scripts/ui-tour.sh`: drives the whole app on the desktop through the acceptance task, plus quick-menu, Home and pipeline-lost events, against the real service with fixture sources.
   - `native/scripts/ui-snapshots.sh`: covers player states.
   - `native/TV-TEST.md`: the TV pass, with the acceptance task, viewing distance and lifecycle.
@@ -92,6 +92,13 @@ The owner chose native. `native/` is a C++ webOS app (`com.muhib.bloob`, "Bloob 
   - Playback died after the LG quick menu.
   - The look was not yet the calm, Apple-like feel the user wants.
 - **1.1.0 is the response to that report and has not yet run on the TV.** Neither have 1.2.0 (`native/TV-TEST.md` §7), 2.0.0 Glass (§8) or 2.1.0 continuity (§9).
+- **2.2.0 ran on the TV (user report, 15 October 2026).** It was "a huge improvement, extremely smooth". Four problems were reported:
+  - Subtitles showed *Off* until you scrolled.
+  - DV titles came up as HDR every time.
+  - The UI did nothing while the Magic Remote cursor was on screen.
+  - Audio choices were missing.
+
+  2.2.1 fixes the track panel, which showed one row too few. It maps pointer clicks, the wheel and the right button to OK, Up/Down and Back. It names the HDR format the TV reports and logs `[qoe] picture: version claims Dolby Vision, TV reports …`. It stops ranking 4K Blu-ray encodes as disc Dolby Vision. Whether the TV engages Dolby Vision for MKV over uMediaServer is still unknown: read that log line from `/tmp/bloob-native.log` on the TV.
 
 See `native/README.md`. Elements of A is UI inspiration only. Technical references are the open-source Moonlight TV and Kodi webOS code, read but not copied. The web app (`tv-app/`) remains installed and working.
 

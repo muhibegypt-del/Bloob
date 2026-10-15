@@ -270,6 +270,14 @@ class PlayerScreen : public Screen {
     if (!had_frame && session_.first_frame_ms() >= 0) logf("player", "first frame after %lld ms", session_.first_frame_ms());
     if (pending && !session_.pending_ms())
       logf("player", "seek to %lld ms landed at %lld ms after %lld ms", *pending, session_.position_ms(t), t - seek_started);
+    // The version promised Dolby Vision: say in the log whether the TV agrees, so
+    // a TV run shows if Dolby Vision is lost on the way (TV, 2.2.0: "HDR every
+    // time the video is DV").
+    if (event.kind == MediaEvent::VideoInfo && !ums_.info().hdr.empty() && source_.find("Dolby Vision") != std::string::npos) {
+      std::string got = upper(ums_.info().hdr);
+      bool dv = got.find("DOLBY") != std::string::npos || got == "DV";
+      logf("qoe", "picture: version claims Dolby Vision, TV reports %s%s", ums_.info().hdr.c_str(), dv ? "" : " (Dolby Vision not engaged)");
+    }
     if (event.kind == MediaEvent::VideoInfo || event.kind == MediaEvent::SourceInfo || event.kind == MediaEvent::Loaded)
       place_video(ums_.info().width, ums_.info().height);
     if ((event.kind == MediaEvent::SourceInfo || event.kind == MediaEvent::TrackSelected) && !tracks_applied_ &&
@@ -780,7 +788,11 @@ class PlayerScreen : public Screen {
     else if (info.height >= 1000) out.push_back("HD");
     std::string hdr = upper(info.hdr);
     if (hdr.find("DOLBY") != std::string::npos || hdr == "DV") out.push_back("Dolby Vision");
-    else if (!hdr.empty() && hdr != "NONE" && hdr != "SDR") out.push_back(hdr.find("HLG") != std::string::npos ? "HLG" : "HDR");
+    // Name the format the TV reports, not a generic "HDR".
+    else if (hdr.find("HLG") != std::string::npos) out.push_back("HLG");
+    else if (hdr.find("HDR10PLUS") != std::string::npos || hdr.find("HDR10+") != std::string::npos) out.push_back("HDR10+");
+    else if (hdr.find("HDR10") != std::string::npos) out.push_back("HDR10");
+    else if (!hdr.empty() && hdr != "NONE" && hdr != "SDR") out.push_back("HDR (" + info.hdr + ")");
     for (auto &t : info.audio)
       if (t.selected) {
         std::string codec = upper(t.codec);
@@ -964,7 +976,10 @@ class PlayerScreen : public Screen {
     int ry = y + 100;
     if (panel_ == Panel::Audio && rows == 0) paragraph(Text::Callout, "This video reports no audio tracks.", x + 36, ry, label(Label::Secondary, a), w - 72, 2);
     auto labels = distinct_labels(panel_ == Panel::Audio ? info.audio : info.text, panel_ == Panel::Audio);
-    int visible = std::max(1, (h - 130) / 72);
+    // Rows that fit between the header (100) and the bottom padding (24). This
+    // used to subtract 130, one row too many: with Off and one subtitle, or two
+    // audio tracks, only the first row showed until you scrolled (TV, 2.2.0).
+    int visible = std::max(1, (h - 124) / 72);
     int first = std::max(0, std::min(panel_index_ - visible / 2, rows - visible));
     for (int i = first; i < std::min(rows, first + visible); i++) {
       bool f = i == panel_index_;

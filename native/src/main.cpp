@@ -405,6 +405,11 @@ class App {
     std::snprintf(buf, sizeof buf, "%s  \xC2\xB7  scancode %d  \xC2\xB7  keycode %d", key_name(key),
                   static_cast<int>(event.keysym.scancode), static_cast<int>(event.keysym.sym));
     c.last_key = buf;
+    int sc = static_cast<int>(event.keysym.scancode);
+    if (sc == kScancodeWebosCursorShow || sc == kScancodeWebosCursorHide) {
+      logf("input", "pointer %s", sc == kScancodeWebosCursorShow ? "shown" : "hidden");
+      return;
+    }
     if (key == Key::None) {
       logf("input", "unmapped key: scancode=%d sym=%d", event.keysym.scancode, event.keysym.sym);
       return;
@@ -454,6 +459,31 @@ class App {
     if (!root->key(key, repeat) && (key == Key::Up || key == Key::Back)) set_tabs_focus(true);
   }
 
+  // The Magic Remote's pointer (TV, 2.2.0: with the cursor on screen the app did
+  // nothing, because a click arrives as a mouse button, not as OK). Until Bloob
+  // has pointer hit-testing, the pointer drives focus like the arrows: a click
+  // is OK on whatever is focused, the wheel moves up and down, and the right
+  // button is Back. Each kind is logged once so a TV run shows what arrives.
+  void on_pointer(const SDL_Event &e) {
+    static bool seen[3] = {false, false, false};
+    int kind = e.type == SDL_MOUSEBUTTONDOWN ? 0 : e.type == SDL_MOUSEWHEEL ? 1 : 2;
+    if (!seen[kind]) {
+      seen[kind] = true;
+      logf("input", "pointer %s", kind == 0 ? "button" : kind == 1 ? "wheel" : "motion");
+    }
+    if (kind == 2) return;  // moving the cursor is not a command
+    SDL_Scancode code = SDL_SCANCODE_UNKNOWN;
+    if (kind == 0) code = e.button.button == SDL_BUTTON_RIGHT ? static_cast<SDL_Scancode>(kScancodeWebosBack)
+                          : e.button.button == SDL_BUTTON_LEFT ? SDL_SCANCODE_RETURN : SDL_SCANCODE_UNKNOWN;
+    else if (e.wheel.y != 0) code = e.wheel.y > 0 ? SDL_SCANCODE_UP : SDL_SCANCODE_DOWN;
+    if (code == SDL_SCANCODE_UNKNOWN) return;
+    SDL_KeyboardEvent key{};
+    key.type = SDL_KEYDOWN;
+    key.timestamp = kind == 0 ? e.button.timestamp : e.wheel.timestamp;
+    key.keysym.scancode = code;
+    on_key(key);
+  }
+
   // What Audio Guidance should say for the current focus (G7).
   std::string spoken_focus() {
     if (stack_.empty() && tabs_focus_) return std::string(kTabs[root_].label) + ", tab, " + position(root_, kTabCount);
@@ -465,6 +495,8 @@ class App {
       running_ = false;
     } else if (e.type == SDL_KEYDOWN) {
       on_key(e.key);
+    } else if (e.type == SDL_MOUSEBUTTONDOWN || e.type == SDL_MOUSEWHEEL || e.type == SDL_MOUSEMOTION) {
+      on_pointer(e);
     } else if (e.type == SDL_WINDOWEVENT) {
       // Focus loss alone is a system overlay (quick settings, volume): the app
       // is still on screen and playback must carry on untouched.

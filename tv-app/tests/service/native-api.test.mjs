@@ -89,10 +89,12 @@ describe('service ranking', () => {
     const encode = candidate({ id: 'encode', claims: { resolution: '4K', hdr: ['DV', 'HDR10'], audio: ['Dolby Digital Plus'], channels: '5.1' }, sourceType: 'BluRay', seeders: same.seeders, sizeBytes: 20e9 });
     const web = candidate({ id: 'web', claims: { resolution: '4K', hdr: ['DV', 'HDR10'], audio: ['Dolby Digital Plus'], channels: '5.1' }, sourceType: 'WEB-DL', seeders: same.seeders, sizeBytes: 20e9 });
     const result = rank([disc, encode, web], {});
-    expect(result.recommended.id).toBe('web');
+    expect(['web', 'encode']).toContain(result.recommended.id);
     expect(result.recommended.picture).toBe('Dolby Vision + HDR');
     expect(result.recommended.headline).toBe('4K · Dolby Vision');
-    for (const id of ['disc', 'encode']) {
+    // A Blu-ray encode with Dolby Vision is normally profile 8: it keeps Dolby Vision.
+    expect(byId(result, 'encode').picture).toBe('Dolby Vision + HDR');
+    for (const id of ['disc']) {
       const view = byId(result, id);
       expect(view.picture).toBe('HDR10 (disc Dolby Vision unsupported)');
       expect(view.headline).toBe('4K · HDR10');
