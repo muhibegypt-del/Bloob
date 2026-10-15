@@ -187,7 +187,7 @@ class SettingsScreen : public Screen {
         c.gfx.shadow(x, y, w, kRowH, 24, 24, 10, 130);
         c.gfx.fill_round(x, y, w, kRowH, 24, rgba(0xffffff));
       } else {
-        c.gfx.fill_round(x, y, w, kRowH, 24, rgba(0xffffff, 20));
+        c.gfx.fill_round(x, y, w, kRowH, 24, theme::settings_platter);
       }
       std::string title, value, action;
       bool choice = false;

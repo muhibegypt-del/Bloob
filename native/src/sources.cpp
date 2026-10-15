@@ -659,7 +659,7 @@ class SourcesScreen : public Screen {
       cancel.focused = sheet_focus_ == 0;
       cancel.h = 64;
       cancel.alpha = a;
-      int bx = x + 56 + draw_glass_button(x + 56, y + h - 100, cancel) + 20;
+      int bx = x + 56 + draw_glass_button(x + 56, y + h - 100, cancel) + theme::control_gap;
       if (can_show_others()) {
         GlassButton others;
         others.label = "Other versions";
@@ -705,7 +705,7 @@ class SourcesScreen : public Screen {
       next.focused = fail_focus_ == 0;
       next.lift = lift_.value;
       next.alpha = a;
-      bx += draw_glass_button(bx, y + h - 112, next) + 20;
+      bx += draw_glass_button(bx, y + h - 112, next) + theme::control_gap;
       GlassButton again;
       again.label = "Try again";
       again.focused = fail_focus_ == 1;

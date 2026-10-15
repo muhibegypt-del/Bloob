@@ -28,6 +28,10 @@ class Font {
   // Draws with the top of the line box at `y`. Returns the advance width.
   int draw(const std::string &text, int x, int y, int size, Color color);
   int line_height(int size);
+  // Distance from the top of the line box to the baseline, and the height of a
+  // capital letter above it: what optical centring needs.
+  float ascent(int size);
+  float cap_height(int size);
 
  private:
   struct Glyph {

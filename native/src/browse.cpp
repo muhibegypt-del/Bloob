@@ -364,7 +364,7 @@ class BrowseScreen : public Screen {
     later.label = "Later";
     later.focused = welcome_button_ == 1;
     int bx = x + 56, by = y + h - 124;
-    bx += draw_glass_button(bx, by, connect) + 20;
+    bx += draw_glass_button(bx, by, connect) + theme::control_gap;
     draw_glass_button(bx, by, later);
     (void)c;
   }
@@ -588,7 +588,7 @@ class BrowseScreen : public Screen {
         b.focused = hero_ && !tabs_ && static_cast<int>(i) == button_;
         b.lift = button_lift_.value;
         b.alpha = hero_only;
-        bx += draw_glass_button(bx, by, b) + 20;
+        bx += draw_glass_button(bx, by, b) + theme::control_gap;
       }
       if (s.has_resume && s.resume.kind == "resume" && s.resume.duration > 0) {
         bx += 14;

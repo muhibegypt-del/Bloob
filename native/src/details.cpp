@@ -320,9 +320,8 @@ class DetailsScreen : public Screen {
       xs.push_back(x);
       GlassButton b;
       b.label = s.label;
-      b.h = 60;
-      b.style = Text::Callout;
-      x += glass_button_width(b) + 12;
+      b.pill = true;
+      x += glass_button_width(b) + theme::control_gap;
     }
     xs.push_back(x);
     return xs;
@@ -420,7 +419,7 @@ class DetailsScreen : public Screen {
       b.focused = zone_ == Zone::Buttons && static_cast<int>(i) == button_;
       b.lift = lift_.value;
       b.alpha = alpha;
-      bx += draw_glass_button(bx, by, b) + 20;
+      bx += draw_glass_button(bx, by, b) + theme::control_gap;
     }
     if (has_resume_) text(Text::Caption1, resume_note_, bx + 8, by + (80 - line_for(Text::Caption1)) / 2, label(Label::Secondary, alpha));
   }
@@ -499,13 +498,12 @@ class DetailsScreen : public Screen {
       int off = static_cast<int>(std::lround(sscroll_.value));
       for (size_t i = 0; i < meta_.seasons.size(); i++) {
         int x = X0 + xs[i] - off;
-        int w = xs[i + 1] - xs[i] - 12;
+        int w = xs[i + 1] - xs[i] - theme::control_gap;
         if (x + w < X0 - 60 || x > W - X0 + 60) continue;  // off screen
         bool selected = static_cast<int>(i) == season_;
         GlassButton b;
         b.label = meta_.seasons[i].label;
-        b.h = 60;
-        b.style = Text::Callout;
+        b.pill = true;
         b.focused = zone_ == Zone::Seasons && selected;
         b.candidate = selected && !b.focused;
         b.lift = lift_.value;

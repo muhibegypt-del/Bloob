@@ -34,15 +34,15 @@ Bloob draws with SDL2 and no shaders. Video plays in LG's hardware plane under t
 | Token | Value | Use |
 | --- | --- | --- |
 | `black` | `#000000` | Ground behind artwork and video |
-| `plain` | `#0B0B0D` | Ground of pages without artwork (Search, Settings, About, Diagnostics) |
+| `plain` | `#2C2C2E` [EoA C5] | Ground of pages without artwork (Search, Settings, About, Diagnostics) |
 | Frost | baked crop (see above), hairline white 15% | Tab bar and toasts over artwork, How to watch, sheets, pairing |
 | `smoke` | black 45%, hairline white 12% | Player bar, clock pill, track panels, Up next, player error |
 | `solid` | `#2C2C2E` at 94% | Fallback, Search keyboard panel, Release details drawer |
-| `candidate` | white 20% (+ check mark) | Chosen but not focused: the current tab, the selected season, the best version |
+| `candidate` | white 10% [EoA P5] (+ check mark on buttons) | Chosen but not focused: the current tab, the selected season, the best version |
 | Focus | white fill, black label | Every focused control |
 | `good` / `caution` / `problem` | `#5CD58C` / `#F5B942` / `#FF7A6B` | Status, always with words |
 
-**Labels** (white at an alpha by role): Primary 100%, Secondary 65%, Tertiary 40%, Disabled 30%. **Increase contrast** raises them to 100 / 85 / 75 / 55%.
+**Labels** (white at an alpha by role) [EoA C1, C2]: Primary 100%, Secondary 50%, Tertiary 30%, Disabled 20%. **Increase contrast** raises them to 100 / 85 / 75 / 55%.
 
 ## Type
 
@@ -64,7 +64,7 @@ Inter, rasterised at exact sizes, on Apple's public tvOS scale. Nothing is small
 ## Layout
 
 - **Safe area:** 80 px left and right, 60 px top and bottom (tvOS). Artwork bleeds to the edges.
-- **Tab bar:** one frosted pill on the 60 px safe line, centred, 80 px tall. The current tab is a candidate fill, white when the bar has focus. It fades in place rather than sliding.
+- **Tab bar:** a frosted capsule on the 60 px safe line, centred. The tabs inside are season-style pills [EoA P1–P6], 66 px tall with 30 px padding and 16 px apart [EoA F3]. The current tab is a candidate (white 10%), and turns white when the bar has focus. The bar fades in place rather than sliding.
 - **Cards:** 16:9 at 320×180 with 40 px gaps, which gives the tvOS 5-column grid across 1760 px. Episode cards are 400×225.
 - **Radii:** buttons and pills fully round, cards 14, glass panels 32, badges 6.
 
@@ -72,7 +72,8 @@ Inter, rasterised at exact sizes, on Apple's public tvOS scale. Nothing is small
 
 | Component | Rest | Focused |
 | --- | --- | --- |
-| Glass button (80 h; 60–72 in sheets) | white 14% fill with a hairline, white label | White fill, black label, ×1.06, soft shadow |
+| Glass button (80 h; 60–72 in sheets) | white 14% fill with a hairline, white label | White fill, black label, ×1.06, soft shadow. Measured once and drawn from that, so the margins are equal; label centred on its capital height. 16 px between buttons [EoA F3]. |
+| Pill (seasons, tabs) [EoA P1–P6] | no fill, secondary label; candidate white 10%, primary label | White fill, black label, 8 px wider |
 | Card | Artwork, soft shadow. Continue cards carry the title, time left and a white progress line inside the art. | ×1.08 lift, deeper shadow, a diagonal sheen across the art; the title and context appear under the card |
 | Row (versions, settings, track choices) | white 8–10% | White fill, black text, shadow |
 | Switch | track white 20%, white knob | Inverted on the white row |

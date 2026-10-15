@@ -503,19 +503,25 @@ class App {
   // ---------------------------------------------------------------- drawing
 
   void draw_tabs() {
-    Ctx &c = ctx();
     float a = tabs_alpha_.value;
     if (a <= 0.01f) return;
     int dy = 0;  // glass fades in place: a moving pane would need a new frost each frame
     // Glass: a floating frosted bar on the tvOS safe line; the current tab is
     // white when the bar has focus, a soft candidate otherwise.
-    std::vector<int> widths(kTabCount);
+    // Tabs are pills on the glass bar [EoA P1-P6], 16 apart [EoA F3].
+    auto pill = [&](int i) {
+      GlassButton t;
+      t.pill = true;
+      t.label = kTabs[i].icon >= 0 ? "" : kTabs[i].label;
+      t.icon = kTabs[i].icon;
+      t.candidate = i == root_;
+      t.focused = tabs_focus_ && i == root_;
+      t.alpha = a;
+      return t;
+    };
     int total = 0;
-    for (int i = 0; i < kTabCount; i++) {
-      widths[static_cast<size_t>(i)] = kTabs[i].icon >= 0 ? 68 : measure(Text::Callout, kTabs[i].label) + 60;
-      total += widths[static_cast<size_t>(i)] + (i ? 6 : 0);
-    }
-    int pad = 8, h = 64;
+    for (int i = 0; i < kTabCount; i++) total += glass_button_width(pill(i)) + (i ? theme::control_gap : 0);
+    int pad = 8, h = theme::pill_h;
     int bw = total + pad * 2, bh = h + pad * 2, bx = (W - bw) / 2, by = theme::safe_y + dy;
     GlassSpec bar;
     bar.x = bx;
@@ -526,21 +532,7 @@ class App {
     bar.alpha = a;
     top()->shell_glass(bar);
     int x = bx + pad;
-    for (int i = 0; i < kTabCount; i++) {
-      int w = widths[static_cast<size_t>(i)];
-      bool current = i == root_;
-      bool focused = tabs_focus_ && current;
-      if (focused) {
-        c.gfx.shadow(x, by + pad, w, h, h / 2, 20, 8, static_cast<Uint8>(120 * a));
-        c.gfx.fill_round(x, by + pad, w, h, h / 2, fade(rgba(0xffffff), a));
-      } else if (current) {
-        c.gfx.fill_round(x, by + pad, w, h, h / 2, fade(theme::candidate, a));
-      }
-      Color fg = focused ? fade(rgba(0x000000), a) : label(current ? Label::Primary : Label::Secondary, a);
-      if (kTabs[i].icon >= 0) c.icons.draw(static_cast<Icon>(kTabs[i].icon), x + 18, by + pad + 16, 32, fg);
-      else text_center(Text::Callout, kTabs[i].label, x + w / 2, by + pad + (h - line_for(Text::Callout)) / 2, fg);
-      x += w + 6;
-    }
+    for (int i = 0; i < kTabCount; i++) x += draw_glass_button(x, by + pad, pill(i)) + theme::control_gap;
   }
 
   void draw_screen(Screen *s, bool layer, float alpha, int dy) {

@@ -316,6 +316,19 @@ bool Font::advance_for(Atlas *a, unsigned cp, unsigned &key, float &advance) {
   return true;
 }
 
+float Font::ascent(int size) {
+  Atlas *a = atlas(size);
+  return a ? a->ascent : size * 0.8f;
+}
+
+float Font::cap_height(int size) {
+  Atlas *a = atlas(size);
+  if (!a || !info_) return size * 0.7f;
+  int x0, y0, x1, y1;
+  if (!stbtt_GetCodepointBox(static_cast<stbtt_fontinfo *>(info_), 'H', &x0, &y0, &x1, &y1)) return size * 0.7f;
+  return y1 * a->scale;
+}
+
 int Font::line_height(int size) {
   Atlas *a = atlas(size);
   return a ? static_cast<int>(a->line) : size;

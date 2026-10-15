@@ -67,6 +67,24 @@ Pixels scale_image(const unsigned char *rgba, int sw, int sh, int box_w, int box
   result.data.resize(static_cast<size_t>(dw) * dh * 4);
   const float r = static_cast<float>(std::min(radius, std::min(dw, dh) / 2));
 
+  // Title-on-art cards: Elements of A blends light artwork darker than dark
+  // artwork (0.55 versus 0.2; TOKENS.md C6). Light or dark is judged from the
+  // part under the title, the lower 45% of the crop.
+  float shade_strength = 0.0f;
+  if (shade) {
+    double sum = 0;
+    long n = 0;
+    int ys = static_cast<int>(sy0 + (sy1 - sy0) * 0.55), ye = static_cast<int>(sy1);
+    int step = std::max(1, static_cast<int>((sx1 - sx0) / 48));
+    for (int y = ys; y < ye; y += step)
+      for (int x = static_cast<int>(sx0); x < static_cast<int>(sx1); x += step) {
+        const unsigned char *q = rgba + (static_cast<size_t>(y) * sw + x) * 4;
+        sum += (0.2126 * q[0] + 0.7152 * q[1] + 0.0722 * q[2]) / 255.0;
+        n++;
+      }
+    shade_strength = n && sum / n > theme::card_scrim_light_luma ? theme::card_scrim_light : theme::card_scrim_dark;
+  }
+
   // Writes one premultiplied pixel, un-premultiplied, with rounded-corner coverage.
   auto emit = [&](int x, int y, const float px[4]) {
     unsigned char *p = reinterpret_cast<unsigned char *>(&result.data[(static_cast<size_t>(y) * dw + x) * 4]);
@@ -81,11 +99,11 @@ Pixels scale_image(const unsigned char *rgba, int sw, int sh, int box_w, int box
     float alpha = px[3] / 255.0f;
     float darken = 1.0f;
     if (shade) {
-      // Bottom 55%: ease from untouched to 70% darker at the bottom edge.
+      // Bottom 55%: ease from untouched to the blend strength at the bottom edge.
       float t = (y + 0.5f) / dh;
       if (t > 0.45f) {
         float k = (t - 0.45f) / 0.55f;
-        darken = 1.0f - 0.7f * k * k * (3 - 2 * k);
+        darken = 1.0f - shade_strength * k * k * (3 - 2 * k);
       }
     }
     for (int c = 0; c < 3; c++) {

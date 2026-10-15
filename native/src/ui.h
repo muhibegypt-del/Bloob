@@ -148,6 +148,9 @@ int text(Text style, const std::string &s, int x, int y, Color color, int max_w 
 int text_right(Text style, const std::string &s, int right, int y, Color color);
 int text_center(Text style, const std::string &s, int cx, int y, Color color, int max_w = 0);
 int measure(Text style, const std::string &s);
+// The y to pass to text() so the style's capital letters sit centred on `cy`
+// (optical centring, rather than centring the whole line box).
+int text_y_centered(Text style, int cy);
 // White at the role's opacity (Glass); `alpha` fades it further.
 Color label(Label role, float alpha = 1.0f);
 // Wrapped paragraph; returns the y below it.
@@ -217,6 +220,9 @@ struct GlassButton {
   float alpha = 1.0f;
   int h = 80;
   Text style = Text::Button;
+  // Season-pill treatment [EoA P1-P6]: 66 high, 30 padding, no fill at rest,
+  // 10% white as candidate, white when focused, growing 8 px wide.
+  bool pill = false;
 };
 int glass_button_width(const GlassButton &b);
 // Spoken position, "3 of 12" (G7).

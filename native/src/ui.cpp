@@ -63,7 +63,9 @@ Spec spec(Text style) {
     case Text::Body: return {1, 29, 36};
     case Text::Caption1: return {1, 25, 32};
     case Text::Caption2: return {1, 23, 30};
+    case Text::Caption3: return {1, 21, 28};  // [EoA T9]; only where text is fitted, never body copy
     case Text::Button: return {2, 29, 36};
+    case Text::Pill: return {2, 31, 38};      // Emphasized Callout [EoA P2]
   }
   return {0, 24, 32};
 }
@@ -103,8 +105,15 @@ int text_center(Text style, const std::string &s, int cx, int y, Color color, in
 
 int measure(Text style, const std::string &s) { return font_for(style).measure(s, size_for(style)); }
 
+int text_y_centered(Text style, int cy) {
+  Font &f = font_for(style);
+  int size = size_for(style);
+  return static_cast<int>(std::lround(cy + f.cap_height(size) / 2 - f.ascent(size)));
+}
+
 Color label(Label role, float alpha) {
-  static const int normal[] = {255, 166, 102, 77}, high[] = {255, 217, 191, 140};
+  // Dark theme: 100 / 50 / 30 / 20%; Increase contrast 100 / 85 / 75 / 55% [EoA C1, C2].
+  static const int normal[] = {255, 128, 77, 51}, high[] = {255, 217, 191, 140};
   int a = (ctx().high_contrast ? high : normal)[static_cast<int>(role)];
   return with_alpha(rgba(0xffffff), static_cast<int>(a * std::max(0.0f, std::min(1.0f, alpha))));
 }
@@ -260,46 +269,84 @@ std::string position(int index, int count) {
   return count > 1 ? std::to_string(index + 1) + " of " + std::to_string(count) : "";
 }
 
-int glass_button_width(const GlassButton &b) {
-  if (b.label.empty()) return b.h;
-  int w = measure(b.style, b.label) + (b.h >= 72 ? 96 : 60);
-  if (b.icon >= 0) w += b.h >= 72 ? 42 : 36;
-  if (b.candidate) w += 40;
-  return w;
+namespace {
+// A button's geometry, worked out once: the width and the drawing both come from
+// it, so the margins either side of the content are always equal.
+struct ButtonLayout {
+  int w, h, pad, icon, gap, label_w, check_w, content;
+  Text style;
+};
+
+ButtonLayout layout_of(const GlassButton &b) {
+  ButtonLayout l{};
+  l.style = b.pill ? Text::Pill : b.style;
+  l.h = b.pill ? theme::pill_h : b.h;
+  l.pad = b.pill ? theme::pill_pad : l.h >= 72 ? 48 : 30;
+  l.icon = l.h >= 72 ? 30 : 26;
+  l.gap = 12;
+  l.label_w = b.label.empty() ? 0 : measure(l.style, b.label);
+  l.check_w = b.candidate && !b.pill ? 28 + l.gap : 0;
+  if (b.label.empty()) {
+    l.content = l.icon;
+    l.w = l.h;  // icon-only buttons are round
+    return l;
+  }
+  l.content = (b.icon >= 0 ? l.icon + l.gap : 0) + l.label_w + l.check_w;
+  l.w = l.content + 2 * l.pad;
+  return l;
 }
+}  // namespace
+
+int glass_button_width(const GlassButton &b) { return layout_of(b).w; }
 
 int draw_glass_button(int x, int y, const GlassButton &b) {
   Ctx &c = ctx();
-  int w = glass_button_width(b), h = b.h;
-  float lift = b.focused && !c.reduce_motion ? 1.0f + (theme::control_lift - 1.0f) * b.lift : 1.0f;
-  int gw = static_cast<int>(w * lift), gh = static_cast<int>(h * lift);
-  int gx = x - (gw - w) / 2, gy = y - (gh - h) / 2;
-  if (b.focused) {
-    c.gfx.shadow(gx, gy, gw, gh, gh / 2, 30, 14, static_cast<Uint8>(150 * b.alpha));
-    c.gfx.fill_round(gx, gy, gw, gh, gh / 2, fade(rgba(0xffffff), b.alpha));
+  ButtonLayout l = layout_of(b);
+  int w = l.w, h = l.h;
+  int gx = x, gy = y, gw = w, gh = h;
+  if (b.pill) {
+    // Pills grow sideways when focused, by a fixed amount [EoA P4].
+    int grow = b.focused && !c.reduce_motion ? static_cast<int>(std::lround(theme::pill_focus_grow * b.lift)) : 0;
+    gx = x - grow / 2;
+    gw = w + grow;
   } else {
-    c.gfx.fill_round(gx, gy, gw, gh, gh / 2, fade(b.candidate ? theme::candidate : with_alpha(rgba(0xffffff), 36), b.alpha));
-    c.gfx.stroke_round(gx, gy, gw, gh, gh / 2, 1, fade(theme::frost_hairline, b.alpha));
+    float lift = b.focused && !c.reduce_motion ? 1.0f + (theme::control_lift - 1.0f) * b.lift : 1.0f;
+    gw = static_cast<int>(std::lround(w * lift));
+    gh = static_cast<int>(std::lround(h * lift));
+    gx = x - (gw - w) / 2;
+    gy = y - (gh - h) / 2;
   }
-  Color fg = b.focused ? fade(rgba(0x000000), b.alpha) : label(b.disabled ? Label::Disabled : Label::Primary, b.alpha);
-  int isz = h >= 72 ? 30 : 26;
+  int radius = b.pill ? theme::pill_radius * gh / theme::pill_h : gh / 2;
+  if (b.focused) {
+    c.gfx.shadow(gx, gy, gw, gh, radius, 30, 14, static_cast<Uint8>(150 * b.alpha));
+    c.gfx.fill_round(gx, gy, gw, gh, radius, fade(rgba(0xffffff), b.alpha));
+  } else if (b.pill) {
+    if (b.candidate) c.gfx.fill_round(gx, gy, gw, gh, radius, fade(theme::candidate, b.alpha));
+  } else {
+    c.gfx.fill_round(gx, gy, gw, gh, radius, fade(b.candidate ? theme::candidate : with_alpha(rgba(0xffffff), 36), b.alpha));
+    c.gfx.stroke_round(gx, gy, gw, gh, radius, 1, fade(c.high_contrast ? theme::hairline_high : theme::frost_hairline, b.alpha));
+  }
+  // Pills: secondary at rest, primary as candidate [EoA P5].
+  Label rest = b.disabled ? Label::Disabled : b.pill && !b.candidate ? Label::Secondary : Label::Primary;
+  Color fg = b.focused ? fade(rgba(0x000000), b.alpha) : label(rest, b.alpha);
+  int cy = gy + gh / 2, isz = l.icon;
   if (b.label.empty()) {
-    if (b.icon == kPlayIcon) c.gfx.triangle_right(gx + gw / 2 - isz / 3, gy + (gh - isz) / 2, isz, fg);
-    else if (b.icon == kPauseIcon) c.gfx.bars(gx + (gw - isz * 4 / 5) / 2, gy + (gh - isz * 4 / 5) / 2, isz * 4 / 5, fg);
-    else if (b.icon >= 0) c.icons.draw(static_cast<Icon>(b.icon), gx + (gw - isz) / 2, gy + (gh - isz) / 2, isz, fg);
+    if (b.icon == kPlayIcon) c.gfx.triangle_right(gx + gw / 2 - isz / 3, cy - isz / 2, isz, fg);
+    else if (b.icon == kPauseIcon) c.gfx.bars(gx + (gw - isz * 4 / 5) / 2, cy - isz * 2 / 5, isz * 4 / 5, fg);
+    else if (b.icon >= 0) c.icons.draw(static_cast<Icon>(b.icon), gx + (gw - isz) / 2, cy - isz / 2, isz, fg);
     return w;
   }
-  int content = measure(b.style, b.label) + (b.icon >= 0 ? isz + 12 : 0) + (b.candidate ? 40 : 0);
-  int tx = gx + (gw - content) / 2;
+  // Content centred in the (possibly grown) shape: equal space either side.
+  int tx = gx + (gw - l.content) / 2;
   if (b.icon == kPlayIcon) {
-    c.gfx.triangle_right(tx, gy + (gh - isz) / 2, isz, fg);
-    tx += isz + 12;
+    c.gfx.triangle_right(tx, cy - isz / 2, isz, fg);
+    tx += isz + l.gap;
   } else if (b.icon >= 0) {
-    c.icons.draw(static_cast<Icon>(b.icon), tx, gy + (gh - isz) / 2, isz, fg);
-    tx += isz + 12;
+    c.icons.draw(static_cast<Icon>(b.icon), tx, cy - isz / 2, isz, fg);
+    tx += isz + l.gap;
   }
-  text(b.style, b.label, tx, gy + (gh - line_for(b.style)) / 2, fg);
-  if (b.candidate) c.icons.draw(Icon::Check, tx + measure(b.style, b.label) + 12, gy + (gh - 28) / 2, 28, fg);
+  text(l.style, b.label, tx, text_y_centered(l.style, cy), fg);
+  if (l.check_w) c.icons.draw(Icon::Check, tx + l.label_w + l.gap, cy - 14, 28, fg);
   return w;
 }
 

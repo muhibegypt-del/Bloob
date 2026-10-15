@@ -16,6 +16,7 @@
 #include "play.h"
 #include "screens.h"
 #include "session.h"
+#include "speech.h"
 
 namespace {
 
@@ -503,9 +504,11 @@ class PlayerScreen : public Screen {
   }
 
   long long hud_timeout_for() const {
-    if (hud_mode_ == HudMode::Reduced) return hud_reduced_timeout_ms;
-    if (zone_ == Zone::Controls || session_.phase() == Phase::Paused) return hud_paused_timeout_ms;
-    return hud_timeout_ms;
+    long long base = hud_mode_ == HudMode::Reduced ? hud_reduced_timeout_ms
+                     : zone_ == Zone::Controls || session_.phase() == Phase::Paused ? hud_paused_timeout_ms
+                                                                                    : hud_timeout_ms;
+    // With the screen reader on, every delay doubles [EoA V4].
+    return speech().on() ? base * hud_reader_factor : base;
   }
 
   void show_hud(HudMode mode = HudMode::Full) {
