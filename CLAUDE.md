@@ -72,6 +72,19 @@ The owner chose native. `native/` is a C++ webOS app (`com.muhib.bloob`, "Bloob 
   - motion: ease-in/ease-out timed curves, springs 30/150/1, 300 ms linear crossfades.
 
   Glass stays on the tab bar, How to watch and sheets.
+- **Engine upgrade (next, 15 October 2026).** The target is `docs/Buna-engine-specification.md`, the finished-system spec from `bloob-v1` `73da849`. `native/ENGINE-PLAN.md` holds:
+  - a section-by-section conformance table, marked Have / Partial / Gap;
+  - phases E1–E8, in order:
+    1. session truth;
+    2. inspector;
+    3. watch attempts and leases;
+    4. events and frames;
+    5. layout and focus runtime;
+    6. resources and text;
+    7. sample route, only if a measured gap appears;
+    8. accessibility.
+
+  A retained scene and a separate render thread are deferred until TV measurements show a frame problem.
 - **Design (2.0, Glass):** the visual system, with materials, tokens, type, focus, motion, states, the spoken interface and per-screen layouts, is in `native/DESIGN.md`. The tokens live in `native/src/theme.h`, the type scale, label roles and components in `ui.cpp`, and the frost bake in `images.cpp`.
 - **Rendering and playback:**
   - The TV's SDL2 provides the window and remote. Bloob draws with its own renderer: Inter via stb_truetype with oversampling and gamma, exact-size anti-aliased shapes, and artwork via stb_image scaled on worker threads, on a 1920×1080 offscreen canvas.
