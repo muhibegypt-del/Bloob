@@ -6,6 +6,8 @@ Read this file before changing the application. This repository contains an inde
 
 Before choosing the next engine work, read [the independent branch review](docs/Claude-branch-review-2026-10-15.md) and [the review and planning instructions for Claude](docs/Claude-review-and-planning-handoff.md). The review examined commit `8790488` on `claude/sleepy-ptolemy-o87vgv`; it identifies ten concrete reliability findings as well as strengths worth preserving. Verify each finding against the current code, correct anything unsupported or already fixed, then write the implementation plan specified in the handoff. **The current request is to review and plan; stop before implementing application changes.** Historical completion claims below are not substitutes for this verification.
 
+**Done (15 October 2026, docs only):** [`docs/Claude-review-validation.md`](docs/Claude-review-validation.md) confirms all ten findings at `fb4f412`, with corrections and five additional findings (A1–A5). [`native/RELIABILITY-IMPLEMENTATION-PLAN.md`](native/RELIABILITY-IMPLEMENTATION-PLAN.md) sequences the fixes as R1–R7 (all planned, none implemented) and comes before `native/ENGINE-PLAN.md`, whose status marks were corrected. Start implementation with R1.
+
 ## The user's actual goal
 
 Build **Bloob**, a distinct webOS application with:
