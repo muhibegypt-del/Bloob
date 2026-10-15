@@ -6,7 +6,7 @@ The renders below come from `scripts/ui-tour.sh`, which drives the real app on t
 
 **Sources:**
 - Apple's public tvOS Human Interface Guidelines for the shared tvOS conventions: type sizes, the safe area, the 5-column grid, focus lift.
-- The Elements of A design-system study for principles only. Bloob picks its own values wherever a value is a single app's choice rather than a public convention.
+- The Elements of A studies for **values as well as principles**. Owner's rule (15 October 2026): measured values are copied wherever the studies record them. That covers spacing, padding, sizes, radii, type sizes, opacities, colours, timings and geometry. Code, artwork, icons, fonts, written text and branding are never copied. Every copied value is listed with its source in `TOKENS.md`. Bloob picks its own value only where the studies record none.
 
 ## The constraint that shapes everything
 
@@ -165,4 +165,4 @@ The Elements of A UI studies (`research/`) informed the *organisation* of Bloob:
 - a seek that previews before it commits;
 - semantic label roles, effects tiers and adaptive contrast as principles.
 
-Every visual, asset, string and line of code here is original. Bloob uses Inter, its own icons, its own layouts and its own values.
+Every asset, string and line of code here is original. Bloob uses Inter and its own icons. **Values are a different matter:** measured values from the studies are copied (see Sources above and `TOKENS.md`). Before 2.2, Glass used its own spacing even where a reference value existed. That was a misreading of the rule, now being corrected.

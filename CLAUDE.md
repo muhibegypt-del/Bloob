@@ -6,7 +6,7 @@ Read this file before changing the application. This repository contains an inde
 
 Build **Bloob**, a distinct webOS application with:
 
-1. A calm, premium TV interface: clear information hierarchy, spacious artwork, predictable focus, minimal player chrome, and graceful loading/error states. Take organizational and performance lessons from Elements of A; create original visuals, assets, text, and implementation.
+1. A calm, premium TV interface: clear information hierarchy, spacious artwork, predictable focus, minimal player chrome, and graceful loading/error states. Take organizational and performance lessons from Elements of A; create original assets, text, and implementation. **Owner's rule (15 October 2026): copy Elements of A's measured design values (spacing, padding, sizes, radii, type, opacity, colour, timing, geometry) wherever the studies record them, with each one listed in `native/TOKENS.md`. Never copy code, artwork, icons, fonts, written text or branding.**
 2. A direct catalog-to-playback path: browse films and series, pick an episode, discover candidate sources, resolve an authorized source through AllDebrid, select the correct file or quality when needed, and play through the TV media path.
 3. **Buna**, an app-owned runtime layer that coordinates navigation, focus, playback sessions, source adapters, media state, tracks, metrics, and lifecycle. It should be independent, testable, and able to choose a web video backend now and a more capable native or segmented backend later if evidence justifies one.
 4. Measured performance: fast first frame, stable HDR/audio output when the TV and source support it, smooth seeking, low idle overhead, memory release after exit, and no repeated work that harms TV responsiveness.
