@@ -4,7 +4,7 @@ Bloob, split into its actual layers. For each layer this file records what the l
 
 Snapshot: **2.0.0** (Glass), 14 October 2026, branch `claude/sleepy-ptolemy-o87vgv`. Rows marked *(2.0)* are new in 2.0.0 and follow the phases in [`GLASS-PLAN.md`](GLASS-PLAN.md) (G0–G8); rows marked *(1.2)* are new in 1.2.0; the item IDs (F1, P3, U6…) are from the consolidated list in [`IMPLEMENTATION-UX.md`](IMPLEMENTATION-UX.md#status-in-120).
 
-How good each layer is, against a researched definition of quality, is in [`QUALITY.md`](QUALITY.md). The concrete build plan for responsiveness and continuity (U0 to U9) is in [`IMPLEMENTATION-UX.md`](IMPLEMENTATION-UX.md). Re-score a layer there when you change it.
+How the app should *behave* (continuity, place, async work, component states) is planned in [`UX-PLAN.md`](UX-PLAN.md), contracts X1–X12. How good each layer is, against a researched definition of quality, is in [`QUALITY.md`](QUALITY.md). The concrete build plan for responsiveness and continuity (U0 to U9) is in [`IMPLEMENTATION-UX.md`](IMPLEMENTATION-UX.md). Re-score a layer there when you change it.
 
 ## How to read the state
 

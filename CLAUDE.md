@@ -34,6 +34,20 @@ The owner chose native. `native/` is a C++ webOS app (`com.muhib.bloob`, "Bloob 
   - **Player.** A smoked bar with 5/8 s timers, 300 ms fades and a 400 ms seek commit.
   - **Spoken focus (G7).** With LG Audio Guidance on, focus is spoken as label, role and position, via `native/src/speech.*`. It uses the documented `audioGuidance` setting and `com.webos.service.tts/speak`, unverified on this TV, and the app declares `accessibility.supportsAudioGuidance`.
   - **Clean-up.** The 1.x type names, components and tokens are gone; `native/DESIGN.md` is rewritten for Glass. `native/TV-TEST.md` §8 is the 2.0 TV pass.
+- **UX plan (next, 15 October 2026):** after a full series on 2.0.0, the owner judged the look right but the behaviour not "dynamic, intuitive or intelligent". On that viewing, each next episode chose its own version (often HD), and there was no way to choose a version for an episode. `native/UX-PLAN.md` is the plan, built from `research/Elements-of-A-UX-learning-frameworks.md` and its companion response, and `research/Swiftfin-tvOS-behaviour-for-Bloob.md`. It labels every claim as observed in Elements of A [O], read in Swiftfin [S], proposed [P] or Bloob today [B], and lists ten located causes in Bloob's code. It defines twelve contracts, X1–X12:
+  - progress and completion;
+  - the next-action resolver;
+  - version preference and edition identity;
+  - track intent;
+  - the navigation and Back map;
+  - place anchors;
+  - bounded asynchronous work;
+  - information budgets;
+  - component states;
+  - the player;
+  - recovery;
+  - accessibility.
+  Work them in its stated order and tick its status table.
 - **Design (2.0, Glass):** the visual system, with materials, tokens, type, focus, motion, states, the spoken interface and per-screen layouts, is in `native/DESIGN.md`. The tokens live in `native/src/theme.h`, the type scale, label roles and components in `ui.cpp`, and the frost bake in `images.cpp`.
 - **Rendering and playback:**
   - The TV's SDL2 provides the window and remote. Bloob draws with its own renderer: Inter via stb_truetype with oversampling and gamma, exact-size anti-aliased shapes, and artwork via stb_image scaled on worker threads, on a 1920×1080 offscreen canvas.
