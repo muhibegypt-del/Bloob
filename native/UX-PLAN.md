@@ -8,7 +8,7 @@ The aim, taken from the Elements of A study, is coherence. **Every component agr
 - what has happened;
 - where you will return.
 
-Bloob breaks that today in specific, located ways (§1). Each later section is a contract with numbered increments (**X1.1** and so on). Cite them in commits and tick the status table at the end as they land.
+Bloob breaks that today in specific, located ways (§1). Each later section is a contract with numbered increments (**X0.1**, **X1.1** and so on). Cite them in commits and tick the status table at the end as they land.
 
 ## Evidence labels
 
@@ -45,6 +45,41 @@ The study proposed them; it did not recover them. Fallback values recovered from
 | 10 | Starting playback gives no immediate feedback on OK | No pressed state exists. Feedback waits for the next screen. |
 
 ## 2. Contracts
+
+### X0. The interaction runtime (shared, built before the screen contracts)
+
+**Evidence:**
+- **[O]** Elements of A's experience is a property of a shared widget runtime, not of individual pages:
+  - `SelectableWidget` owns focus, context, press, cancel and geometry;
+  - the `mimic` helpers restore your place by item ID with an index fallback;
+  - `ListWidget` draws bounded ranges;
+  - `ScreenReader` speaks from widget meaning (label, container, role, enabled, position);
+  - a central presentation profile gates effects.
+
+  Pages compose these pieces (`research/Elements-of-A-implemented-design-system.md` §1, §5, §9, §13; the study guide §1.1–§2).
+- **[B]** Bloob has no such layer. Every screen keeps its own focus integers:
+  - `browse.cpp`: `hero_`, `button_`, `row_`, `cols_`;
+  - `details.cpp`: `zone_`, `button_`, `version_`, `season_`, `episode_`;
+  - `search.cpp`: `krow_`, `kcol_`, `result_`, `recent_index_`;
+  - `settings.cpp`: `row_`;
+  - `player.cpp`: `zone_`, `control_`, `panel_index_`.
+
+  Each screen also has its own key switch and its own `spoken()` string.
+
+**Why it comes first:** X5, X6, X7, X9 and X12 would otherwise be built once per screen, which recreates the incoherence this plan exists to remove.
+
+**Rules [P]:**
+1. **Focusable:** one state machine per element (idle, context-selected, focused, pressed, activated, disabled, loading, failed). It carries a stable item ID, geometry, and meaning (label, role, container, position).
+2. **Focus graph as data:** each screen declares its regions and directional links. Initial focus, fallbacks, Back order and modal entry and return live in that table, so the navigation map (X5) is testable without rendering.
+3. **Semantic actions:** keys produce actions such as `Play(target)`, `OpenTitle(id)`, `ChooseVersion(id)` and `Dismiss(id)`. One router owns them. This is the `PlayIntentRouter` that CLAUDE.md describes. Key handlers stop calling the API directly.
+4. **Request scope:** dwell, generation and cancellation for every purpose (X7).
+5. **Anchor:** restore by item ID, then by clamped index, with scroll kept (X6).
+6. **Semantics feed speech:** speech reads the same tree, including announcements (X12).
+
+**Increments:**
+- **X0.1** Types and a focus-graph engine with table tests.
+- **X0.2** Move the title page onto it (the journey slice in §3).
+- **X0.3** Home, then Search, Settings and the player.
 
 ### X1. Progress: one durable truth
 
@@ -130,6 +165,8 @@ The study proposed them; it did not recover them. Fallback values recovered from
 - Off is stored separately from "use defaults".
 - Each new file is matched against the intent and validated. A missing match falls back to the defaults, and the menu says so.
 
+- **[O]** In Elements of A, choosing an audio track turns on forced subtitles in that audio's language when no subtitle track is active. AD, CC and SDH have their own labels. Menus order tracks by default flag, UI language, recent preference and type (`research/question-playback-findings.md`). Bloob adopts all three.
+
 **Increments:**
 - **X4.1** A track-intent store per series.
 - **X4.2** Matching at start and after a reconnect, with unit tests over track tables (forced versus full, missing language, commentary).
@@ -195,7 +232,8 @@ The study proposed them; it did not recover them. Fallback values recovered from
 1. **Placeholders hold geometry.** A loading card, row or episode has its final size and is focusable. The arrival of data never moves focus.
 2. **Fetch on dwell, not on pass.** Season load (350 ms), the backdrop (250 ms), ranking for a focused title (proposed 600 ms) and any future preview (X12) start only after focus rests.
 3. **One request per purpose, latest wins.** Each purpose (search, season, ranking, meta) has a generation counter. Older replies are dropped and the server-side work is cancelled where it is expensive (resolve jobs already are).
-4. **Bounded caches.** Meta has 24 entries over 10 minutes (exists). Rankings cache per video for 10 minutes. Artwork has a 192 MB budget (exists). Prefetching is limited to visible items plus one screen either side.
+4. **Dwell and version token [O]:** Elements of A fetches related rows after a 300 ms focus debounce and drops outdated replies by a version token. It loads episode detail about ±10 around the selection after 500 ms, and releases it beyond ±20. Bloob gets a whole season's metadata in one call, so for Bloob this rule applies to images and rankings rather than episode data.
+5. **Bounded caches.** Meta has 24 entries over 10 minutes (exists). Rankings cache per video for 10 minutes. Artwork has a 192 MB budget (exists). Prefetching is limited to visible items plus one screen either side.
 
 **Increments:**
 - **X7.1** A generation helper in `api.*` used by every screen.
@@ -256,16 +294,25 @@ Animations retarget from their current value (already true of `Anim`). Neighbour
 - **[B]** 2.0 times out at 5 s, or 8 s when paused or on a control. Paused is **not** pinned (`player.cpp`, `hud_pinned`).
 
 **Rules [P]:**
-1. Paused, a menu open, or a seek preview pinned all **pin the controls**. This restores the 1.x behaviour and agrees with [S]. Playing: 5 s, or 8 s on a control.
+1. **Timers follow Elements of A, not Swiftfin.**
+   - **[O]** Ordinary viewing hides after 5 s. Pause, a focused control or an open menu use 8 s; an open deck uses 20 s. Every delay **doubles under the screen reader**. Fades take 300 ms. Dragging and trickplay suppress hiding, and the callback re-checks before it hides. Pause is **not** pinned.
+   - **[S]** Swiftfin pins while paused.
+   - Bloob 2.0 already matches Elements of A (5 s, 8 s, 300 ms). Add the screen-reader doubling, and suppress hiding while a seek preview is active.
 2. A transport key acts on the first press and the controls appear as feedback. This is already true, and differs from [S] on purpose.
 3. Seek: the preview moves the knob only. OK commits, Back or Play/Pause cancels the preview, and 400 ms of rest commits.
 4. Back order: track menu, seek preview, controls, exit. Already true; keep it.
 5. Up next: a cancellable countdown that triggers the completion signal (X1). Choosing Back to stay keeps you in the credits, already marked done.
+6. **Seek near the end [O]:** keep clear of the last second, and target 10 s before the end when a seek would pass it.
+7. **Binge guard [O]:** after at least two consecutive autoplayed episodes and two hours without any key press, ask "Still watching?" before starting the next.
+8. **Subtitle placement [O]:** Elements of A places captions by geometry: the largest obstruction plus a 24-unit gap, clamped to the safe area, recalculated when menus change. LG's call takes levels, so map the bar's actual height to the nearest level instead of fixed 2 and 4.
+9. **Lifecycle, a conscious difference:** Elements of A pauses on unfocus and doesn't resume on focus [O]. Bloob leaves playback alone on focus loss (1.1, after the 0.4 quick-menu report). Keep Bloob's rule.
 
 **Increments:**
-- **X10.1** Pin while paused.
+- **X10.1** Double the timers under Audio Guidance. Suppress hiding during a seek preview. Seek clamp at 10 s before the end.
 - **X10.2** The Up next state reports completion.
 - **X10.3** Track selection confirmed by the TV before the menu closes.
+- **X10.4** Binge guard.
+- **X10.5** Subtitle level from bar geometry.
 
 ### X11. Recovery without losing the task
 
@@ -294,9 +341,10 @@ Animations retarget from their current value (already true of `Anim`). Neighbour
 - **[B]** Bloob has Reduce motion, Reduce transparency, Increase contrast, spoken focus (G7, untested on the TV), and the slideshow paused under Audio Guidance.
 
 **Rules [P]:**
-1. Speak containers ("Popular films, row 2 of 6") on row change, plus selected and dimmed states (X9).
-2. Everything is understandable with motion, transparency and previews off. No state is shown only by animation or blur.
-3. **Preview contract**, for when trailers or moving art arrive:
+1. Speak containers ("Popular films, row 2 of 6"; "Season 2" for episodes) on change, plus selected and dimmed states (X9).
+2. **Announcements [O]:** Elements of A's reader also speaks content changes and delayed hints (the search suggestion count after 1.5 s), and distinguishes speech that interrupts from speech that queues. Bloob adds an `announce(text, interrupt|queue)` call. Uses: search result counts, "Starting 4K version", errors, caught up.
+3. Everything is understandable with motion, transparency and previews off. No state is shown only by animation or blur.
+4. **Preview contract**, for when trailers or moving art arrive:
    - focus feedback is immediate;
    - the preview starts only after a deliberate dwell;
    - it is cancelled on focus change, a dialog, backgrounding or playback;
@@ -310,14 +358,13 @@ Animations retarget from their current value (already true of `Anim`). Neighbour
 
 ## 3. Order
 
-Ordered by what the owner meets every evening, then by what everything else depends on:
+1. **A short TV smoke pass** (`TV-TEST.md` §8): frost bake time, TTS, lifecycle, the subtitle call. Nothing from 1.1 onward has run on the TV, and these results shape X0 and X10.
+2. **X1–X3** fix the episode and version problem, false resumes and unaired episodes (symptoms 1–5). They are service and data work, independent of X0. Also the episode version list (X8.3 plus X3.3).
+3. **X0** the interaction runtime.
+4. **One journey slice** on X0, built fully coherent before widening. Each step applies X5, X6, X8, X9, X10 and X12:
 
-1. **X1.1–X1.3, X2.1–X2.2, X3** fix the episode and version problem, the false resumes and the unaired episodes (symptoms 1, 3, 4, 5).
-2. **X8.2, X8.3, X10.1, X10.2** make warnings, episode choice and controls agree with the new decisions (symptoms 2, 6).
-3. **X5, X6** keep your place (symptom 8).
-4. **X7, X9** keep things responsive and give the pressed state (symptom 10).
-5. **X1.2, X1.4, X2.3, X4, X11** add reliability, dismissal, caught up, tracks and recovery (symptoms 7, 9).
-6. **X12**, then **X8.1**, and the docs.
+   > Home card → title page → season → episode → play → seek or tracks → Back → updated Home
+5. **The rest:** X4, X7, X11, then X1.4, X2.3, X8.1 and the docs.
 
 ## 4. What to measure
 
@@ -346,6 +393,7 @@ The study's suggested objective [P] is **time to a confident, successfully compl
 
 | Contract | State | Commit |
 | --- | --- | --- |
+| X0 Interaction runtime | Planned | |
 | X1 Progress | Planned | |
 | X2 Next action | Planned | |
 | X3 Version and edition | Planned | |
