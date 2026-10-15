@@ -158,7 +158,7 @@ Layer numbers refer to [`APP-MAP.md`](APP-MAP.md).
 
 **Desktop tour:** leave playback and quit within 1 s; the next start shows the right Continue position. Use the fixture service with a temporary data directory.
 
-**TV-only:** whether the bus delivers `stop` before the app process exits on this TV, which the log answers (`[continuity] final durable`).
+**No TV question remains.** The original one was whether the bus `stop` reaches the service before the app exits. The app's `stop` call is fire-and-forget (`main.cpp:294`, no reply callback, then a 50 ms delay). R1 removes the dependency instead of measuring it: the app waits for the HTTP reply of `POST /api/flush` before it sends `stop`, so durability never rests on a fire-and-forget bus message. See *Answered from public sources*, A1.
 
 ### Delivery
 
@@ -199,6 +199,7 @@ Rollback is installing the previous IPK. The stored data format is unchanged, so
   - It sets every field that `start_service` sets today, including `settings_loaded`, `account_known` and recent searches.
   - It logs `[launch] service-ready route=bus|direct`.
 - `common.cpp` `Ctx::save_settings`: refuses to send (it queues the change in the R1 single-flight) while `!settings_loaded`, then sends it merged onto the loaded settings.
+- **Service lifetime.** The service keeps itself alive with an ActivityManager activity (`server.js:486`). The webOS FAQ ([JS service FAQ](https://webostv.developer.lge.com/develop/guides/js-service-faq)) says a service also stays active while another app or service holds a subscription to it, and the idle timer then exits it 5 s after it becomes inactive. Proposal: the app holds a `luna://<app>.service/alive` subscription for its whole life, and the service drops the keep-alive activity. If the app is killed without calling `stop`, the hub cancels the subscription and the service exits on its own, after the R1 flush (the service flushes on the cancel event). This needs the subscription cancel to reach `webos-service`, which is its documented behaviour; it is checked by `[service] app gone` in the log.
 - `settings.cpp`: while settings are unknown, the rows show their values dimmed with "Loading…". If loading fails three times, the screen says so and offers Try again. Copy and design follow the existing component states.
 
 ### State and operations
@@ -222,7 +223,7 @@ None.
 2. Inject one failed `/api/settings`: the retry succeeds.
 3. Inject three failures, toggle a setting, then let loading succeed: the saved file keeps its other fields.
 
-**TV-only:** which route the TV takes, read from `[launch] service-ready route=`.
+**No TV question blocks this.** Which route the TV takes no longer matters once both converge; the log line only records it.
 
 ### Delivery
 
@@ -271,26 +272,30 @@ Ships with R1 as 2.3.1, or as 2.3.2 if R1 is already out. One commit. Rollback i
   - **Clock.** It keeps `confirmed_ms_` (the last media-clock report outside a pending seek) and `seek_` as `{ id, target, requested_at, state: previewing | requested | completed | confirmed | failed }`.
     - `SeekDone` (`:134`) moves `requested` to `completed`: the command is done, but the landing is not known.
     - The first `Time` report after `completed` confirms. It records `landed = reported`, the error is `|reported − target|`, and `confirmed_ms_` is updated.
-    - Five seconds without a report after `completed`: confirmed from the next report, whatever arrives, and logged `[qoe] seek unconfirmed`.
+    - In the reference pipeline, `currentTime` is sent every 200 ms and is skipped only while a seek is in progress ([UriPlayer.cpp, `UPDATE_INTERVAL_MS` and the position timer](https://github.com/webosose/g-media-pipeline/blob/df8470b/src/player/UriPlayer.cpp)). A confirming report should therefore arrive within about 200 ms of `seekDone`. One second without one: confirmed from the next report, whatever arrives, and logged `[qoe] seek unconfirmed`.
   - `viewer_position()` (`player.cpp:208`) still shows the target while a seek is in flight, for display. `save_progress` (`:391`) uses `session_.confirmed_ms()`.
   - **Tracks.** `select_audio(i)` and `select_text(i)` (`:250`) create `track_op_ = { id, kind, index, state: pending | confirmed | failed, deadline }`. The selected index used for display stays the previous one until confirmed.
     - Confirmation comes from `trackSelected` with matching kind and index. `UmsPlayer` already updates both the audio and the text flags and forwards kind and index (`media.cpp:238–245`), but `Session::on_event` ignores the event today (`session.cpp:151`).
-    - Failure comes from a refusal reply (see `media.cpp`) or a 4 s deadline.
-    - **4 s is an initial value.** It must be tuned from the TV log.
-- `media.h` / `media.cpp`: `select_track` and `set_subtitles` pass a `done(ok)` to `command()` (`:63`). The port gains an `on_command_result(kind, ok)` event to the session. **No reply fields are assumed beyond what `command()` reads today (`returnValue`).**
+    - **What a reply means.** uMediaServer's `selectTrack` reply is not an acknowledgement. In the open-source uMediaServer, `Pipeline::selectTrack` validates the type and index, forwards the command to the pipeline process with no reply callback, and returns true; before the media is loaded it only queues the command ([Pipeline.cpp](https://github.com/webosose/umediaserver/blob/af89f8a/src/pipeline/Pipeline.cpp)). The open-source reference pipeline's `selectTrack` handler does nothing and returns true ([service.cpp](https://github.com/webosose/g-media-pipeline/blob/df8470b/src/service/service.cpp)). So `returnValue: true` means *forwarded*, and `returnValue: false` means *rejected* (bad type or index).
+    - **The acknowledgement** is the documented `trackSelected` subscription event, `{type, index}` ([uMediaserver.cpp, subscribe](https://github.com/webosose/umediaserver/blob/af89f8a/src/server/uMediaserver.cpp)).
+    - **Rules:** `returnValue: false` reverts at once with "Not available on this TV". `trackSelected` confirms. No event within 4 s keeps the choice but marks it *unconfirmed* in the inspector and the log, and does not revert: the TV draws the subtitles, so a revert could undo a switch that worked, and LG's own pipeline is closed source, so whether it sends `trackSelected` for text is not publicly documented. That one fact comes from the existing `[media] <-` log line, which records every `trackSelected` the TV sends, the first time the feature is used; it changes only a label, not the design.
+- `media.h` / `media.cpp`: `select_track` and `set_subtitles` pass a `done(ok)` to `command()` (`:63`). The port gains an `on_command_result(kind, ok)` event to the session. Only `returnValue` is read, with the meaning above.
+- **Buffering.** In the open-source reference pipeline, a network underrun moves GStreamer to PAUSED and the pipeline then emits both `bufferingStart` and `paused`; at 100% it returns to PLAYING and emits `bufferingEnd` and `playing` ([UriPlayer.cpp, `GST_MESSAGE_BUFFERING` and state changes](https://github.com/webosose/g-media-pipeline/blob/df8470b/src/player/UriPlayer.cpp)). So the F03 buffering sequence is the expected event order, not a corner case, and the intent rule above is required, not defensive.
+- **Visible video.** uMediaServer documents a `videoFrame {valid}` subscription event ([uMediaserver.cpp, subscribe](https://github.com/webosose/umediaserver/blob/af89f8a/src/server/uMediaserver.cpp)). The session records the first `videoFrame` with `valid: true` as `first_frame`. Until one arrives the metric is `started`. `videoFrame` is added to the `known` event list in `media.cpp:184`.
 - `player.cpp`:
   - The track panel (`choose_track`, `:563`, OK at `:633`) stays open with the row marked "Switching…" while pending.
-  - On confirmation it closes. On failure the row shows "Not available on this TV" and the previous track stays checked.
+  - On confirmation it closes. On `returnValue: false` the row shows "Not available on this TV" and the previous track stays checked. After 4 s with no event it closes with the new track checked (unconfirmed).
   - The stored preference is written as language and role, only on confirmation. It uses the existing `language` and `subtitleLanguage` settings plus a new `subtitleRole` (for example forced or SDH).
-- `session.cpp` (A2): `first_frame_ms_` is renamed `started_ms_` and logged as `started`. `first_frame` is used only if a platform signal of visible video is found (unknown; see the TV-only questions).
+- `session.cpp` (A2): `first_frame_ms_` is renamed `started_ms_` and logged as `started`. `first_frame` comes only from `videoFrame` (above).
 - **Tests.** `session_test.cpp` gains the probe sequences from the validation as regression tests:
   - Playing → BufferingStart → Paused → BufferingEnd: intent stays Play.
   - Pause → late Playing: a correction pause is sent.
   - Paused → reload: no play.
   - `seek_to` → `SeekDone` with no time: position unconfirmed, landed count 0.
   - `SeekDone` → `Time`: landed with the true error.
-  - `select_text` without an acknowledgement: reverts after the deadline.
-  - Refusal: failed.
+  - `select_text` without an acknowledgement: stays selected, marked unconfirmed after 4 s.
+  - `returnValue: false`: reverts, failed.
+  - `bufferingStart` → `paused` → `bufferingEnd` → `playing` (the reference pipeline's order): intent stays Play and no correction is sent.
 
   The existing assertion that `SeekDone` alone counts as a landing is changed with the reason in the commit.
 
@@ -298,8 +303,8 @@ Ships with R1 as 2.3.1, or as 2.3.2 if R1 is already out. One commit. Rollback i
 
 | Operation | IDs | Acknowledged by | Timeout | Cancel |
 | --- | --- | --- | --- | --- |
-| Seek | Increasing `seek_.id`; a new seek supersedes a pending one, and a late `SeekDone` for an older ID is ignored by counting (uMediaServer has no ID, so the count of outstanding seeks is used) | `SeekDone` completes; `Time` confirms | 15 s to fail the command (today's value); 5 s for confirmation | A new seek |
-| Track | `track_op_.id` | `trackSelected` (kind, index), or text state | 4 s, initial, tune on the TV | Choosing another row supersedes it |
+| Seek | Increasing `seek_.id`; a new seek supersedes a pending one, and a late `SeekDone` for an older ID is ignored by counting (uMediaServer has no ID, so the count of outstanding seeks is used) | `SeekDone` completes; `Time` confirms | 15 s to fail the command (today's value); 1 s for confirmation (5 reference clock periods) | A new seek |
+| Track | `track_op_.id` | `trackSelected` (kind, index). `returnValue: false` rejects; `true` only means forwarded | 4 s, then *unconfirmed* (no revert) | Choosing another row supersedes it |
 | Intent correction | Not applicable | The next transport event | Not applicable | Not applicable |
 
 ### Ownership
@@ -326,13 +331,7 @@ Ships with R1 as 2.3.1, or as 2.3.2 if R1 is already out. One commit. Rollback i
 2. The desktop tour with fake media events, including an injected `selectTrack` refusal and a dropped `trackSelected`.
 3. A scripted run: pause, `window:hidden`, `media:unloadCompleted`, `window:shown`. It stays paused.
 
-**TV-only:**
-- whether uMediaServer sends `trackSelected` for text tracks;
-- what a refusal looks like;
-- whether `paused` arrives during rebuffering;
-- the real seek confirmation time.
-
-All four are read from `[media]` and `[qoe]` log lines, then the 4 s and 5 s values are set.
+**Answered from public sources** (see the section of that name): a refusal is `returnValue: false`, `paused` does arrive during rebuffering, and the clock runs at 200 ms. The design no longer depends on whether LG's closed pipeline sends `trackSelected` for text; the existing log shows it.
 
 ### Delivery
 
@@ -511,10 +510,11 @@ None. The inspector file is in `/tmp` and holds no user data.
 3. **Inspector:** the JSON contains no `http`, no `apikey` and no release name (grep test in the tour).
 4. **Image test:** 10 ready images lead to no more than 2 uploads per frame.
 
-**TV-only:**
-- the `currentTime` event rate;
-- CPU while playing with the HUD hidden, before and after (the `/proc` sampling procedure in `research/TV-access-and-observation.md`, read-only);
-- whether one-shot reclamation is safe in practice: the retired count stays flat and there are no crashes over a full episode.
+**Known from public sources:** `currentTime` arrives every 200 ms in the reference pipeline, and `bufferRange` on its own 200 ms timer while buffering, so today's player redraws the full frame 5–10 times a second with nothing visible changing. LG's pipeline interface also has `setUpdateInterval(currentTimeInterval, bufferRangeInterval)` ([webos-userland pipeline.hpp](https://github.com/webosbrew/webos-userland/blob/00a5f87/include/player-factory/pipeline.hpp); the same call in [uMediaServer's Pipeline.cpp](https://github.com/webosose/umediaserver/blob/af89f8a/src/pipeline/Pipeline.cpp)). Whether `com.webos.media` accepts it from an app is not documented, so R5 may send it once after load (1000 ms with the HUD hidden, 250 ms with it shown), ignore a refusal, and rely on invalidation either way.
+
+**Measured, not looked up** (these are properties of our own app on this TV, not facts anyone publishes):
+- CPU while playing with the HUD hidden, before and after, using the read-only `/proc` sampling in `research/TV-access-and-observation.md`;
+- whether one-shot Luna reclamation is safe in practice: the retired count stays flat and there are no crashes over a full episode.
 
 ### Delivery
 
@@ -545,11 +545,14 @@ Each sub-increment gets the full field set (scope, state, ownership, data, recov
 
 ## R7: another media route (conditional)
 
-**Not planned until a capability gap is diagnosed.** Today's candidates are hypotheses:
-- **Dolby Vision.** Whether DV engages for MKV over uMediaServer is answered by the `[qoe] picture:` log line (2.2.1).
-- **Text tracks.** Whether text tracks can be selected is answered by R3's TV log.
+**Not scheduled yet, but the gap is now documented, not hypothetical.**
 
-R7 is written only if one of these shows a gap that the URI route cannot close and that a sample route demonstrably can, using public LG interfaces. It reuses ENGINE-PLAN E7's scope behind the same session contract.
+- **The gap.** Public user reports agree that LG's built-in player on 2022–2024 software shows Dolby Vision in MKV as its HDR10 base layer, and engages Dolby Vision for profiles 5 and 8 in MP4 or TS. An October 2025 report says webOS 25 on a G4 added DV in MKV ([Jellyfin forum](https://forum.jellyfin.org/t-jellyfin-on-lg-g4-webos25-dolby-vision)); a G2 owner reports DV from MP4 but not MKV ([Plex forum](https://forums.plex.tv/t/issues-with-dolby-vision-on-lg-tv/860541)); remuxing to TS triggers DV on a C2 ([Jellyfin forum](https://forum.jellyfin.org/t-dolby-vision-on-lg-webos)); profile 7 does not engage and is converted to 8.1 in practice. This matches the owner's 2.2.0 report on this G2: "DV titles came up as HDR every time". These are user reports, not LG documentation, so the `[qoe] picture:` line remains the check on this TV, but it is now a confirmation, not a discovery.
+- **What closes it, cheapest first:**
+  1. **Ranking (no new route).** Prefer DV releases in MP4 or TS when they exist, and stop presenting MKV DV as Dolby Vision on this TV class: show "Dolby Vision (plays as HDR10 here)" through `tv-profile.js`. A small change in R3's scope.
+  2. **Container remux in the service.** Serve MKV DV (profiles 5 and 8) to uMediaServer as MPEG-TS, remuxed on the fly by the local service with no transcoding. This is what Jellyfin does for LG. It needs a streaming MKV demuxer and TS muxer in Node on the TV, plus range and seek handling: medium size, and CPU must be measured.
+  3. **Sample route.** Demux in the app and feed elementary streams through LG's ES interfaces, as Kodi's webOS port does; users report DV MKV working through Kodi on a C2 ([MakeMKV forum](https://forum.makemkv.com/forum/viewtopic.php?p=150001)). LG's ES interface reports `NDL_ESP_FIRST_FRAME_PRESENTED` ([webos-userland media-common.h](https://github.com/webosbrew/webos-userland/blob/00a5f87/include/ndl-directmedia2/media-common.h)), so it would also give a true first-frame metric. Largest; ENGINE-PLAN E7's scope behind the same session contract.
+- **Decision rule.** Option 1 ships with R3. Option 2 or 3 is chosen after R1–R5, by the owner, on cost; both preserve the session contract.
 
 ---
 
@@ -561,23 +564,34 @@ All of these need no hardware:
 - flush semantics;
 - the resume authority;
 - intent ownership;
-- seek confirmation by clock;
-- track operations as pending;
+- seek confirmation by clock, with a 1 s confirmation window from the 200 ms reference clock;
+- track operations as pending, confirmed only by `trackSelected`, and rejected only by `returnValue: false`;
 - attempt IDs;
 - the single service-ready path;
 - invalidation causes.
 
-## Questions only the TV can answer
+## Answered from public sources
 
-1. Does the bus `stop` reach the service before the app exits, on this TV and route? (R1; `[continuity]` log.)
-2. Which start route does the TV take? (R2; `[launch] service-ready route=`.)
-3. Does uMediaServer emit `trackSelected` for text tracks, and what does a refused `selectTrack` look like? (R3; `[media]` log.)
-4. Does uMediaServer report `paused` during rebuffering, and how long until the first `currentTime` after `seekDone`? (R3.)
-5. How often does `currentTime` arrive, and what does a hidden-HUD frame cost? (R5.)
-6. Is there any public signal of visible video, to restore a true first-frame metric? (R3 and R5.)
-7. Does DV engage for MKV? (R7 gate.)
+The first draft listed seven "TV-only" questions. Most are answered by public sources: webOS Open Source Edition's uMediaServer and reference media pipeline, webosbrew's headers from LG TV firmware, LG's webOS TV developer guides, and user reports. LG's own TV media pipeline is closed source. The open-source code shows the documented interface and a reference implementation of it, not LG's exact behaviour, so each answer says which it is.
 
-None blocks R1, R2 or R4. R3's timeouts start with stated initial values and are tuned from questions 3 and 4.
+| # | Question | Answer | Source | Kind | Plan change |
+| --- | --- | --- | --- | --- | --- |
+| A1 | Does the bus `stop` reach the service before the app exits? | Removed by design. The app's `stop` is fire-and-forget; R1 waits for the HTTP `POST /api/flush` reply before stopping. R2 also ties the service's life to an app subscription, which the hub cancels when the app dies | [webOS TV JS service FAQ](https://webostv.developer.lge.com/develop/guides/js-service-faq) (subscriptions keep a service active; 5 s idle exit) | Documented | R1, R2 |
+| A2 | Which start route does the TV take? | Irrelevant after R2: both routes converge. The log records it | Not applicable | Design | R2 |
+| A3 | What does a `selectTrack` reply mean, and what acknowledges a track? | `returnValue: true` means forwarded, not switched; `false` means rejected. `trackSelected {type, index}` is the documented acknowledgement | [uMediaserver.cpp](https://github.com/webosose/umediaserver/blob/af89f8a/src/server/uMediaserver.cpp), [Pipeline.cpp](https://github.com/webosose/umediaserver/blob/af89f8a/src/pipeline/Pipeline.cpp), [service.cpp](https://github.com/webosose/g-media-pipeline/blob/df8470b/src/service/service.cpp) | Documented interface; reference behaviour | R3 track rules |
+| A4 | Does `paused` arrive during rebuffering? | Yes in the reference pipeline: underrun → PAUSED → `bufferingStart` and `paused`; recovery → `bufferingEnd` and `playing` | [UriPlayer.cpp](https://github.com/webosose/g-media-pipeline/blob/df8470b/src/player/UriPlayer.cpp) | Reference behaviour | R3 intent rule and test |
+| A5 | How often does `currentTime` arrive; how soon after `seekDone`? | Every 200 ms, skipped only while seeking, so within about 200 ms of `seekDone`. `setUpdateInterval` exists in LG's pipeline interface | [UriPlayer.cpp](https://github.com/webosose/g-media-pipeline/blob/df8470b/src/player/UriPlayer.cpp), [pipeline.hpp](https://github.com/webosbrew/webos-userland/blob/00a5f87/include/player-factory/pipeline.hpp) | Reference behaviour; LG header | R3 1 s confirmation; R5 |
+| A6 | Is there a public signal of visible video? | Yes: the `videoFrame {valid}` subscription event on the URI route; `NDL_ESP_FIRST_FRAME_PRESENTED` on LG's ES route | [uMediaserver.cpp](https://github.com/webosose/umediaserver/blob/af89f8a/src/server/uMediaserver.cpp), [media-common.h](https://github.com/webosbrew/webos-userland/blob/00a5f87/include/ndl-directmedia2/media-common.h) | Documented interface; LG header | R3 `first_frame` |
+| A7 | Does DV engage for MKV? | Not on LG's built-in player before webOS 25 by consistent user reports; MP4 and TS do for profiles 5 and 8 | Jellyfin, Plex and MakeMKV forum threads under R7 | User reports | R7 is now a documented gap |
+
+**Still only knowable from our own app on this TV**, because they are properties of Bloob, not of webOS:
+- whether LG's closed pipeline sends `trackSelected` for text tracks (A3; the existing `[media] <-` log line shows it, and the design no longer depends on it);
+- whether `com.webos.media` accepts `setUpdateInterval` from an app (A5; R5 tries it and ignores a refusal);
+- whether `videoFrame` is sent on this firmware (A6; until it is seen, the metric stays `started`);
+- Bloob's CPU and frame cost with the HUD hidden (R5);
+- the R7 option 2 remux CPU cost, if chosen.
+
+None blocks R1–R4.
 
 ## Status
 
@@ -589,4 +603,4 @@ None blocks R1, R2 or R4. R3's timeouts start with stated initial values and are
 | R4 | 15 Oct 2026 | No | No | No |
 | R5 | 15 Oct 2026 | No | No | No |
 | R6 | Outline only | No | No | No |
-| R7 | Conditional | No | No | No |
+| R7 | Gap documented; option 1 with R3, options 2–3 by owner decision | No | No | No |

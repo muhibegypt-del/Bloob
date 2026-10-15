@@ -25,12 +25,12 @@ One row per finding. The causal chain, corrections and fix invariant follow in t
 | F02 | P1. Settings or progress silently not saved, while the API says 200 | **Confirmed** | `account-store.js:46,141–166,168`; `progress.js:244–257`; `server.js:272` | Source. Probe: 4 and 12 concurrent writes all returned `null` |
 | F03 | P1. A paused viewing resumes by itself after a reload; buffering can leave it paused | **Confirmed** | `session.cpp:24,85–88,94–105`; `player.cpp:215,242,250` | Probe: three event orders, intent wrong in each |
 | F04 | P1. The timeline and saved progress claim a seek target that was never confirmed; seek accuracy is over-reported | **Confirmed** | `session.cpp:110–118,134–142`; `media.cpp:251`; `player.cpp:208–212,391` | Probe: position 120000, landed 1, error 0 without any clock report. An existing test encodes it |
-| F05 | P1. A subtitle shows as chosen even if refused; failure is invisible | **Confirmed**. What the TV acknowledges needs TV evidence | `session.cpp:151,250–258`; `player.cpp:563,633–636`; `media.cpp:63–90,238–245` | Source. Probe: `subtitle_index=2` with no acknowledgement |
+| F05 | P1. A subtitle shows as chosen even if refused; failure is invisible | **Confirmed**. Public uMediaServer sources show the reply only means *forwarded* (see F05) | `session.cpp:151,250–258`; `player.cpp:563,633–636`; `media.cpp:63–90,238–245` | Source. Probe: `subtitle_index=2` with no acknowledgement |
 | F06 | P1. Up next can play a different release from the one recorded | **Confirmed** | `ui.h:126–129`; `sources.cpp:211–215`; `player.cpp:441–466` | Source |
 | F07 | P1. *Other versions* can open the abandoned version; abandoned jobs keep running | **Confirmed**, plus an uncancelled-job hole | `sources.cpp:200,226,273,288,297` | Source |
 | F08 | P2. On the fallback route: no welcome, preferences not applied, the first change overwrites the others | **Confirmed**, and slightly worse than stated | `main.cpp:181–217,221–281` | Source |
 | F09 | P1. *Resume* plays from the start for long titles near the end | **Confirmed** | `play.cpp:5–8,88`; `play.h:13`; `completion.js` | Probe: service 13 740 000 ms, native 0. An existing test encodes the old rule |
-| F10 | P2. Full redraws on every bus and worker wake; the cost is unknown | **Confirmed** as a mechanism; the cost needs TV evidence | `main.cpp:111–120,751,754,794`; `luna.cpp:51–62` | Source |
+| F10 | P2. Full redraws on every bus and worker wake; the cost is unknown | **Confirmed**. The reference clock rate (200 ms) makes it 5–10 full redraws a second; the CPU cost is ours to measure | `main.cpp:111–120,751,754,794`; `luna.cpp:51–62` | Source |
 
 ### F01: final progress can disappear when playback or the app closes
 
@@ -94,7 +94,7 @@ Neither route flushes progress first.
 - User Pause → late Playing: `intent_play=1`, phase `playing`.
 - Paused, then reopened: `intent_play=1`. A reload resumes playback the viewer had paused, and this includes Bloob's own background pause.
 
-**Note.** Whether the LG pipeline actually sends `paused` during a rebuffer, or late `playing` events, is unknown (TV). The ownership defect holds regardless.
+**Public evidence (added after the first draft).** In webOS's open-source reference pipeline, a network underrun moves GStreamer to PAUSED and the pipeline emits `bufferingStart` and `paused`; recovery emits `bufferingEnd` and `playing` ([UriPlayer.cpp](https://github.com/webosose/g-media-pipeline/blob/df8470b/src/player/UriPlayer.cpp)). So the buffering case in the first probe is the expected event order on the reference implementation. LG's TV pipeline is closed, but implements the same interface. The ownership defect holds regardless.
 
 **Invariant:**
 - `play()`, `pause()` and lifecycle policy write intent; backend events never do.
@@ -132,7 +132,10 @@ Audio is closer to acknowledged: `trackSelected` updates the selected flags for 
 
 **Probe.** `select_text(2)` gave `subtitle_index=2` immediately; the port received `text:2 subs:on`.
 
-**Needs TV evidence.** Whether this TV's uMediaServer emits `trackSelected` for both audio and text, and what a refusal looks like. The desktop tour fakes that event. No private method or payload should be assumed.
+**Public evidence (added after the first draft).**
+- uMediaServer documents `trackSelected {type, index}` as a subscription event ([uMediaserver.cpp, subscribe](https://github.com/webosose/umediaserver/blob/af89f8a/src/server/uMediaserver.cpp)).
+- Its `Pipeline::selectTrack` validates the type and index, forwards the command with no reply callback and returns true, and before load only queues it ([Pipeline.cpp](https://github.com/webosose/umediaserver/blob/af89f8a/src/pipeline/Pipeline.cpp)). So `returnValue: true` means *forwarded*, and `false` means a rejected type or index. A reply can never confirm a switch, which makes F05 worse than the review stated: even a correct `done(ok)` would not acknowledge anything.
+- Still not public: whether LG's closed pipeline sends `trackSelected` for text. The existing `[media] <-` log line records it when it happens.
 
 **Correction to `ENGINE-PLAN.md`.** §13 is marked **Have**; it should be **Partial**.
 
@@ -179,7 +182,7 @@ A related source fact (A1 below): API jobs run newest-first, so a cancel can eve
 - `Ctx::save_settings` posts every field. One change in Settings therefore overwrites the saved language, subtitle, motion, transparency and contrast choices with defaults.
 - On the bus route, a failed settings GET is not retried, which leaves the same state.
 
-**Needs TV evidence:** which route the TV takes. The log says either `service ready on port … (version …)` or `(started directly)`.
+**Which route the TV takes** is recorded by the log (`service ready on port … (version …)` or `(started directly)`). The fix makes both routes converge, so the answer no longer changes the work.
 
 **Invariant.** Both routes call one `on_service_ready()`, and the app retries until settings and account are loaded. Until then, no settings write is sent.
 
@@ -205,11 +208,7 @@ The existing `play_test` encodes the old rule (96% → 0).
 - The loop sets `dirty_ = true` for every wake event (`main.cpp:751`, `:754`) and renders when dirty (`:794`).
 - During playback, uMediaServer's `currentTime` subscription arrives through Luna. Each arrival therefore redraws and presents a full 1920×1080 transparent frame, even with the HUD hidden.
 
-**Needs TV evidence:**
-- How often `currentTime` arrives on this TV.
-- What a hidden-HUD frame costs.
-
-The `[perf]` lines can answer both once frames are attributed to their cause. Source inspection cannot claim a CPU or frame benefit.
+**Public evidence (added after the first draft).** The reference pipeline sends `currentTime` every 200 ms, and `bufferRange` on a second 200 ms timer while buffering ([UriPlayer.cpp](https://github.com/webosose/g-media-pipeline/blob/df8470b/src/player/UriPlayer.cpp)). With the HUD hidden, today's player therefore redraws and presents a full frame 5–10 times a second, while nothing visible changes. What one such frame costs on this TV is a property of Bloob, not something published; the `[perf]` lines measure it once frames are attributed to their cause. Source inspection alone cannot claim a CPU or frame benefit.
 
 **Invariant.** Events are processed, and a redraw happens only when visible state changed or a deadline is due.
 
@@ -298,6 +297,7 @@ The plan's phases are superseded in order by `native/RELIABILITY-IMPLEMENTATION-
 
 ## 5. Limits of this validation
 
-- No TV evidence. Five questions need it: LG's track and seek acknowledgements (F05, F04), whether the backend pauses while buffering (F03), which service route the TV takes (F08), and the `currentTime` rate and hidden-HUD frame cost (F10).
+- No TV was contacted. The first draft listed five questions as needing the TV; four are answered from public sources (webOS OSE's uMediaServer and reference pipeline, webosbrew's LG firmware headers, LG's developer FAQ). The plan's *Answered from public sources* section has the table. LG's TV pipeline is closed source, so those answers describe the documented interface and its reference implementation; the plan's design no longer depends on the remaining LG-specific details.
+- Left for our own app on the TV: whether LG's pipeline sends `trackSelected` for text, whether it sends `videoFrame`, and Bloob's own frame and CPU cost.
 - The probes are scratchpad files, not repository tests. The plan turns each one into a regression test.
 - The F01 native race was established from source. It was not reproduced with saturated workers.
