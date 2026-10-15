@@ -2,6 +2,10 @@
 
 Read this file before changing the application. This repository contains an independent LG webOS TV streaming prototype, research notes about a reference app called **Elements of A**, and a plan for **Buna**, our own playback and UI runtime. The user wants a polished television experience with excellent browsing, source choice, reliable playback, accurate seeking, working audio/subtitle controls, and efficient use of the LG media pipeline. The user explicitly wants no protected-content investigation. Do not present static code analysis as a live trace.
 
+## Current review handoff — 15 October 2026
+
+Before choosing the next engine work, read [the independent branch review](docs/Claude-branch-review-2026-10-15.md) and [the review and planning instructions for Claude](docs/Claude-review-and-planning-handoff.md). The review examined commit `8790488` on `claude/sleepy-ptolemy-o87vgv`; it identifies ten concrete reliability findings as well as strengths worth preserving. Verify each finding against the current code, correct anything unsupported or already fixed, then write the implementation plan specified in the handoff. **The current request is to review and plan; stop before implementing application changes.** Historical completion claims below are not substitutes for this verification.
+
 ## The user's actual goal
 
 Build **Bloob**, a distinct webOS application with:
