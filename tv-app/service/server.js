@@ -11,7 +11,8 @@ const { parseStreams } = require('./release');
 const catalog = require('./catalog');
 const images = require('./images');
 const progress = require('./progress');
-const { rank } = require('./rank');
+const next = require('./next');
+const { rank, editionOf, hashOf } = require('./rank');
 const { createResolver } = require('./resolve');
 
 const PORT = config.port;
@@ -133,6 +134,27 @@ function remember(candidates) {
   while (knownCandidates.size > 3000) knownCandidates.delete(knownCandidates.keys().next().value);
 }
 
+/** What progress keeps about the version played: quality and identity, never a URL. */
+function editionFor(candidateId) {
+  const id = String(candidateId || '');
+  if (!id) return null;
+  const known = knownCandidates.get(id);
+  if (known) return editionOf(known);
+  const hash = hashOf(id);
+  return hash ? { id: id.slice(0, 60), hash } : null;
+}
+
+/** An edition as the app sees it: quality words only, no hash or ID. */
+function publicEdition(edition) {
+  return {
+    from: edition.from || '',
+    resolution: edition.resolution || '',
+    hdr: edition.hdr || '',
+    atmos: !!edition.atmos,
+    pack: !!edition.pack,
+  };
+}
+
 async function discoverCached(type, id) {
   const key = `${type}:${id}`;
   const hit = discoveries.get(key);
@@ -225,7 +247,9 @@ async function handleApi(req, res, url) {
     if (pathname === '/api/search') return reply(res, 200, await catalog.search(query.get('q')));
     if (pathname === '/api/meta') {
       const meta = await catalog.meta(query.get('type'), query.get('id'));
-      return reply(res, 200, { meta, progress: await progress.forTitle(meta.id).catch(() => ({})) });
+      const watched = await progress.forTitle(meta.id).catch(() => ({}));
+      const intent = meta.type === 'series' ? await progress.intentFor(meta.id).catch(() => null) : null;
+      return reply(res, 200, { meta, progress: watched, target: next.target(meta, watched), intent: intent ? publicEdition(intent) : null });
     }
     if (pathname === '/api/image') {
       const image = await images.fetchImage(String(query.get('u') || ''));
@@ -249,7 +273,9 @@ async function handleApi(req, res, url) {
     // else the ranker's typical film or episode length.
     const sent = Number(input.runtimeMinutes);
     const runtimeMinutes = sent > 0 && sent < 1000 ? sent : await catalog.cachedRuntime(type, id.split(':')[0]);
-    const prefs = { language: input.language || 'English', type, runtimeMinutes: runtimeMinutes || undefined };
+    // A show keeps to the version the viewer chose or last played (UX-PLAN X3).
+    const intent = type === 'series' ? await progress.intentFor(id.split(':')[0]).catch(() => null) : null;
+    const prefs = { language: input.language || 'English', type, runtimeMinutes: runtimeMinutes || undefined, intent: intent || undefined };
     return reply(res, 200, Object.assign({
       provider: PROVIDER,
       runtimeMinutes: runtimeMinutes || null,
@@ -282,7 +308,17 @@ async function handleApi(req, res, url) {
     return reply(res, 200, { cancelled: resolver.cancel(input.id) });
   }
   if (pathname === '/api/progress' && req.method === 'POST') {
-    return reply(res, 200, await progress.save(input));
+    return reply(res, 200, await progress.save(input, editionFor(input.edition)));
+  }
+  if (pathname === '/api/progress/dismiss' && req.method === 'POST') {
+    return reply(res, 200, await progress.dismiss(input.id));
+  }
+  if (pathname === '/api/intent' && req.method === 'POST') {
+    // The viewer chose a version for a show; null forgets the choice.
+    const edition = input.candidate === null ? null : editionFor(input.candidate);
+    if (input.candidate !== null && !edition) return reply(res, 404, { error: 'This source list has expired. Search again.' });
+    const result = await progress.setIntent(String(input.id || ''), edition);
+    return reply(res, 200, { intent: result.intent ? publicEdition(result.intent) : null });
   }
   if (pathname === '/api/sources/search' && req.method === 'POST') {
     const type = input.type;

@@ -157,6 +157,17 @@ function isHttpUrl(value) {
   try { return ['http:', 'https:'].includes(new URL(value).protocol); } catch (_) { return false; }
 }
 
+// The release group: the tag after the last dash ("…H.265-GROUP"), so a show's
+// episodes from the same encoder can be matched. Words that end other tags
+// (WEB-DL, DTS-HD MA) are not groups.
+const GROUP = /-([A-Za-z0-9]{2,20})(?:\[[^\]]*\])?(?:\.(?:mkv|mp4|avi|m4v|ts))?\s*$/;
+const NOT_GROUP = /^(dl|rip|hd|sd|ma|x|audio|hdr|dv|\d+)$/i;
+
+function releaseGroup(name) {
+  const m = GROUP.exec(String(name || ''));
+  return m && !NOT_GROUP.test(m[1]) ? m[1] : undefined;
+}
+
 const EPISODE = /\bs\d{1,2}[ .-]?e\d{1,3}\b|\b\d{1,2}x\d{2,3}\b/i;
 const PACK = /\b(s\d{1,2}(?![ .-]?e\d)|seasons?[ .-]?\d+|complete|collection)\b/i;
 
@@ -193,6 +204,9 @@ function parseStream(stream, provider) {
   const multiAudio = /\b(multi|dual)[ .-]?(audio|lang)/i.test(body + ' ' + release);
   const fileIdx = Number.isInteger(stream.fileIdx) ? stream.fileIdx : undefined;
   const pack = PACK.test(release) && !EPISODE.test(release);
+  const group = releaseGroup(release) || releaseGroup(fileName);
+  // The indexer's own "same kind of release" key for binge-watching, if given.
+  const binge = typeof hints.bingeGroup === 'string' ? hints.bingeGroup.slice(0, 80) : '';
 
   const claims = {};
   for (const key of ['resolution', 'hdr', 'videoCodec', 'audio', 'channels', 'discImage', 'sample']) if (parsed[key]) claims[key] = parsed[key];
@@ -214,6 +228,8 @@ function parseStream(stream, provider) {
     languages,
     ...(multiAudio ? { multiAudio } : {}),
     ...(pack ? { pack } : {}),
+    ...(group ? { group } : {}),
+    ...(binge ? { binge } : {}),
     claimsFrom: 'release-name',
   };
 }

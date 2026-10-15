@@ -107,7 +107,15 @@ describe('parseStream', () => {
       claims: { resolution: '4K', hdr: ['DV', 'HDR'], videoCodec: 'HEVC', audio: ['Atmos', 'Dolby Digital Plus'], channels: '5.1', container: 'MKV' },
       sourceType: 'WEB-DL', sizeBytes: 18_400_000_000, seeders: 245,
       languages: ['English', 'French', 'Italian'], multiAudio: true, claimsFrom: 'release-name',
+      group: 'GRP', binge: 'torrentio|4k|WEB-DL|DV|HDR',
     });
+  });
+
+  it('reads the release group, but not the end of another tag', () => {
+    const name = (title) => parseStream({ infoHash: HASH, title }, 'T').group;
+    expect(name('Show.S01E02.2160p.WEB-DL.DDP5.1.Atmos.DV.H.265-FLUX')).toBe('FLUX');
+    expect(name('Show S01 1080p WEB-DL')).toBeUndefined();
+    expect(name('Film.2020.1080p.BluRay.DTS-HD MA')).toBeUndefined();
   });
 
   it('accepts the newer description field and a pack file line', () => {

@@ -24,13 +24,21 @@ const WEIGHTS = {
   unplayable: 60,
   noSeeders: 30,
   fewSeeders: 8,
-  seedersMax: 15,
+  // Availability helps, but must never outvote a resolution step (10 points).
+  seedersMax: 6,
   otherLanguage: 12,
   preferredLanguage: 3,
   pack: 3,
   perMbpsOver: 0.3,
   bitrateMax: 20,
+  // Continuity with the viewer's version of this show (UX-PLAN X3).
+  sameEdition: 25,   // the same season pack, or the same release group's file
+  sameQuality: 12,   // same resolution and picture
+  belowIntent: 10,   // lower resolution than the viewer has been watching
 };
+
+const RANK_OF = { '4K': 4, '1080p': 3, '720p': 2, '480p': 1, SD: 1 };
+const PROBLEM_SECTION = 'May not play well on this TV';
 
 const plural = (n, one, many) => `${n} ${n === 1 ? one : (many || one + 's')}`;
 
@@ -88,6 +96,53 @@ function runtimeOf(prefs) {
   const minutes = Number(prefs.runtimeMinutes);
   if (minutes > 0 && minutes < 1000) return minutes;
   return TYPICAL_MINUTES[prefs.type] || TYPICAL_MINUTES.movie;
+}
+
+/** Picture family for matching versions: Dolby Vision, other HDR, or SDR. */
+function hdrFamily(candidate) {
+  const hdr = (candidate.claims || {}).hdr || [];
+  return hdr.indexOf('DV') >= 0 ? 'DV' : hdr.length ? 'HDR' : 'SDR';
+}
+
+/** The torrent hash of a candidate ID (magnet:<hash>#<file>), or ''. */
+function hashOf(id) {
+  const m = /^magnet:([a-f0-9]{40})/i.exec(String(id || ''));
+  return m ? m[1].toLowerCase() : '';
+}
+
+/** What the service remembers about a version that was played: never a URL. */
+function editionOf(candidate) {
+  if (!candidate) return null;
+  const hash = hashOf(candidate.id);
+  return {
+    // Only a torrent's ID is kept; a link's ID is its URL, which stays in memory.
+    id: hash ? String(candidate.id).slice(0, 60) : '',
+    hash,
+    resolution: (candidate.claims || {}).resolution || '',
+    hdr: hdrFamily(candidate),
+    atmos: ((candidate.claims || {}).audio || []).indexOf('Atmos') >= 0,
+    group: String(candidate.group || '').slice(0, 40),
+    binge: String(candidate.binge || '').slice(0, 80),
+    pack: !!candidate.pack,
+  };
+}
+
+/**
+ * How a candidate relates to the version the viewer has been watching:
+ * 'same' (the same pack or release group at the same quality), 'like' (same
+ * resolution and picture), 'lower' (a lower resolution), or ''.
+ */
+function matchOf(candidate, intent) {
+  if (!intent) return '';
+  const hash = hashOf(candidate.id);
+  const resolution = (candidate.claims || {}).resolution || '';
+  const sameQuality = !!intent.resolution && resolution === intent.resolution && hdrFamily(candidate) === (intent.hdr || 'SDR');
+  if (hash && intent.hash && hash === intent.hash) return 'same';
+  if (sameQuality && intent.group && candidate.group && intent.group.toLowerCase() === String(candidate.group).toLowerCase()) return 'same';
+  if (sameQuality) return 'like';
+  if (intent.binge && candidate.binge && intent.binge === candidate.binge) return 'like';
+  if (intent.resolution && (RANK_OF[resolution] || 0) < (RANK_OF[intent.resolution] || 0)) return 'lower';
+  return '';
 }
 
 function score(candidate, prefs) {
@@ -180,6 +235,11 @@ function score(candidate, prefs) {
   if (candidate.multiAudio) notes.push('Multiple audio languages');
   if (candidate.pack) { value -= WEIGHTS.pack; notes.push('Part of a season pack'); }
 
+  const match = matchOf(candidate, prefs.intent);
+  if (match === 'same') value += WEIGHTS.sameEdition;
+  else if (match === 'like') value += WEIGHTS.sameQuality;
+  else if (match === 'lower') value -= WEIGHTS.belowIntent;
+
   issues.sort((a, b) => (!!b.caution - !!a.caution) || b.severity - a.severity);
   return {
     candidate,
@@ -192,6 +252,9 @@ function score(candidate, prefs) {
     picture,
     sound,
     mbps,
+    match,
+    // Worth a separate section: silent, unplayable, or a serious playback risk.
+    problem: excluded || sound.silent || sound.mixedDts || issues.some(i => i.severity >= 5),
   };
 }
 
@@ -256,23 +319,32 @@ function view(ranked, prefs) {
     excluded: ranked.excluded,
     release: c.release,
     score: ranked.score,
+    match: ranked.match === 'same' || ranked.match === 'like' ? ranked.match : '',
+    scope: c.pack ? 'pack' : 'episode',
   };
 }
 
-function explain(best, all) {
+function explain(best, all, intent) {
   const c = best.candidate;
+  if (best.match === 'same') return 'The same version as your last episode.';
+  if (best.match === 'like') return `Matches your last episode: ${[intent.resolution, intent.hdr === 'DV' ? 'Dolby Vision' : intent.hdr === 'HDR' ? 'HDR' : ''].filter(Boolean).join(' · ')}.`;
   const mine = RESOLUTION_SCORE[(c.claims || {}).resolution] || 0;
   const higher = all.some(r => !r.excluded && (RESOLUTION_SCORE[(r.candidate.claims || {}).resolution] || 0) > mine);
   const health = c.kind === 'link' ? 'a direct link'
     : c.seeders === undefined ? 'unknown availability'
     : c.seeders >= 50 ? 'strong availability' : c.seeders >= 10 ? 'good availability' : 'limited availability';
+  if (intent && intent.resolution) return `Your last episode's version isn't offered for this one; this is the closest, with ${health}.`;
   if (higher) return `Chosen over higher resolutions for its ${health} and compatibility.`;
   return `The best picture on offer, with ${health}.`;
 }
 
 /**
  * Rank candidates for one title. `prefs`: language, type ('movie'|'series'),
- * runtimeMinutes, profile (ID or object; the default TV otherwise).
+ * runtimeMinutes, profile (ID or object; the default TV otherwise), and
+ * intent: the edition the viewer has been watching this show in, if any.
+ *
+ * Sections, in order: versions that continue the viewer's last episode (when
+ * there is one), the rest by resolution, then those likely to fail on this TV.
  */
 function rank(candidates, prefs) {
   prefs = prefs || {};
@@ -280,16 +352,22 @@ function rank(candidates, prefs) {
   const playable = ranked.filter(r => !r.excluded);
   // Never recommend a version this TV plays silently while one with sound exists.
   const recommended = playable.find(r => !r.silent) || playable[0] || null;
-  const groups = GROUP_ORDER.map(label => ({
-    label,
-    items: ranked.filter(r => r !== recommended && groupOf(r.candidate) === label).map(r => view(r, prefs)),
-  })).filter(group => group.items.length);
+  const rest = ranked.filter(r => r !== recommended);
+  const continuing = prefs.intent ? rest.filter(r => !r.problem && (r.match === 'same' || r.match === 'like')) : [];
+  const problems = rest.filter(r => r.problem);
+  const groups = [];
+  if (continuing.length) groups.push({ label: 'Same as your last episode', kind: 'continue', items: continuing.map(r => view(r, prefs)) });
+  GROUP_ORDER.forEach(label => {
+    const items = rest.filter(r => !r.problem && continuing.indexOf(r) < 0 && groupOf(r.candidate) === label);
+    if (items.length) groups.push({ label, kind: 'resolution', items: items.map(r => view(r, prefs)) });
+  });
+  if (problems.length) groups.push({ label: PROBLEM_SECTION, kind: 'problems', items: problems.map(r => view(r, prefs)) });
   return {
     recommended: recommended ? view(recommended, prefs) : null,
-    why: recommended ? explain(recommended, ranked) : '',
+    why: recommended ? explain(recommended, ranked, prefs.intent) : '',
     groups,
     total: candidates.length,
   };
 }
 
-module.exports = { rank, score, headline, sizeText, bitrateMbps, WEIGHTS };
+module.exports = { rank, score, headline, sizeText, bitrateMbps, editionOf, hashOf, WEIGHTS };
