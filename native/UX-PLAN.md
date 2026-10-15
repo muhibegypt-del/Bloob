@@ -394,9 +394,9 @@ The study's suggested objective [P] is **time to a confident, successfully compl
 | Contract | State | Commit |
 | --- | --- | --- |
 | X0 Interaction runtime | Planned | |
-| X1 Progress | Planned | |
-| X2 Next action | Planned | |
-| X3 Version and edition | Planned | |
+| X1 Progress | **Built, desktop and unit tests (2.1.0); not on the TV.** X1.1 v2 store (sessions, `seq`, retired sessions, dismissal; v1 entries load as they are). X1.2 player sends session, `seq`, state and edition, retries a failed report while open, and flushes on pause, background, stop and end. X1.3 `completion.js`: Up next or end, then credits, then the last 7% bounded to 1–10 min; unknown runtime never completes. X1.4 is a *Remove from Continue* button on the title page, not a long press (no long-press input yet). Retries are in memory only, and the loss window is unmeasured. | `7cbb504`, `b06e8a3` |
+| X2 Next action | **Built, desktop and unit tests (2.1.0); not on the TV.** `next.js` returns the target in `/api/meta`. The title page follows it, with the fallback kept for an older service. Continue is tiered: unfinished, *New episode*, next, then caught up with the air day and no Play. Up next, credits preparation and the fallback never offer an unaired episode. Not built: a separate `/api/target` route, and the target inside `/api/home` (Continue uses the same rules from its own entries). | `7cbb504`, `b06e8a3` |
+| X3 Version and edition | **Partly built (2.1.0).** The edition (torrent hash, quality, release group, binge group) is kept on checkpoints, and the intent store records a hand-picked version per show. The ranker matches same pack or group (+25), then same resolution and picture (+12), lowers a drop below it (−10), and caps seeders at 6, below one resolution step. The episode versions list is sectioned: matches, other versions, *May not play well on this TV*, with pack or single-episode tags. A version line sits under Play, and *Other versions* is on the starting sheet. Not built: edition-aware resume (rule 2), and the language and Atmos parts of intent. | `7cbb504`, `b06e8a3` |
 | X4 Track intent | Planned | |
 | X5 Navigation map | Planned | |
 | X6 Place | Planned | |

@@ -2,7 +2,7 @@
 
 Bloob, split into its actual layers. For each layer this file records what the layer does, which files it lives in, what works and how we know, what is missing, and the next small changes. Work one layer at a time. Cite the increment ID (for example **9.2**) in the commit. When a change lands or is tested on the TV, update the layer's state here.
 
-Snapshot: **2.0.0** (Glass), 14 October 2026, branch `claude/sleepy-ptolemy-o87vgv`. Rows marked *(2.0)* are new in 2.0.0 and follow the phases in [`GLASS-PLAN.md`](GLASS-PLAN.md) (G0–G8); rows marked *(1.2)* are new in 1.2.0; the item IDs (F1, P3, U6…) are from the consolidated list in [`IMPLEMENTATION-UX.md`](IMPLEMENTATION-UX.md#status-in-120).
+Snapshot: **2.1.0** (continuity, UX-PLAN X1–X3), 15 October 2026; **2.0.0** (Glass), 14 October 2026; branch `claude/sleepy-ptolemy-o87vgv`. Rows marked *(2.0)* are new in 2.0.0 and follow the phases in [`GLASS-PLAN.md`](GLASS-PLAN.md) (G0–G8); rows marked *(1.2)* are new in 1.2.0; the item IDs (F1, P3, U6…) are from the consolidated list in [`IMPLEMENTATION-UX.md`](IMPLEMENTATION-UX.md#status-in-120).
 
 How the app should *behave* (continuity, place, async work, component states) is planned in [`UX-PLAN.md`](UX-PLAN.md), contracts X1–X12. How good each layer is, against a researched definition of quality, is in [`QUALITY.md`](QUALITY.md). The concrete build plan for responsiveness and continuity (U0 to U9) is in [`IMPLEMENTATION-UX.md`](IMPLEMENTATION-UX.md). Re-score a layer there when you change it.
 
@@ -22,6 +22,7 @@ How the app should *behave* (continuity, place, async work, component states) is
 - **1.1:** answers that report. It has **not yet run on the TV**, so almost everything 1.1 changed is *Desktop* at best.
 - **1.2:** the consolidated implementation list (fixes, platform items, responsiveness, comfort). Also **not yet run on the TV**.
 - **2.0:** Glass, the complete visual overhaul the owner chose, plus direct Play and spoken focus. **Not yet run on the TV**; `TV-TEST.md` §8 is its pass.
+- **2.1:** continuity (UX-PLAN X1–X3). Progress sessions and completion, the next-action target, version intent per show, and the sectioned episode versions list. **Not yet run on the TV**; `TV-TEST.md` §9 is its pass.
 
 ## The layers at a glance
 
@@ -243,6 +244,7 @@ How the app should *behave* (continuity, place, async work, component states) is
 | *(1.2)* A next episode prepared during the credits is picked up instead of starting a new job (U10) | Untested |
 | *(2.0)* The Sources screen is now *All versions* (opened on request) and the direct-start progress sheet; versions, release details, file and quality questions and the failure sheet restyled as glass; a chosen alternative travels as `PlayRequest.candidate` (G4) | Desktop |
 | *(2.0)* Pairing sheet on frosted glass over whichever screen opened it (G6) | Desktop |
+| *(2.1)* Episode versions in sections (matches the last episode, other versions, *May not play well on this TV*). Each is tagged *Season pack* or *Single episode*. A hand-picked version becomes the show's intent. The starting sheet names a continued version and offers *Other versions* (X3.3) | Desktop (tour 19b, 19c) |
 
 **Gaps:**
 - Nothing shows whether a release is already cached on AllDebrid (instant) or must download.
@@ -601,6 +603,7 @@ How the app should *behave* (continuity, place, async work, component states) is
 | Live Torrentio results | Not reachable from build machines. TV (user) in the web app. |
 | *(1.2)* TV profile table (`tv-profile.js`, `lg-2022-oled`) drives warnings; all weights in one `WEIGHTS` table; bitrate from size over running time; a DTS-only version is never recommended while one with playable sound exists (P3) | Desktop (unit tests) |
 | *(1.2)* Parser: 3D, disc image and sample claims; ambiguous source words read only after the title (P4) | Desktop (unit tests) |
+| *(2.1)* Continuity: a show keeps to its version. Matches are the same pack or group (+25), then the same resolution and picture (+12); dropping below costs −10. Seeders are capped at 6, below one resolution step. Sections: matches, other versions, *May not play well on this TV*. Release group and binge group are parsed (X3.2) | Desktop (unit tests, tour) |
 
 **Gaps:**
 - One indexer, called directly.
@@ -649,8 +652,9 @@ How the app should *behave* (continuity, place, async work, component states) is
 
 | Item | Evidence |
 | --- | --- |
-| Position, duration, watched at 95%, next episode | Unit tests; Desktop |
-| Continue watching: resume from 30 s; next episode after a finished one | Desktop |
+| Position, duration and next episode, with its air date | Unit tests; Desktop |
+| *(2.1)* Progress v2: session and `seq` ordering, with late or retired-session reports rejected. Completion policy in `completion.js`. Edition per checkpoint, version intent per show, and dismissal (X1.1, X1.3, X3.1) | Desktop (unit tests) |
+| *(2.1)* Continue tiers: unfinished, *New episode*, next, then caught up with the air day. Finished films and dismissed titles are left out. `next.js` gives each title's target in `/api/meta` (X2.1) | Desktop (unit tests, tour) |
 | Settings: preferred language, recent searches | Desktop |
 | *(1.2)* Settings `subtitleLanguage`, `reduceMotion`, `autoplayNext`, `welcomeSeen`; wrong types ignored | Desktop (tests) |
 

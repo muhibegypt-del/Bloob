@@ -120,7 +120,7 @@ The log lines below are written for exactly this pass. None of these behaviours 
 
 ## 8. New in 2.0: Glass (record what the screen and the log say)
 
-Nothing in this section has run on the TV yet. Install `artifacts/com.muhib.bloob_2.0.0_arm.ipk`. Take photos at viewing distance where a check is about looks.
+Nothing in this section has run on the TV yet. Install `artifacts/com.muhib.bloob_2.1.0_arm.ipk`. Take photos at viewing distance where a check is about looks.
 
 **Play goes straight to the picture (G4).**
 - [ ] On a film's title page, *Play* shows only the *Starting* sheet and then the picture, without the version list. Time it from the press to the first frame (`[player] first frame after … ms`).
@@ -149,3 +149,23 @@ Nothing in this section has run on the TV yet. Install `artifacts/com.muhib.bloo
 - [ ] The TV's own reader does not talk over Bloob (the app declares `supportsAudioGuidance`).
 - [ ] The Home slideshow does not advance while Audio Guidance is on.
 
+
+## 9. New in 2.1: continuity (UX-PLAN X1–X3)
+
+Install `artifacts/com.muhib.bloob_2.1.0_arm.ipk`. These checks answer the 2.0 viewing report: each episode picked its own version (often HD) and there was no way to choose a version per episode.
+
+**The same version, episode after episode (X3).**
+- [ ] Play E1 of a show in 4K. Let Up next play E2, then E3. Each *Starting* sheet should say *same version as your last episode* or *like your last episode*. The log's `[sources]` line should name a 4K version each time.
+- [ ] On the title page after an episode, the line under *Play* names the version. If the earlier version isn't offered, it says so.
+- [ ] *All versions* for an episode shows three sections: the matches first, then *Other versions*, then *May not play well on this TV*. Season packs and single episodes are tagged.
+- [ ] Choose a 1080p version by hand for one episode. The next episode should then keep to 1080p.
+- [ ] On the *Starting* sheet, Right then OK on *Other versions* stops the start and shows the list.
+
+**Progress (X1).**
+- [ ] Stop an episode in the closing credits, with less than about 3 minutes left on a 45-minute episode. Home's Continue should offer the next episode, not a resume.
+- [ ] Stop a film halfway, then quit the app with Back twice. Relaunch: it resumes within about 15 s of where it stopped. Record the gap; that is the loss window.
+- [ ] *Remove from Continue* on a title page takes the show off Home. Playing it again brings it back.
+
+**Next action (X2).**
+- [ ] For a show whose next episode hasn't aired, the title page says *You're up to date* and when it airs. Continue says the day, and pressing it opens the title page instead of playing.
+- [ ] An episode that aired since you finished the previous one shows *New episode* on Home.

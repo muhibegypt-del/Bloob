@@ -13,7 +13,7 @@ Build **Bloob**, a distinct webOS application with:
 
 The current prototype is a vertical slice, not the finished product. The user has seen a high-quality resolved stream play with HDR and Atmos on this TV, but criticized the old player overlay and source chooser and had to re-pair AllDebrid at every start. Version 0.2.0 (12 October 2026) answers all three: Buna now owns playback (`tv-app/src/buna/`), the source screen is recommendation-first, and pairing storage tries several locations, verifies each write, and reports where the key went. All of it is covered by unit tests and a key-driven end-to-end run in desktop Chromium. **None of it has been verified on the TV yet**; see "TV verification" in `tv-app/README.md`.
 
-## Native track (Buna N2, 13 October 2026; 1.1 UI pass the same day; 1.2.0 and 2.0.0 Glass on 14 October)
+## Native track (Buna N2, 13 October 2026; 1.1 UI pass the same day; 1.2.0 and 2.0.0 Glass on 14 October; 2.1.0 continuity on 15 October)
 
 The owner chose native. `native/` is a C++ webOS app (`com.muhib.bloob`, "Bloob Native") built with the community webOS NDK (openlgtv buildroot-nc4, the toolchain Moonlight TV uses).
 
@@ -48,6 +48,12 @@ The owner chose native. `native/` is a C++ webOS app (`com.muhib.bloob`, "Bloob 
   - recovery;
   - accessibility.
   Work them in its stated order and tick its status table.
+- **2.1.0 continuity (15 October 2026, built, not yet on the TV):** the first three UX-PLAN contracts, built in answer to the episode report.
+  - **Progress v2 (X1).** Reports carry a session and sequence, so late reports are dropped. Completion is a policy in `tv-app/service/completion.js`. Continue has tiers, and a title can be removed from Continue.
+  - **Next action (X2).** `tv-app/service/next.js` gives `target` in `/api/meta`: resume, next, start, or caught up with the air day. An unaired episode is never offered.
+  - **Version continuity (X3).** A show keeps to the version last played or hand-picked. Seeders can no longer outvote resolution. The episode versions list has sections and pack tags, and the starting sheet has *Other versions*.
+  - **Remaining.** Edition-aware resume and track intent are still to do.
+  - **TV pass.** `native/TV-TEST.md` §9; the IPK is `native/artifacts/com.muhib.bloob_2.1.0_arm.ipk`.
 - **Design (2.0, Glass):** the visual system, with materials, tokens, type, focus, motion, states, the spoken interface and per-screen layouts, is in `native/DESIGN.md`. The tokens live in `native/src/theme.h`, the type scale, label roles and components in `ui.cpp`, and the frost bake in `images.cpp`.
 - **Rendering and playback:**
   - The TV's SDL2 provides the window and remote. Bloob draws with its own renderer: Inter via stb_truetype with oversampling and gamma, exact-size anti-aliased shapes, and artwork via stb_image scaled on worker threads, on a 1920×1080 offscreen canvas.
@@ -64,7 +70,7 @@ The owner chose native. `native/` is a C++ webOS app (`com.muhib.bloob`, "Bloob 
   - watch progress and settings.
   If the bus will not start the service, the app runs it directly with the TV's Node and stops it on exit.
 - **Build and test scripts:**
-  - `native/scripts/build.sh`: tests, cross-build, ABI guard (GLIBC_2.4 only, no GLIBCXX), service staging, IPK with fixed modes (`native/artifacts/com.muhib.bloob_2.0.0_arm.ipk`).
+  - `native/scripts/build.sh`: tests, cross-build, ABI guard (GLIBC_2.4 only, no GLIBCXX), service staging, IPK with fixed modes (`native/artifacts/com.muhib.bloob_2.1.0_arm.ipk`).
   - `native/scripts/ui-tour.sh`: drives the whole app on the desktop through the acceptance task, plus quick-menu, Home and pipeline-lost events, against the real service with fixture sources.
   - `native/scripts/ui-snapshots.sh`: covers player states.
   - `native/TV-TEST.md`: the TV pass, with the acceptance task, viewing distance and lifecycle.
@@ -78,7 +84,7 @@ The owner chose native. `native/` is a C++ webOS app (`com.muhib.bloob`, "Bloob 
   - Some UI was buggy.
   - Playback died after the LG quick menu.
   - The look was not yet the calm, Apple-like feel the user wants.
-- **1.1.0 is the response to that report and has not yet run on the TV.** Neither have 1.2.0 (`native/TV-TEST.md` §7) or 2.0.0 Glass (§8).
+- **1.1.0 is the response to that report and has not yet run on the TV.** Neither have 1.2.0 (`native/TV-TEST.md` §7), 2.0.0 Glass (§8) or 2.1.0 continuity (§9).
 
 See `native/README.md`. Elements of A is UI inspiration only. Technical references are the open-source Moonlight TV and Kodi webOS code, read but not copied. The web app (`tv-app/`) remains installed and working.
 
