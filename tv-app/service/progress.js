@@ -130,6 +130,12 @@ async function save(entry, edition) {
   return { accepted: true, entry: value };
 }
 
+/** Whether the viewer removed a title from Continue (until they start it again). */
+async function isDismissed(id) {
+  await load();
+  return dismissed.has(String(id));
+}
+
 /** Remove a title from Continue until the viewer starts it again. */
 async function dismiss(id) {
   if (!/^tt\d+$/.test(String(id || ''))) throw Object.assign(new Error('Invalid title'), { status: 400 });
@@ -250,4 +256,4 @@ async function saveSettings(input) {
   return current;
 }
 
-module.exports = { save, dismiss, continueWatching, forTitle, latestEdition, setIntent, intentFor, getSettings, saveSettings, resetForTests };
+module.exports = { save, dismiss, isDismissed, continueWatching, forTitle, latestEdition, setIntent, intentFor, getSettings, saveSettings, resetForTests };

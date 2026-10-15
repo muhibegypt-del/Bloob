@@ -260,7 +260,9 @@ class BrowseScreen : public Screen {
   std::vector<ButtonSpec> hero_buttons() const {
     std::vector<ButtonSpec> b;
     const Shown &s = shown_;
-    if (s.has_resume) {
+    if (s.has_resume && s.resume.kind == "upcoming") {
+      b.push_back({"Episodes", -1});  // caught up: nothing to play yet
+    } else if (s.has_resume) {
       const Resume &r = s.resume;
       std::string what = r.kind == "next" && r.next ? "Play " + episode_code(r.next->season, r.next->episode)
                          : r.item.series() ? "Resume " + episode_code(r.season, r.episode) : "Resume";
@@ -292,7 +294,7 @@ class BrowseScreen : public Screen {
 
   void open_focused() {
     Shown s = focused();
-    if (s.has_resume) play_resume(s.resume);
+    if (s.has_resume && s.resume.kind != "upcoming") play_resume(s.resume);
     else ctx().push(make_details(s.item));
   }
 
@@ -554,7 +556,9 @@ class BrowseScreen : public Screen {
 
     // Why this title is here, in plain words.
     std::string why;
-    if (s.has_resume) why = s.resume.kind == "next" ? "Up next" : "Continue watching";
+    if (s.has_resume) why = s.resume.kind == "upcoming" ? "You\xE2\x80\x99re up to date"
+                            : s.resume.reason == "new" ? "New episode"
+                            : s.resume.kind == "next" ? "Up next" : "Continue watching";
     else if (hero_) why = kind_ == Browse::Series ? "Popular series" : kind_ == Browse::Movies ? "Popular film" : (s.item.series() ? "Popular series" : "Popular film");
     float hero_only = std::max(0.0f, 1.0f - 2.0f * m);
     if (!why.empty() && hero_only > 0.01f) text(Text::Caption1, why, X0, box_top - 44, label(Label::Secondary, hero_only * t));
@@ -564,7 +568,9 @@ class BrowseScreen : public Screen {
     std::string meta = meta_line(s.item);
     if (s.has_resume && s.item.series()) {
       const Resume &r = s.resume;
-      if (r.kind == "next" && r.next) meta = episode_code(r.next->season, r.next->episode) + " \xC2\xB7 " + r.next->title;
+      if (r.kind == "upcoming" && r.next)
+        meta = episode_code(r.next->season, r.next->episode) + " arrives " + air_day_text(r.next->released, today_iso());
+      else if (r.kind == "next" && r.next) meta = episode_code(r.next->season, r.next->episode) + " \xC2\xB7 " + r.next->title;
       else meta = join({episode_code(r.season, r.episode), r.episode_title});
     }
     text(Text::Callout, meta, X0, y, label(Label::Secondary, t), 1100);
@@ -654,12 +660,14 @@ class BrowseScreen : public Screen {
       if (row.continue_row()) {
         const Resume &res = row.resume[static_cast<size_t>(j)];
         if (res.kind == "resume" && res.duration > 0) cs.progress = static_cast<double>(res.position) / res.duration;
-        if (res.kind == "next" && res.next) sub = "Next: " + episode_code(res.next->season, res.next->episode);
+        if (res.kind == "upcoming" && res.next) sub = episode_code(res.next->season, res.next->episode) + " " + air_day_text(res.next->released, today_iso());
+        else if (res.kind == "next" && res.next) sub = (res.reason == "new" ? "New: " : "Next: ") + episode_code(res.next->season, res.next->episode);
         else if (res.item.series()) sub = join({episode_code(res.season, res.episode), minutes_left(res.duration - res.position)});
         else sub = minutes_left(res.duration - res.position);
         // Continue watching: what and how long, on the picture itself.
         cs.title_on_art = true;
-        cs.sub = res.item.series() ? "" : sub;
+        // A new episode or a date is news, so it shows without focus too.
+        cs.sub = !res.item.series() || res.kind == "upcoming" || res.reason == "new" ? sub : "";
       }
       draw_card(x, y, cs);
       if (focused) {

@@ -21,7 +21,8 @@ constexpr int LX = safe_x, LW = 600;           // title column
 constexpr int RX = 760, RW = W - safe_x - 760;  // options column
 constexpr int ROW = 84, ROW_GAP = 10;
 constexpr int LIST_TOP = 480;
-constexpr int VISIBLE = 5;
+constexpr int LIST_H = 5 * (ROW + ROW_GAP);  // the list's window
+constexpr int HEADER_H = 58;                  // a section title in the list
 
 // Plain words for a version's picture and how easy it is to get.
 std::string picture_words(const SourceOption &o) {
@@ -58,7 +59,8 @@ class SourcesScreen : public Screen {
   std::string spoken() const override {
     if (pairing_.active()) return pairing_.spoken();
     switch (modal_) {
-      case Modal::Resolving: return "Starting " + chosen_.headline + ". " + step_label_ + " Cancel, button";
+      case Modal::Resolving:
+        return "Starting " + chosen_.headline + ". " + step_label_ + (sheet_focus_ == 0 ? " Cancel, button" : " Other versions, button");
       case Modal::ChooseFile:
       case Modal::ChooseQuality: {
         if (choices_.empty()) return "";
@@ -75,6 +77,8 @@ class SourcesScreen : public Screen {
     if (state_ != State::Ready) return state_ == State::Empty ? "Nothing to play yet" : error_;
     const SourceOption &o = options_[static_cast<size_t>(focus_index_)];
     std::string head = focus_index_ == 0 && has_recommended() ? "Best version, " : "";
+    for (size_t i = 1; i < rows_.size(); i++)
+      if (rows_[i].option == focus_index_ && rows_[i - 1].option < 0) head = rows_[i - 1].label + ". ";
     return head + o.headline + ", " + picture_words(o) + ", " + o.audio + ", " + position(focus_index_, static_cast<int>(options_.size()));
   }
 
@@ -129,9 +133,20 @@ class SourcesScreen : public Screen {
       }
       ranking_ = parse_ranking(r.json);
       options_.clear();
+      rows_.clear();
       if (ranking_.recommended) options_.push_back(*ranking_.recommended);
-      for (auto &g : ranking_.groups)
-        for (auto &o : g.items) options_.push_back(o);
+      // The list below the best version: each section's title, then its versions.
+      int y = 0;
+      for (auto &g : ranking_.groups) {
+        rows_.push_back({-1, g.label, g.kind, y});
+        y += HEADER_H;
+        for (auto &o : g.items) {
+          rows_.push_back({static_cast<int>(options_.size()), "", g.kind, y});
+          options_.push_back(o);
+          y += ROW + ROW_GAP;
+        }
+      }
+      list_h_ = y;
       state_ = options_.empty() ? State::Empty : State::Ready;
       focus_index_ = 0;
       lift_.snap(0);
@@ -170,6 +185,9 @@ class SourcesScreen : public Screen {
   void choose(int index) {
     if (index < 0 || index >= static_cast<int>(options_.size())) return;
     chosen_ = options_[static_cast<size_t>(index)];
+    // Picking another version of a show by hand: its next episodes keep to it.
+    if (!direct_ && req_.item.series() && !(index == 0 && has_recommended()))
+      ctx().api.post("/api/intent", "{\"id\":" + Json::quote(req_.item.id) + ",\"candidate\":" + Json::quote(chosen_.id) + "}");
     if (!ctx().paired) {
       pairing_.start([this](bool paired) {
         if (paired) start_job();
@@ -181,6 +199,7 @@ class SourcesScreen : public Screen {
 
   void start_job() {
     modal_ = Modal::Resolving;
+    sheet_focus_ = 0;
     modal_since_ = ctx().now;
     details_ = false;
     job_id_.clear();
@@ -231,7 +250,9 @@ class SourcesScreen : public Screen {
       logf("sources", "resolved (%s)", redact_uri(url).c_str());
       leave_after_play_ = true;
       choose_another() = false;
-      ctx().push(make_player(req_, url, chosen_.headline));
+      PlayRequest played = req_;
+      played.candidate = chosen_.id;  // the edition, for progress and the show's next episode
+      ctx().push(make_player(played, url, chosen_.headline));
     } else if (state == "error") {
       fail(j["error"].as_string("Could not get this source."));
     } else if (state == "choose-file") {
@@ -271,6 +292,16 @@ class SourcesScreen : public Screen {
     if (direct_) ctx().pop();  // back to the title page it was started from
   }
 
+  // From the starting sheet: stop this one and show every version instead.
+  bool can_show_others() const { return direct_ && options_.size() > 1; }
+  void show_others() {
+    if (!job_id_.empty()) ctx().api.post("/api/resolve/cancel", "{\"id\":" + Json::quote(job_id_) + "}");
+    job_id_.clear();
+    modal_ = Modal::None;
+    direct_ = false;
+    sheet_focus_ = 0;
+  }
+
   // Started from the title page and still on the way: only the progress shows.
   bool quiet() const { return (autostart_ && state_ == State::Loading) || (direct_ && (modal_ == Modal::Resolving || pairing_.active())); }
 
@@ -289,7 +320,9 @@ class SourcesScreen : public Screen {
     if (pairing_.active()) return pairing_.key(key);
     switch (modal_) {
       case Modal::Resolving:
-        if (key == Key::Back || key == Key::Ok) cancel_job();
+        if ((key == Key::Left || key == Key::Right) && can_show_others()) sheet_focus_ = 1 - sheet_focus_;
+        if (key == Key::Back || (key == Key::Ok && sheet_focus_ == 0)) cancel_job();
+        else if (key == Key::Ok && !repeat) show_others();
         return true;
       case Modal::ChooseFile:
       case Modal::ChooseQuality: {
@@ -358,14 +391,16 @@ class SourcesScreen : public Screen {
     focus_index_ = index;
     lift_.snap(0);
     lift_.to(1);
-    int list_index = focus_index_ - (has_recommended() ? 1 : 0);
+    // Keep the focused version, and its section title when it's the first, in view.
     float target = scroll_.target;
-    if (list_index >= 0) {
-      if (list_index < target) target = static_cast<float>(list_index);
-      if (list_index >= target + VISIBLE) target = static_cast<float>(list_index - VISIBLE + 1);
-    } else {
-      target = 0;
+    for (size_t i = 0; i < rows_.size(); i++) {
+      if (rows_[i].option != index) continue;
+      int top = rows_[i].y, bottom = top + ROW;
+      if (i > 0 && rows_[i - 1].option < 0) top = rows_[i - 1].y;
+      if (top < target) target = static_cast<float>(top);
+      if (bottom > target + LIST_H) target = static_cast<float>(bottom - LIST_H);
     }
+    if (index == 0 && has_recommended()) target = 0;
     scroll_.to(target);
   }
 
@@ -455,23 +490,21 @@ class SourcesScreen : public Screen {
 
   void draw_options() {
     Ctx &c = ctx();
-    int index = 0;
-    if (has_recommended()) {
-      draw_best(*ranking_.recommended, focus_index_ == 0);
-      index = 1;
-    }
-    int others = static_cast<int>(options_.size()) - index;
-    if (others > 0) {
-      text(Text::Caption1, has_recommended() ? "Other versions" : "Versions", RX, LIST_TOP - 44, label(Label::Secondary));
-      float s = scroll_.value;
-      for (int i = 0; i < others; i++) {
-        float ry = LIST_TOP + (i - s) * (ROW + ROW_GAP);
-        if (ry < LIST_TOP - ROW / 2 || ry > LIST_TOP + VISIBLE * (ROW + ROW_GAP) - ROW / 2) continue;
-        int k = i + index;
-        draw_version(options_[static_cast<size_t>(k)], static_cast<int>(ry), k == focus_index_);
+    if (has_recommended()) draw_best(*ranking_.recommended, focus_index_ == 0);
+    float sv = scroll_.value;
+    for (auto &row : rows_) {
+      float ry = LIST_TOP + row.y - sv;
+      int h = row.option < 0 ? HEADER_H : ROW;
+      if (ry < LIST_TOP - 8 || ry + h > LIST_TOP + LIST_H + 8) continue;  // only whole rows, inside the window
+      if (row.option < 0) {
+        bool problems = row.kind == "problems";
+        if (problems) c.icons.draw(Icon::Warning, RX, static_cast<int>(ry) + 14, 24, caution);
+        text(Text::Caption1, row.label, RX + (problems ? 34 : 0), static_cast<int>(ry) + 14, problems ? caution : label(Label::Secondary));
+      } else {
+        draw_version(options_[static_cast<size_t>(row.option)], static_cast<int>(ry), row.option == focus_index_);
       }
-      if (s + VISIBLE < others) c.icons.draw(Icon::ChevronDown, RX + RW / 2 - 18, LIST_TOP + VISIBLE * (ROW + ROW_GAP) - 4, 36, label(Label::Tertiary));
     }
+    if (sv + LIST_H < list_h_ - ROW_GAP) c.icons.draw(Icon::ChevronDown, RX + RW / 2 - 18, LIST_TOP + LIST_H - 4, 36, label(Label::Tertiary));
     // What the keys do here.
     int hx = RX;
     hx += draw_hint(hx, H - 82, "OK", "Play") + 32;
@@ -493,7 +526,8 @@ class SourcesScreen : public Screen {
     }
     Color fg = focused ? rgba(0x000000) : label(Label::Primary);
     Color fg2 = focused ? rgba(0x000000, 166) : label(Label::Secondary);
-    text(Text::Caption1, "Best version", x + 40, y + 36, fg2);
+    const char *kind = o.match == "same" ? "Same as your last episode" : o.match == "like" ? "Like your last episode" : "Best version";
+    text(Text::Caption1, kind, x + 40, y + 36, fg2);
     text(Text::Title2, o.headline, x + 40, y + 72, fg, w - 260);
     text(Text::Body, picture_words(o) + " \xC2\xB7 " + o.audio, x + 40, y + 146, fg2, w - 260);
     paragraph(Text::Caption1, ranking_.why, x + 40, y + 190, fg2, w - 260, 2);
@@ -520,12 +554,22 @@ class SourcesScreen : public Screen {
     Color fg2 = focused ? rgba(0x000000, 166) : label(o.excluded ? Label::Disabled : Label::Secondary);
     int ty = y + (ROW - line_for(Text::Headline)) / 2;
     text(Text::Headline, o.resolution, x + 28, ty, fg);
-    text(Text::Callout, picture_words(o) + " \xC2\xB7 " + o.audio, x + 170, y + (ROW - line_for(Text::Callout)) / 2, fg2, w - 170 - 330);
     Availability a = availability(o);
     int aw = measure(Text::Caption1, a.words);
     int ax = x + w - 28 - aw;
     text(Text::Caption1, a.words, ax, y + (ROW - line_for(Text::Caption1)) / 2, focused && a.dot.r == caution.r ? caution_ink : fg2, 300);
     c.gfx.fill_circle(ax - 18, y + ROW / 2, 6, a.dot);
+    // Pack or single file, beside availability: a pack is often the same
+    // release for the whole season.
+    int right = ax - 44;
+    if (req_.item.series()) {
+      std::string tag = o.pack ? "Season pack" : "Single episode";
+      int pw = measure(Text::Caption2, tag) + 24, px = right - pw;
+      c.gfx.fill_round(px, y + (ROW - 34) / 2, pw, 34, 17, focused ? rgba(0x000000, 20) : rgba(0xffffff, 30));
+      text(Text::Caption2, tag, px + 12, y + (ROW - line_for(Text::Caption2)) / 2, fg2);
+      right = px - 20;
+    }
+    text(Text::Callout, picture_words(o) + " \xC2\xB7 " + o.audio, x + 170, y + (ROW - line_for(Text::Callout)) / 2, fg2, right - x - 170);
   }
 
   // Release details for the focused version: everything technical, on request.
@@ -583,7 +627,9 @@ class SourcesScreen : public Screen {
       steps.push_back({"unlocking", "Getting the stream"});
       int h = 330 + static_cast<int>(steps.size()) * 58 + (saw_caching_ ? 34 : 0), y = (H - h) / 2;
       sheet(x, y, w, h, a);
-      text(Text::Caption1, "Starting", x + 56, y + 48, label(Label::Secondary, a));
+      std::string starting = chosen_.match == "same" ? "Starting \xC2\xB7 same version as your last episode"
+                             : chosen_.match == "like" ? "Starting \xC2\xB7 like your last episode" : "Starting";
+      text(Text::Caption1, starting, x + 56, y + 48, label(Label::Secondary, a));
       text(Text::Title3, chosen_.headline, x + 56, y + 84, label(Label::Primary, a), w - 112);
       static const char *order[] = {"starting", "adding", "caching", "files", "unlocking", "preparing", "ready"};
       auto rank = [](const std::string &id) {
@@ -610,10 +656,18 @@ class SourcesScreen : public Screen {
       }
       GlassButton cancel;
       cancel.label = "Cancel";
-      cancel.focused = true;
+      cancel.focused = sheet_focus_ == 0;
       cancel.h = 64;
       cancel.alpha = a;
-      draw_glass_button(x + 56, y + h - 100, cancel);
+      int bx = x + 56 + draw_glass_button(x + 56, y + h - 100, cancel) + 20;
+      if (can_show_others()) {
+        GlassButton others;
+        others.label = "Other versions";
+        others.focused = sheet_focus_ == 1;
+        others.h = 64;
+        others.alpha = a;
+        draw_glass_button(bx, y + h - 100, others);
+      }
       return;
     }
     if (modal_ == Modal::ChooseFile || modal_ == Modal::ChooseQuality) {
@@ -667,6 +721,12 @@ class SourcesScreen : public Screen {
   struct Choice {
     std::string id, label, detail;
   };
+  // One line of the list: a section title (option < 0) or a version.
+  struct ListRow {
+    int option;
+    std::string label, kind;
+    int y;
+  };
 
   PlayRequest req_;
   bool autostart_;
@@ -676,6 +736,9 @@ class SourcesScreen : public Screen {
   long long loading_since_ = 0;
   Ranking ranking_;
   std::vector<SourceOption> options_;
+  std::vector<ListRow> rows_;
+  int list_h_ = 0;
+  int sheet_focus_ = 0;  // starting sheet: 0 Cancel, 1 Other versions
   int focus_index_ = 0, prev_index_ = -1;
   Anim lift_{focus_in_rate, 1}, prev_lift_{focus_leave_rate}, scroll_{scroll_rate}, details_anim_{fade_rate}, modal_anim_{fade_rate};
   bool details_ = false;

@@ -46,7 +46,8 @@ class DetailsScreen : public Screen {
       case Zone::Buttons: {
         auto list = buttons();
         int i = std::min(button_, static_cast<int>(list.size()) - 1);
-        return meta_.item.name + ". " + list[static_cast<size_t>(i)].label + ", button, " + position(i, static_cast<int>(list.size()));
+        std::string said = meta_.item.name + ". " + list[static_cast<size_t>(i)].label + ", button, " + position(i, static_cast<int>(list.size()));
+        return note_.empty() ? said : said + ". " + note_;
       }
       case Zone::Versions: {
         if (versions_.empty()) return "";
@@ -77,9 +78,17 @@ class DetailsScreen : public Screen {
     Item original = meta_.item;
     meta_ = parse_meta(j["meta"]);
     if (meta_.item.description.empty()) meta_.item.description = original.description;
-    progress_ = parse_progress(j["progress"]);
+    read_state(j);
     loaded_ = true;
     choose_start(true);
+  }
+
+  // What changes between visits: progress, what Play does, the show's version.
+  void read_state(const Json &j) {
+    progress_ = parse_progress(j["progress"]);
+    target_ = parse_target(j["target"]);
+    intent_ = parse_intent(j["intent"]);
+    dismissed_ = j["dismissed"].as_bool();
   }
 
   void load() {
@@ -96,7 +105,7 @@ class DetailsScreen : public Screen {
   void load_progress() {
     ctx().api.get("/api/meta?type=" + meta_.item.type + "&id=" + meta_.item.id, [this](const ApiResult &r) {
       if (!r.ok()) return;
-      progress_ = parse_progress(r.json["progress"]);
+      read_state(r.json);
       choose_start(zone_ == Zone::Buttons);
     }, alive_);
   }
@@ -120,6 +129,7 @@ class DetailsScreen : public Screen {
         return;
       }
       Ranking ranking = parse_ranking(r.json);
+      versions_why_ = ranking.why;
       versions_.clear();
       if (ranking.recommended) versions_.push_back(*ranking.recommended);
       for (auto &g : ranking.groups)
@@ -130,11 +140,18 @@ class DetailsScreen : public Screen {
     }, alive_);
   }
 
-  // What the main button plays (decided by play::title_default), its label, and
-  // where the episode row starts.
+  // What the main button plays (decided by the service's target, UX-PLAN X2),
+  // its label, and where the episode row starts.
   void choose_start(bool move_focus) {
-    start_ = play::title_default(meta_, progress_);
+    std::string today = today_iso();
+    start_ = play::title_default(meta_, progress_, target_, today);
     load_versions();
+    note_.clear();
+    if (target_.action == "caughtUp") {
+      note_ = target_.upcoming ? "You\xE2\x80\x99re up to date. " + episode_code(target_.upcoming->season, target_.upcoming->episode) +
+                                     " arrives " + air_day_text(target_.upcoming->released, today) + "."
+                               : "You\xE2\x80\x99ve watched every episode.";
+    }
     has_resume_ = start_.resume_ms > 0;
     resume_note_.clear();
     if (has_resume_) {
@@ -142,7 +159,7 @@ class DetailsScreen : public Screen {
       if (it != progress_.end()) resume_note_ = minutes_left(it->second.duration - it->second.position);
     }
     if (!meta_.item.series()) {
-      start_label_ = has_resume_ ? "Resume" : "Play";
+      start_label_ = has_resume_ ? "Resume" : target_.action == "again" ? "Play again" : "Play";
       return;
     }
     if (start_.video_id.empty()) {
@@ -186,7 +203,15 @@ class DetailsScreen : public Screen {
     b.push_back({start_label_, kPlayIcon});
     if (has_resume_) b.push_back({"Start over", static_cast<int>(Icon::Restart)});
     b.push_back({"All versions", -1});
+    if (in_continue()) b.push_back({"Remove from Continue", -1});
     return b;
+  }
+
+  // On Home's Continue row: something watched, not removed, and not a finished film.
+  bool in_continue() const {
+    if (dismissed_ || progress_.empty()) return false;
+    if (!meta_.item.series()) return target_.action == "resume" || !target_.valid();
+    return target_.action != "caughtUp" || target_.upcoming.has_value();
   }
 
   bool has_versions_panel() const { return !meta_.item.series(); }
@@ -323,6 +348,13 @@ class DetailsScreen : public Screen {
     if (start_.video_id.empty()) return;
     auto list = buttons();
     const std::string &what = list[static_cast<size_t>(index)].label;
+    if (what == "Remove from Continue") {
+      dismissed_ = true;
+      button_ = 0;
+      ctx().api.post("/api/progress/dismiss", "{\"id\":" + Json::quote(meta_.item.id) + "}");
+      ctx().toast("Removed from Continue. It returns when you play it.");
+      return;
+    }
     PlayRequest req = start_;
     if (what == "All versions") {
       start_playback(req, PlayOrigin::Details);  // the full chooser
@@ -362,8 +394,9 @@ class DetailsScreen : public Screen {
       if (!it.rating.empty()) draw_glass_badge(X0 + mw + 24, y, "IMDb " + it.rating, top_only);
       y += 54;
       y = paragraph(Text::Body, it.description, X0, y, label(Label::Primary, 0.86f * top_only), 900, 3);
-      int by = std::min(std::max(y + 36, 560), kPanelY - 120);
+      int by = std::min(std::max(y + 36, 560), kPanelY - (has_episodes() ? 150 : 120));
       draw_buttons(by, top_only);
+      if (has_episodes()) draw_version_line(by + 100, top_only);
       if (has_versions_panel()) draw_versions(top_only);
     }
     if (has_episodes()) draw_episodes(p);
@@ -390,6 +423,28 @@ class DetailsScreen : public Screen {
       bx += draw_glass_button(bx, by, b) + 20;
     }
     if (has_resume_) text(Text::Caption1, resume_note_, bx + 8, by + (80 - line_for(Text::Caption1)) / 2, label(Label::Secondary, alpha));
+  }
+
+  // Under the buttons of a show: what Play will look like and why, or that
+  // you're caught up. One line; problems in the caution colour (UX-PLAN X3).
+  void draw_version_line(int y, float alpha) {
+    if (!loaded_) return;
+    if (!note_.empty()) {
+      text(Text::Callout, note_, X0, y, label(Label::Secondary, alpha), 1400);
+      return;
+    }
+    if (versions_state_ != Versions::Ready || versions_.empty()) return;
+    const SourceOption &best = versions_[0];
+    std::string why = best.match == "same" ? "the same version as your last episode"
+                      : best.match == "like" ? "like your last episode"
+                      : intent_.known() ? "your last episode\xE2\x80\x99s version isn\xE2\x80\x99t offered" : "";
+    std::string line = "In " + best.headline + (why.empty() ? "" : ", " + why);
+    int w = text(Text::Callout, line, X0, y, label(Label::Secondary, alpha), 1400);
+    if (!best.cautions.empty()) {
+      int cx = X0 + w + 28;
+      ctx().icons.draw(Icon::Warning, cx, y + 2, 26, fade(caution, alpha));
+      text(Text::Callout, best.cautions[0], cx + 36, y, fade(caution, alpha), 600);
+    }
   }
 
   // How to watch: a frosted panel along the bottom, best version ticked.
@@ -533,10 +588,13 @@ class DetailsScreen : public Screen {
   Anim page_{page_rate}, escroll_{scroll_rate}, sscroll_{scroll_rate}, lift_{focus_in_rate, 1}, prev_lift_{focus_leave_rate};
   Versions versions_state_ = Versions::Loading;
   std::vector<SourceOption> versions_;
-  std::string versions_for_, versions_error_;
+  std::string versions_for_, versions_error_, versions_why_;
   int version_ = 0;
   PlayRequest start_;
-  std::string start_label_ = "Play", resume_note_;
+  std::string start_label_ = "Play", resume_note_, note_;
+  Target target_;
+  Intent intent_;
+  bool dismissed_ = false;
   bool has_resume_ = false;
 };
 

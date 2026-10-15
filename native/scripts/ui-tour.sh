@@ -61,7 +61,10 @@ run task 0 \
   'media:{"loadCompleted":{}}' "media:$SRC" "media:$VI" 'media:{"playing":{}}' "wait:300" \
   'media:{"endOfStream":{}}' "wait:600" "snap:18-player-up-next" \
   "key:back" "key:back" "key:back" "wait:1500" "snap:19-back-to-details" \
-  "key:back" "wait:1500" "snap:20-back-to-home" \
+  "key:up" "key:up" "wait:1200" "snap:19a-details-next-episode" \
+  "key:right" "key:ok" "wait:2500" "snap:19b-episode-versions" \
+  "key:down" "key:down" "key:down" "key:down" "wait:800" "snap:19c-episode-versions-problems" \
+  "key:back" "wait:1000" "key:back" "wait:1500" "snap:20-back-to-home" \
   "key:up" "key:up" "key:up" "key:up" "wait:400" "snap:21-tabs" \
   "key:left" "key:left" "key:down" "key:right" "key:right" "key:right" "key:ok" "key:down" "key:down" "key:down" "key:ok" \
   "key:up" "key:up" "key:left" "key:ok" "wait:3000" "snap:22-search" \

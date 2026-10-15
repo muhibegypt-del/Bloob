@@ -6,8 +6,11 @@
 static int failures = 0;
 #define CHECK(cond) do { if (!(cond)) { std::printf("FAIL %s:%d  %s\n", __FILE__, __LINE__, #cond); failures++; } } while (0)
 
+static const std::string kToday = "2026-10-15";
+
 static Episode ep(int season, int number) {
   Episode e;
+  e.released = "2026-0" + std::to_string(season) + "-0" + std::to_string(number);
   e.season = season;
   e.episode = number;
   e.id = "tt1:" + std::to_string(season) + ":" + std::to_string(number);
@@ -51,15 +54,41 @@ static void test_resume_point() {
 static void test_title_default() {
   Meta m = show();
   std::map<std::string, Watch> p;
-  PlayRequest first = play::title_default(m, p);
+  PlayRequest first = play::title_default(m, p, kToday);
   CHECK(first.video_id == "tt1:1:1" && first.resume_ms == 0);  // never the specials
   p["tt1:1:2"] = watch(600000, 2400000, false, 10);
-  PlayRequest resume = play::title_default(m, p);
+  PlayRequest resume = play::title_default(m, p, kToday);
   CHECK(resume.video_id == "tt1:1:2" && resume.resume_ms == 600000);
   p["tt1:1:3"] = watch(2400000, 2400000, true, 20);  // finale watched last
-  PlayRequest next = play::title_default(m, p);
+  PlayRequest next = play::title_default(m, p, kToday);
   CHECK(next.video_id == "tt1:2:1" && next.resume_ms == 0);  // into the next season
   CHECK(next.next && next.next->video_id == "tt1:2:2");
+  // The next episode hasn't aired: no Up next, and the button doesn't offer it.
+  m.seasons[1].episodes[0].released = "2026-11-01";
+  PlayRequest unaired = play::title_default(m, p, kToday);
+  CHECK(unaired.video_id == "tt1:1:1");
+  PlayRequest cur = play::episode(m, m.seasons[0].episodes[2], p, true);
+  CHECK(cur.next && !play::after(cur, kToday).has_value());
+}
+
+static void test_target() {
+  Meta m = show();
+  std::map<std::string, Watch> p;
+  Target t;
+  t.action = "resume";
+  t.video_id = "tt1:2:2";
+  t.position = 123000;
+  PlayRequest r = play::title_default(m, p, t, kToday);
+  CHECK(r.video_id == "tt1:2:2" && r.resume_ms == 123000);
+  t = Target{};
+  t.action = "caughtUp";
+  t.again_id = "tt1:1:1";
+  r = play::title_default(m, p, t, kToday);
+  CHECK(r.video_id == "tt1:1:1" && r.resume_ms == 0);
+  CHECK(air_day_text("2026-10-16", kToday) == "tomorrow");
+  CHECK(air_day_text("2026-10-19", kToday) == "on Monday");
+  CHECK(air_day_text("2026-11-03", kToday) == "on 3 Nov");
+  CHECK(aired("", kToday) && aired("2026-10-15T00:00:00.000Z", kToday) && !aired("2026-10-16", kToday));
 }
 
 static void test_continue_and_after() {
@@ -74,16 +103,19 @@ static void test_continue_and_after() {
   r.position = 999999;
   PlayRequest req = play::continue_item(r);
   CHECK(req.video_id == "tt1:1:3" && req.resume_ms == 0);
-  CHECK(!play::after(req).has_value());
+  CHECK(!play::after(req, kToday).has_value());
+  r.kind = "upcoming";
+  CHECK(play::continue_item(r).video_id.empty());
   PlayRequest cur;
   cur.next = n;
-  auto a = play::after(cur);
+  auto a = play::after(cur, kToday);
   CHECK(a && a->video_id == "tt1:1:3" && a->resume_ms == 0);
 }
 
 int run_play_tests() {
   test_resume_point();
   test_title_default();
+  test_target();
   test_continue_and_after();
   return failures;
 }

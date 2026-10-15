@@ -1,5 +1,8 @@
 #include "model.h"
 
+#include <cstdio>
+#include <ctime>
+
 static std::vector<std::string> strings(const Json &list) {
   std::vector<std::string> out;
   for (size_t i = 0; i < list.size(); i++) {
@@ -30,6 +33,7 @@ Resume parse_resume(const Json &j) {
   Resume r;
   r.item = parse_item(j);
   r.kind = j["kind"].as_string("resume");
+  r.reason = j["reason"].as_string();
   r.video_id = j["videoId"].as_string();
   r.episode_title = j["episodeTitle"].as_string();
   r.season = static_cast<int>(j["season"].as_int());
@@ -43,6 +47,7 @@ Resume parse_resume(const Json &j) {
     next.title = n["title"].as_string();
     next.season = static_cast<int>(n["season"].as_int());
     next.episode = static_cast<int>(n["episode"].as_int());
+    next.released = n["released"].as_string();
     r.next = next;
   }
   return r;
@@ -89,6 +94,37 @@ std::map<std::string, Watch> parse_progress(const Json &j) {
   return out;
 }
 
+Target parse_target(const Json &j) {
+  Target t;
+  if (!j.is_object()) return t;
+  t.action = j["action"].as_string();
+  t.video_id = j["videoId"].as_string();
+  t.position = j["position"].as_int();
+  const Json &u = j["upcoming"];
+  if (u.is_object()) {
+    NextEpisode n;
+    n.video_id = u["videoId"].as_string();
+    n.title = u["title"].as_string();
+    n.released = u["released"].as_string();
+    n.season = static_cast<int>(u["season"].as_int());
+    n.episode = static_cast<int>(u["episode"].as_int());
+    t.upcoming = n;
+  }
+  if (j["again"].is_object()) t.again_id = j["again"]["videoId"].as_string();
+  return t;
+}
+
+Intent parse_intent(const Json &j) {
+  Intent i;
+  if (!j.is_object()) return i;
+  i.from = j["from"].as_string();
+  i.resolution = j["resolution"].as_string();
+  i.hdr = j["hdr"].as_string();
+  i.atmos = j["atmos"].as_bool();
+  i.pack = j["pack"].as_bool();
+  return i;
+}
+
 static SourceOption parse_option(const Json &j) {
   SourceOption o;
   o.id = j["id"].as_string();
@@ -104,6 +140,8 @@ static SourceOption parse_option(const Json &j) {
   o.warnings = strings(j["warnings"]);
   o.cautions = strings(j["cautions"]);
   o.excluded = j["excluded"].as_bool();
+  o.match = j["match"].as_string();
+  o.pack = j["scope"].as_string() == "pack";
   return o;
 }
 
@@ -117,6 +155,7 @@ Ranking parse_ranking(const Json &j) {
   for (size_t i = 0; i < groups.size(); i++) {
     SourceGroup g;
     g.label = groups[i]["label"].as_string();
+    g.kind = groups[i]["kind"].as_string("resolution");
     for (size_t k = 0; k < groups[i]["items"].size(); k++) g.items.push_back(parse_option(groups[i]["items"][k]));
     r.groups.push_back(g);
   }
@@ -128,11 +167,47 @@ std::optional<NextEpisode> next_episode(const Meta &meta, const std::string &vid
   for (auto &season : meta.seasons) {
     if (season.season == 0) continue;  // specials are not "next"
     for (auto &e : season.episodes) {
-      if (found) return NextEpisode{e.id, e.title, e.season, e.episode};
+      if (found) return NextEpisode{e.id, e.title, e.released, e.season, e.episode};
       if (e.id == video_id) found = true;
     }
   }
   return std::nullopt;
+}
+
+bool aired(const std::string &released, const std::string &today) {
+  if (released.size() < 10) return true;
+  return released.compare(0, 10, today) <= 0;
+}
+
+std::string today_iso() {
+  std::time_t now = std::time(nullptr);
+  std::tm local{};
+  localtime_r(&now, &local);
+  char buf[16];
+  std::strftime(buf, sizeof buf, "%Y-%m-%d", &local);
+  return buf;
+}
+
+static long days_from_civil(int y, int m, int d) {  // days since 1970-01-01
+  y -= m <= 2;
+  long era = (y >= 0 ? y : y - 399) / 400;
+  long yoe = y - era * 400;
+  long doy = (153 * (m + (m > 2 ? -3 : 9)) + 2) / 5 + d - 1;
+  long doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+  return era * 146097 + doe - 719468;
+}
+
+std::string air_day_text(const std::string &released, const std::string &today) {
+  int y = 0, m = 0, d = 0, ty = 0, tm = 0, td = 0;
+  if (std::sscanf(released.c_str(), "%4d-%2d-%2d", &y, &m, &d) != 3 || std::sscanf(today.c_str(), "%4d-%2d-%2d", &ty, &tm, &td) != 3)
+    return "soon";
+  long days = days_from_civil(y, m, d) - days_from_civil(ty, tm, td);
+  if (days <= 0) return "today";
+  if (days == 1) return "tomorrow";
+  static const char *weekdays[] = {"Thursday", "Friday", "Saturday", "Sunday", "Monday", "Tuesday", "Wednesday"};  // 1970-01-01 was a Thursday
+  if (days < 7) return std::string("on ") + weekdays[((days_from_civil(y, m, d) % 7) + 7) % 7];
+  static const char *months[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
+  return "on " + std::to_string(d) + " " + months[(m - 1) % 12];
 }
 
 std::string episode_code(int season, int episode) {

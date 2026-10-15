@@ -249,7 +249,13 @@ async function handleApi(req, res, url) {
       const meta = await catalog.meta(query.get('type'), query.get('id'));
       const watched = await progress.forTitle(meta.id).catch(() => ({}));
       const intent = meta.type === 'series' ? await progress.intentFor(meta.id).catch(() => null) : null;
-      return reply(res, 200, { meta, progress: watched, target: next.target(meta, watched), intent: intent ? publicEdition(intent) : null });
+      return reply(res, 200, {
+        meta,
+        progress: watched,
+        target: next.target(meta, watched),
+        intent: intent ? publicEdition(intent) : null,
+        dismissed: await progress.isDismissed(meta.id).catch(() => false),
+      });
     }
     if (pathname === '/api/image') {
       const image = await images.fetchImage(String(query.get('u') || ''));

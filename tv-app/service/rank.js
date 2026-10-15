@@ -344,7 +344,8 @@ function explain(best, all, intent) {
  * intent: the edition the viewer has been watching this show in, if any.
  *
  * Sections, in order: versions that continue the viewer's last episode (when
- * there is one), the rest by resolution, then those likely to fail on this TV.
+ * there is one), every other version (best resolution first), then those
+ * likely to fail on this TV.
  */
 function rank(candidates, prefs) {
   prefs = prefs || {};
@@ -355,12 +356,17 @@ function rank(candidates, prefs) {
   const rest = ranked.filter(r => r !== recommended);
   const continuing = prefs.intent ? rest.filter(r => !r.problem && (r.match === 'same' || r.match === 'like')) : [];
   const problems = rest.filter(r => r.problem);
+  // Every other version, best resolution first (each row names its resolution).
+  const others = [];
+  GROUP_ORDER.forEach(label => rest.forEach(r => {
+    if (!r.problem && continuing.indexOf(r) < 0 && groupOf(r.candidate) === label) others.push(r);
+  }));
   const groups = [];
-  if (continuing.length) groups.push({ label: 'Same as your last episode', kind: 'continue', items: continuing.map(r => view(r, prefs)) });
-  GROUP_ORDER.forEach(label => {
-    const items = rest.filter(r => !r.problem && continuing.indexOf(r) < 0 && groupOf(r.candidate) === label);
-    if (items.length) groups.push({ label, kind: 'resolution', items: items.map(r => view(r, prefs)) });
-  });
+  if (continuing.length) {
+    const label = continuing.every(r => r.match === 'same') ? 'Same as your last episode' : 'Matches your last episode';
+    groups.push({ label, kind: 'continue', items: continuing.map(r => view(r, prefs)) });
+  }
+  if (others.length) groups.push({ label: 'Other versions', kind: 'others', items: others.map(r => view(r, prefs)) });
   if (problems.length) groups.push({ label: PROBLEM_SECTION, kind: 'problems', items: problems.map(r => view(r, prefs)) });
   return {
     recommended: recommended ? view(recommended, prefs) : null,

@@ -27,7 +27,7 @@ describe('service ranking', () => {
     expect(result.recommended.availability).toBe('120 seeders');
     expect(result.why).toMatch(/best picture/);
     // Versions likely to fail on this TV get their own section, last.
-    expect(result.groups.map(g => g.label)).toEqual(['1080p', 'May not play well on this TV']);
+    expect(result.groups.map(g => g.label)).toEqual(['Other versions', 'May not play well on this TV']);
     expect(result.groups[1].items[0]).toMatchObject({ id: 'cam', excluded: true });
     expect(JSON.stringify(result)).not.toContain('a'.repeat(40));
   });

@@ -135,7 +135,7 @@ describe('version continuity', () => {
     const result = rank([other, pack, lower], { intent: { hash: HASH_A, resolution: '4K', hdr: 'DV' } });
     expect(result.recommended).toMatchObject({ id: pack.id, match: 'same', scope: 'pack' });
     expect(result.why).toBe('The same version as your last episode.');
-    expect(result.groups.map(g => g.label)).toEqual(['Same as your last episode', '1080p']);
+    expect(result.groups.map(g => g.label)).toEqual(['Matches your last episode', 'Other versions']);
   });
 
   it('says so when the last version is not offered', () => {

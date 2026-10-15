@@ -144,6 +144,12 @@ class PlayerScreen : public Screen {
   PlayerScreen(const PlayRequest &req, const std::string &url, const std::string &source, const std::string &load_type)
       : req_(req), url_(url), source_(source), load_type_(load_type) {
     start_at_ = req.resume_ms;
+    // One viewing, one session: reports carry it and a rising sequence so the
+    // service can drop late ones (UX-PLAN X1). A reopen keeps the session.
+    char id[40];
+    std::snprintf(id, sizeof id, "%llx-%04x", static_cast<unsigned long long>(ctx().now), static_cast<unsigned>(std::rand() & 0xffff));
+    progress_session_ = id;
+    today_ = today_iso();
     open();
   }
   ~PlayerScreen() override { close(); }
@@ -181,7 +187,7 @@ class PlayerScreen : public Screen {
   // Release the pipeline. `keep_window` when reopening straight away.
   void close(bool keep_window = false) {
     if (!opened_) return;
-    save_progress();
+    save_progress(keep_window ? nullptr : "stopped");
     Ctx &c = ctx();
     session_.account(c.now);
     total_ += session_.stats();
@@ -236,7 +242,7 @@ class PlayerScreen : public Screen {
     in_background_ = true;
     if (!session_.started()) return;
     if (session_.intent_play()) session_.pause();
-    save_progress();
+    save_progress("paused");
     ums_.notify_background();
   }
 
@@ -282,10 +288,10 @@ class PlayerScreen : public Screen {
       reconnecting_ = false;
     }
     if (resume_check_ && event.kind == MediaEvent::Time) check_start(event.time_ms);
-    if (event.kind == MediaEvent::Paused) save_progress();
+    if (event.kind == MediaEvent::Paused) save_progress("paused");
     if (event.kind == MediaEvent::EndOfStream) {
-      save_progress(true);
-      if (req_.next) {
+      save_progress("ended");
+      if (next_ready()) {
         up_next_ = true;
         up_next_at_ = t;
       }
@@ -368,27 +374,50 @@ class PlayerScreen : public Screen {
     c.webos.set_exported_window(window_id_.c_str(), &src, &dst);
   }
 
-  void save_progress(bool finished = false) {
+  // The next episode exists and has aired (an unaired one gets no Up next).
+  bool next_ready() const { return play::after(req_, today_).has_value(); }
+
+  // Report where the viewer is. `state`: "paused", "stopped" (leaving), "ended";
+  // otherwise from the session. The service decides whether that is finished.
+  void save_progress(const char *state = nullptr) {
     if (!session_.started() || req_.video_id == "launch") return;
+    bool ended = state && std::string(state) == "ended";
     long long duration = session_.duration_ms();
-    long long position = finished ? duration : viewer_position();
+    long long position = ended ? duration : viewer_position();
     if (duration <= 0 || position <= 0) return;
+    std::string now_state = state ? state : session_.phase() == Phase::Paused ? "paused" : "playing";
     std::string body = "{\"videoId\":" + Json::quote(req_.video_id) + ",\"id\":" + Json::quote(req_.item.id) +
                        ",\"type\":" + Json::quote(req_.item.type) + ",\"name\":" + Json::quote(req_.item.name) +
                        ",\"season\":" + std::to_string(req_.season) + ",\"episode\":" + std::to_string(req_.episode) +
                        ",\"episodeTitle\":" + Json::quote(req_.episode_title) + ",\"position\":" + std::to_string(position) +
-                       ",\"duration\":" + std::to_string(duration);
+                       ",\"duration\":" + std::to_string(duration) + ",\"state\":" + Json::quote(now_state) +
+                       ",\"session\":" + Json::quote(progress_session_) + ",\"seq\":" + std::to_string(++progress_seq_);
+    // The version played, so the show's next episode keeps to it (the service
+    // turns the ID into quality words and a torrent hash, never a URL).
+    if (!req_.candidate.empty()) body += ",\"edition\":" + Json::quote(req_.candidate);
     if (req_.next) {
       body += ",\"next\":{\"videoId\":" + Json::quote(req_.next->video_id) + ",\"season\":" + std::to_string(req_.next->season) +
-              ",\"episode\":" + std::to_string(req_.next->episode) + ",\"title\":" + Json::quote(req_.next->title) + "}";
+              ",\"episode\":" + std::to_string(req_.next->episode) + ",\"title\":" + Json::quote(req_.next->title) +
+              ",\"released\":" + Json::quote(req_.next->released) + "}";
     }
     body += "}";
-    ctx().api.post("/api/progress", body);
+    send_progress(body, 0);
     last_save_ = ctx().now;
   }
 
+  // A report that didn't reach the service is sent again a few times while the
+  // player is open; the sequence number keeps a late copy from winning.
+  void send_progress(const std::string &body, int attempt) {
+    ctx().api.post("/api/progress", body, [this, body, attempt](const ApiResult &r) {
+      if (r.ok() || (r.status >= 400 && r.status < 500) || attempt >= 2) return;
+      retry_body_ = body;
+      retry_attempt_ = attempt + 1;
+      retry_at_ = ctx().now + 4000 * (attempt + 1);
+    }, alive_);
+  }
+
   void play_next() {
-    auto next = play::after(req_);
+    auto next = play::after(req_, today_);
     if (!next) return;
     // The episode after that, from the title details fetched during the credits.
     if (const Json *meta = ctx().meta_cache.get(meta_key(req_.item), ctx().now))
@@ -496,7 +525,7 @@ class PlayerScreen : public Screen {
   std::vector<Ctl> controls() const {
     std::vector<Ctl> list = {Ctl::Toggle, Ctl::Audio, Ctl::Subtitles};
     if (resumed_) list.push_back(Ctl::StartOver);
-    if (req_.next) list.push_back(Ctl::Next);
+    if (next_ready()) list.push_back(Ctl::Next);
     return list;
   }
 
@@ -665,10 +694,15 @@ class PlayerScreen : public Screen {
     long long hud_until = hud_shown_at_ + hud_timeout();
     if (hud_ && t > hud_until && !hud_pinned()) hud_ = false;
     if (session_.phase() == Phase::Playing && t - last_save_ > kSaveEveryMs) save_progress();
+    if (!retry_body_.empty() && t >= retry_at_) {
+      std::string body;
+      body.swap(retry_body_);
+      send_progress(body, retry_attempt_);
+    }
     // No clock report after the start: the load option may not apply here.
     if (resume_check_ && t - playing_at_ > 2000) check_start(session_.position_ms(t));
     long long duration = session_.duration_ms();
-    if (!prepared_ && req_.next && c.autoplay_next && session_.phase() == Phase::Playing && duration > 0 &&
+    if (!prepared_ && next_ready() && c.autoplay_next && session_.phase() == Phase::Playing && duration > 0 &&
         duration - session_.position_ms(t) <= kPrepareNextBeforeEndMs)
       prepare_next();
     if (up_next_ && c.autoplay_next && t - up_next_at_ >= kUpNextMs) {
@@ -1058,6 +1092,11 @@ class PlayerScreen : public Screen {
   int panel_index_ = 0;
   int error_focus_ = 0;
   long long last_save_ = 0;
+  std::string progress_session_, today_;
+  long long progress_seq_ = 0;
+  std::string retry_body_;
+  int retry_attempt_ = 0;
+  long long retry_at_ = 0;
   bool resume_done_ = false, resumed_ = false;
   long long load_start_ = 0, playing_at_ = 0;
   bool resume_check_ = false;  // waiting for the first clock report after a start position

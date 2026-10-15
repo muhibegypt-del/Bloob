@@ -35,7 +35,33 @@ PlayRequest episode(const Meta &meta, const Episode &e, const std::map<std::stri
   return req;
 }
 
-PlayRequest title_default(const Meta &meta, const std::map<std::string, Watch> &progress) {
+static const Episode *find_episode(const Meta &meta, const std::string &id) {
+  for (auto &s : meta.seasons)
+    for (auto &e : s.episodes)
+      if (e.id == id) return &e;
+  return nullptr;
+}
+
+PlayRequest title_default(const Meta &meta, const std::map<std::string, Watch> &progress, const Target &target,
+                          const std::string &today) {
+  if (target.valid()) {
+    bool resume = target.action == "resume";
+    if (!meta.item.series()) {
+      PlayRequest req = film(meta.item, progress, !resume);
+      if (resume && target.position > 0) req.resume_ms = target.position;
+      return req;
+    }
+    std::string id = target.action == "caughtUp" ? target.again_id : target.video_id;
+    if (const Episode *e = find_episode(meta, id)) {
+      PlayRequest req = episode(meta, *e, progress, !resume);
+      if (resume && target.position > 0) req.resume_ms = target.position;
+      return req;
+    }
+  }
+  return title_default(meta, progress, today);
+}
+
+PlayRequest title_default(const Meta &meta, const std::map<std::string, Watch> &progress, const std::string &today) {
   if (!meta.item.series()) return film(meta.item, progress, false);
   const Episode *latest = nullptr;
   long long latest_at = -1;
@@ -50,9 +76,8 @@ PlayRequest title_default(const Meta &meta, const std::map<std::string, Watch> &
   if (latest) {
     if (resume_point(progress.at(latest->id)) > 0) return episode(meta, *latest, progress, false);
     if (auto n = next_episode(meta, latest->id))
-      for (auto &s : meta.seasons)
-        for (auto &e : s.episodes)
-          if (e.id == n->video_id) return episode(meta, e, progress, true);
+      if (aired(n->released, today))
+        if (const Episode *e = find_episode(meta, n->video_id)) return episode(meta, *e, progress, true);
   }
   for (auto &s : meta.seasons)
     if (s.season != 0 && !s.episodes.empty()) return episode(meta, s.episodes[0], progress, true);
@@ -63,6 +88,7 @@ PlayRequest title_default(const Meta &meta, const std::map<std::string, Watch> &
 PlayRequest continue_item(const Resume &r) {
   PlayRequest req;
   req.item = r.item;
+  if (r.kind == "upcoming") return req;
   if (r.kind == "next" && r.next) {
     req.video_id = r.next->video_id;
     req.season = r.next->season;
@@ -82,8 +108,8 @@ PlayRequest continue_item(const Resume &r) {
   return req;
 }
 
-std::optional<PlayRequest> after(const PlayRequest &current) {
-  if (!current.next) return std::nullopt;
+std::optional<PlayRequest> after(const PlayRequest &current, const std::string &today) {
+  if (!current.next || !aired(current.next->released, today)) return std::nullopt;
   PlayRequest req;
   req.item = current.item;
   req.video_id = current.next->video_id;
