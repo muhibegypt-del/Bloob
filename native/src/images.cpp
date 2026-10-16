@@ -26,8 +26,21 @@
 namespace {
 
 constexpr long long kFadeMs = 220;
-constexpr long long kStaleMs = 2500;   // a queued image nobody drew for this long is skipped
 constexpr long long kRetryMs = 30000;
+// A request nobody drew for this many frames is retired (study A6).
+constexpr long long kRetireFrames = 30;
+// A texture drawn in the last few frames is never evicted (study M7: the
+// reference's default minimum age is three frames).
+constexpr long long kMinAgeFrames = 3;
+// Upload pacing (study G12): per frame at most this many textures or bytes,
+// highest relevance first; the first is always allowed.
+constexpr int kMaxUploadsPerFrame = 6;
+constexpr size_t kMaxUploadBytesPerFrame = 12u * 1024 * 1024;
+// Visible work that cannot fit the budget waits this many frames, then goes
+// over (logged): an empty card is worse than a brief overrun.
+constexpr long long kOverrunAfterFrames = 60;
+// Decoded source pictures kept on the CPU for further variants.
+constexpr long long kSourceBudget = 48ll * 1024 * 1024;
 
 // Premultiplied RGBA of source pixel (x, y).
 inline void texel(const unsigned char *src, int sw, int x, int y, float out[4]) {
@@ -197,29 +210,6 @@ Pixels scale_image(const unsigned char *rgba, int sw, int sh, int box_w, int box
   return result;
 }
 
-void Images::init(SDL_Renderer *renderer, Tasks *tasks, Api *api) {
-  renderer_ = renderer;
-  tasks_ = tasks;
-  api_ = api;
-}
-
-void Images::shutdown() {
-  for (auto &e : entries_) if (e.second.texture) SDL_DestroyTexture(e.second.texture);
-  entries_.clear();
-  bytes_ = 0;
-}
-
-std::string Images::key_for(const std::string &url, int w, int h, int radius, Fit fit, bool shade, int blur) {
-  return std::to_string(w) + "x" + std::to_string(h) + "r" + std::to_string(radius) + (fit == Fit::Cover ? "c" : "f") +
-         (shade ? "s" : "") + (blur ? "b" + std::to_string(blur) : "") + url;
-}
-
-bool Images::settled(const std::string &url, int w, int h, int radius, Fit fit, bool shade, int blur) {
-  if (url.empty()) return true;
-  ImageRef ref = get(url, w, h, radius, fit, shade, blur);
-  return ref.texture != nullptr || ref.failed;
-}
-
 float text_luma(const Pixels &p) {
   if (p.w <= 0 || p.h <= 0) return -1;
   const unsigned char *d = reinterpret_cast<const unsigned char *>(p.data.data());
@@ -334,21 +324,64 @@ void blur_image(Pixels &p, int radius) {
   for (size_t i = 0; i < buf.size(); i++) d[i] = static_cast<unsigned char>(std::max(0, std::min(255, buf[i])));
 }
 
-ImageRef Images::get(const std::string &url, int w, int h, int radius, Fit fit, bool shade, int blur) {
+// ---------------------------------------------------------------- the cache
+
+// One decoded source picture, shared read-only by every variant made from it.
+struct Images::Decoded {
+  unsigned char *rgba = nullptr;
+  int w = 0, h = 0;
+  ~Decoded() {
+    if (rgba) stbi_image_free(rgba);
+    cpu_domains().decoded_sources -= static_cast<long long>(w) * h * 4;
+  }
+};
+
+void Images::init(SDL_Renderer *renderer, Tasks *decode_tasks, Tasks *fetch_tasks, Api *api) {
+  renderer_ = renderer;
+  decode_tasks_ = decode_tasks;
+  fetch_tasks_ = fetch_tasks;
+  api_ = api;
+}
+
+void Images::shutdown() {
+  for (auto &e : entries_)
+    if (e.second.texture) {
+      SDL_DestroyTexture(e.second.texture);
+      gpu_budget().remove(GpuClass::Images, e.second.ev.bytes);
+    }
+  entries_.clear();
+  sources_.clear();
+  pending_.clear();
+}
+
+std::string Images::key_for(const std::string &url, int w, int h, int radius, Fit fit, bool shade, int blur) {
+  return std::to_string(w) + "x" + std::to_string(h) + "r" + std::to_string(radius) + (fit == Fit::Cover ? "c" : "f") +
+         (shade ? "s" : "") + (blur ? "b" + std::to_string(blur) : "") + url;
+}
+
+bool Images::settled(const std::string &url, int w, int h, int radius, Fit fit, bool shade, int blur) {
+  if (url.empty()) return true;
+  ImageRef ref = get(url, w, h, radius, fit, shade, blur);
+  return ref.texture != nullptr || ref.failed;
+}
+
+ImageRef Images::get(const std::string &url, int w, int h, int radius, Fit fit, bool shade, int blur, Relevance relevance) {
   if (url.empty() || w <= 0 || h <= 0) {
     ImageRef ref;
     ref.failed = true;
     return ref;
   }
-  return lookup(key_for(url, w, h, radius, fit, shade, blur), url, [=](const unsigned char *rgba, int sw, int sh) {
-    if (blur > 0) {
-      // Blurred art carries no detail: a quarter-size texture is enough.
-      Pixels p = scale_image(rgba, sw, sh, std::max(1, w / 4), std::max(1, h / 4), fit, 0, false);
-      blur_image(p, std::max(1, blur / 4));
-      return p;
-    }
-    return scale_image(rgba, sw, sh, w, h, fit, radius, shade);
-  });
+  return lookup(key_for(url, w, h, radius, fit, shade, blur), url,
+                [=](const unsigned char *rgba, int sw, int sh) {
+                  if (blur > 0) {
+                    // Blurred art carries no detail: a quarter-size texture is enough.
+                    Pixels p = scale_image(rgba, sw, sh, std::max(1, w / 4), std::max(1, h / 4), fit, 0, false);
+                    blur_image(p, std::max(1, blur / 4));
+                    return p;
+                  }
+                  return scale_image(rgba, sw, sh, w, h, fit, radius, shade);
+                },
+                relevance);
 }
 
 ImageRef Images::frost(const std::string &url, GlassRect rect, int radius) {
@@ -359,14 +392,19 @@ ImageRef Images::frost(const std::string &url, GlassRect rect, int radius) {
   }
   std::string key = "frost" + std::to_string(rect.x) + "," + std::to_string(rect.y) + "," + std::to_string(rect.w) + "," +
                     std::to_string(rect.h) + "r" + std::to_string(radius) + url;
-  return lookup(key, url, [=](const unsigned char *rgba, int sw, int sh) { return frost_image(rgba, sw, sh, 1920, 1080, rect, radius); });
+  return lookup(
+      key, url, [=](const unsigned char *rgba, int sw, int sh) { return frost_image(rgba, sw, sh, 1920, 1080, rect, radius); },
+      Relevance::Visible);
 }
 
-ImageRef Images::lookup(const std::string &key, const std::string &url, const Make &make) {
+ImageRef Images::lookup(const std::string &key, const std::string &url, const Make &make, Relevance relevance) {
   ImageRef ref;
   Entry &e = entries_[key];
-  e.used_at = now_;
-  e.shared->wanted.store(now_);
+  if (e.url.empty()) e.url = url;
+  // The most relevant use this frame wins.
+  if (e.ev.last_frame != frame_ || relevance < e.ev.relevance) e.ev.relevance = relevance;
+  e.ev.last_frame = frame_;
+  e.wanted->store(frame_);
   switch (e.state) {
     case Entry::Ready: {
       long long age = now_ - e.ready_at;
@@ -386,110 +424,427 @@ ImageRef Images::lookup(const std::string &key, const std::string &url, const Ma
       e.state = Entry::Idle;
       // fall through
     case Entry::Idle:
-      e.state = Entry::Loading;
-      load(key, url, make);
+      e.make = make;
+      e.state = Entry::Waiting;
+      request_source(url, key, static_cast<int>(relevance));
       return ref;
-    case Entry::Loading:
+    case Entry::Waiting: {
+      // Still wanted: keep the source's fetch or decode from being retired.
+      auto s = sources_.find(url);
+      if (s != sources_.end()) {
+        s->second.last_frame = frame_;
+        s->second.wanted->store(frame_);
+      }
+      return ref;
+    }
+    case Entry::Making:
+    case Entry::Uploading:
       return ref;
   }
   return ref;
 }
 
-void Images::load(const std::string &key, const std::string &url, Make make) {
-  std::shared_ptr<Shared> shared = entries_[key].shared;
+void Images::request_source(const std::string &url, const std::string &key, int lane) {
+  Source &s = sources_[url];
+  s.last_frame = frame_;
+  s.wanted->store(frame_);
+  switch (s.state) {
+    case Source::Ready:
+      make_variant(key, s.decoded);
+      return;
+    case Source::Failed:
+      if (now_ - s.failed_at < kRetryMs) {
+        Entry &e = entries_[key];
+        e.state = Entry::Failed;
+        e.failed_at = s.failed_at;
+        return;
+      }
+      s.state = Source::Idle;
+      // fall through
+    case Source::Idle:
+      if (std::find(s.waiters.begin(), s.waiters.end(), key) == s.waiters.end()) s.waiters.push_back(key);
+      s.lane = std::min(s.lane, lane);
+      if (!suspended_) start_fetch(url);
+      return;
+    case Source::Fetching:
+    case Source::Decoding:
+      if (std::find(s.waiters.begin(), s.waiters.end(), key) == s.waiters.end()) s.waiters.push_back(key);
+      s.lane = std::min(s.lane, lane);
+      return;
+  }
+}
+
+// Stage 1: fetch the bytes (I/O pool). Skipped if nobody wants the picture any more.
+void Images::start_fetch(const std::string &url) {
+  Source &s = sources_[url];
+  s.state = Source::Fetching;
+  fetches_++;
   Api *api = api_;
-  tasks_->run(
+  auto wanted = s.wanted;
+  auto frame = frame_atomic_;
+  fetch_tasks_->run(
       [=]() -> std::function<void()> {
-        struct Result {
-          Pixels pixels;
-          float luma = -1;
-          bool stale = false;
-          bool failed = false;
-        };
-        auto result = std::make_shared<Result>();
-        // Skip work for an image that scrolled away before its turn came.
-        auto now = [] {
-          return static_cast<long long>(SDL_GetTicks());
-        };
-        if (now() - shared->wanted.load() > kStaleMs) {
-          result->stale = true;
-        } else {
-          int status = 0;
-          std::string bytes = api->fetch_bytes("/api/image?u=" + url_encode(url), &status);
-          int sw = 0, sh = 0, channels = 0;
-          unsigned char *decoded = bytes.empty() ? nullptr
-              : stbi_load_from_memory(reinterpret_cast<const unsigned char *>(bytes.data()), static_cast<int>(bytes.size()), &sw, &sh, &channels, 4);
-          if (!decoded) {
-            result->failed = true;
-            if (status != 404) logf("images", "image failed (status %d)", status);
-          } else {
-            result->pixels = make(decoded, sw, sh);
-            // Full-screen art: how bright it is where hero text sits (adaptive scrims).
-            if (result->pixels.w >= 1280) result->luma = text_luma(result->pixels);
-            stbi_image_free(decoded);
-          }
+        if (frame->load() - wanted->load() > kRetireFrames) return [this, url] { source_failed(url, true); };
+        int status = 0;
+        auto bytes = std::make_shared<std::string>(api->fetch_bytes("/api/image?u=" + url_encode(url), &status));
+        if (bytes->empty()) {
+          if (status != 404) logf_limited("images-fetch", 10000, "images", "image fetch failed (status %d)", status);
+          return [this, url] { source_failed(url, false); };
         }
-        return [this, key, result] {
-          auto it = entries_.find(key);
-          if (it == entries_.end()) return;
-          Entry &e = it->second;
-          if (result->stale) {
-            e.state = Entry::Idle;
-            return;
-          }
-          if (result->failed || result->pixels.w == 0) {
-            e.state = Entry::Failed;
-            e.failed_at = now_;
-            return;
-          }
-          SDL_Texture *texture = SDL_CreateTexture(renderer_, SDL_PIXELFORMAT_ABGR8888, SDL_TEXTUREACCESS_STATIC,
-                                                   result->pixels.w, result->pixels.h);
-          if (!texture) {
-            e.state = Entry::Failed;
-            e.failed_at = now_;
-            return;
-          }
-          SDL_UpdateTexture(texture, nullptr, result->pixels.data.data(), result->pixels.w * 4);
-          SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_BLEND);
-          e.texture = texture;
-          e.w = result->pixels.w;
-          e.h = result->pixels.h;
-          e.luma = result->luma;
-          e.bytes = result->pixels.data.size();
-          e.state = Entry::Ready;
-          // An image already on screen before its first frame fades in; one prefetched does not need to.
-          e.ready_at = e.used_at >= now_ - 50 ? now_ : now_ - kFadeMs;
-          bytes_ += e.bytes;
-          loaded_ = true;
+        return [this, url, bytes] { decode(url, bytes); };
+      },
+      alive_, s.lane, true);
+}
+
+// Stage 2: decode once (CPU pool). Checked again: the fetch may have been slow.
+void Images::decode(const std::string &url, std::shared_ptr<std::string> bytes) {
+  auto it = sources_.find(url);
+  if (it == sources_.end()) return;
+  Source &s = it->second;
+  s.state = Source::Decoding;
+  decodes_++;
+  auto wanted = s.wanted;
+  auto frame = frame_atomic_;
+  decode_tasks_->run(
+      [=]() -> std::function<void()> {
+        if (frame->load() - wanted->load() > kRetireFrames) return [this, url] { source_failed(url, true); };
+        auto decoded = std::make_shared<Decoded>();
+        int channels = 0;
+        decoded->rgba = stbi_load_from_memory(reinterpret_cast<const unsigned char *>(bytes->data()),
+                                              static_cast<int>(bytes->size()), &decoded->w, &decoded->h, &channels, 4);
+        if (!decoded->rgba) {
+          decoded->w = decoded->h = 0;
+          logf_limited("images-decode", 10000, "images", "image decode failed");
+          return [this, url] { source_failed(url, false); };
+        }
+        cpu_domains().decoded_sources += static_cast<long long>(decoded->w) * decoded->h * 4;
+        std::shared_ptr<const Decoded> done = decoded;
+        return [this, url, done] {
+          auto found = sources_.find(url);
+          if (found == sources_.end()) return;
+          found->second.decoded = done;
+          found->second.bytes = static_cast<long long>(done->w) * done->h * 4;
+          source_ready(url);
         };
       },
-      alive_);
+      alive_, s.lane, true);
+}
+
+void Images::source_ready(const std::string &url) {
+  Source &s = sources_[url];
+  s.state = Source::Ready;
+  std::vector<std::string> waiters;
+  waiters.swap(s.waiters);
+  s.lane = 2;
+  for (auto &key : waiters) make_variant(key, s.decoded);
+}
+
+void Images::source_failed(const std::string &url, bool cancelled) {
+  auto it = sources_.find(url);
+  if (it == sources_.end()) return;
+  Source &s = it->second;
+  std::vector<std::string> waiters;
+  waiters.swap(s.waiters);
+  s.lane = 2;
+  if (cancelled) {
+    s.state = Source::Idle;
+    cancelled_++;
+  } else {
+    s.state = Source::Failed;
+    s.failed_at = now_;
+  }
+  for (auto &key : waiters) {
+    auto e = entries_.find(key);
+    if (e == entries_.end() || e->second.state != Entry::Waiting) continue;
+    if (cancelled) {
+      e->second.state = Entry::Idle;
+    } else {
+      e->second.state = Entry::Failed;
+      e->second.failed_at = now_;
+    }
+  }
+}
+
+// Stage 3: scale, blur or frost from the shared decoded source (CPU pool).
+void Images::make_variant(const std::string &key, const std::shared_ptr<const Decoded> &decoded) {
+  auto it = entries_.find(key);
+  if (it == entries_.end() || it->second.state != Entry::Waiting || !decoded) return;
+  Entry &e = it->second;
+  e.state = Entry::Making;
+  variants_++;
+  Make make = e.make;
+  auto wanted = e.wanted;
+  auto frame = frame_atomic_;
+  decode_tasks_->run(
+      [=]() -> std::function<void()> {
+        if (frame->load() - wanted->load() > kRetireFrames) {
+          return [this, key] {
+            auto found = entries_.find(key);
+            if (found != entries_.end() && found->second.state == Entry::Making) found->second.state = Entry::Idle;
+            cancelled_++;
+          };
+        }
+        auto pixels = std::make_shared<Pixels>(make(decoded->rgba, decoded->w, decoded->h));
+        float luma = pixels->w >= 1280 ? text_luma(*pixels) : -1;  // full-screen art: adaptive scrims
+        cpu_domains().pixels_in_flight += static_cast<long long>(pixels->data.size());
+        return [this, key, pixels, luma] {
+          auto found = entries_.find(key);
+          if (found == entries_.end() || found->second.state != Entry::Making) {
+            cpu_domains().pixels_in_flight -= static_cast<long long>(pixels->data.size());
+            return;
+          }
+          Entry &x = found->second;
+          if (pixels->w == 0) {
+            cpu_domains().pixels_in_flight -= static_cast<long long>(pixels->data.size());
+            x.state = Entry::Failed;
+            x.failed_at = now_;
+            return;
+          }
+          x.pending = pixels;
+          x.luma = luma;
+          x.state = Entry::Uploading;
+          x.deferred_since = -1;
+          pending_.push_back(key);
+        };
+      },
+      alive_, static_cast<int>(e.ev.relevance), true);
+}
+
+void Images::evict(const std::string &key) {
+  auto it = entries_.find(key);
+  if (it == entries_.end() || !it->second.texture) return;
+  Entry &e = it->second;
+  SDL_DestroyTexture(e.texture);
+  gpu_budget().remove(GpuClass::Images, e.ev.bytes);
+  e.texture = nullptr;
+  e.ev.resident = false;
+  e.ev.bytes = 0;
+  e.state = Entry::Idle;
+  e.seen = true;
+  evictions_++;
+}
+
+int Images::upload() {
+  if (pending_.empty()) return 0;
+  // Highest relevance first, then the most recently wanted.
+  std::stable_sort(pending_.begin(), pending_.end(), [this](const std::string &a, const std::string &b) {
+    auto ia = entries_.find(a), ib = entries_.find(b);
+    if (ia == entries_.end() || ib == entries_.end()) return ia != entries_.end();
+    const Entry &x = ia->second, &y = ib->second;
+    if (x.ev.relevance != y.ev.relevance) return x.ev.relevance < y.ev.relevance;
+    return x.ev.last_frame > y.ev.last_frame;
+  });
+  GpuBudget &budget = gpu_budget();
+  int count = 0;
+  size_t bytes_this_frame = 0;
+  std::vector<std::string> keep;
+  for (size_t i = 0; i < pending_.size(); i++) {
+    const std::string key = pending_[i];
+    auto it = entries_.find(key);
+    if (it == entries_.end() || it->second.state != Entry::Uploading || !it->second.pending) continue;
+    Entry &e = it->second;
+    size_t estimate = gpu_bytes(e.pending->w, e.pending->h);
+    if (count > 0 && (count >= kMaxUploadsPerFrame || bytes_this_frame + estimate > kMaxUploadBytesPerFrame)) {
+      keep.push_back(key);
+      continue;
+    }
+    // Admission before allocation: evict until it fits, one at a time.
+    while (!budget.fits(estimate)) {
+      std::string victim = pick_victim(entries_, frame_, kMinAgeFrames);
+      if (victim.empty()) break;
+      evict(victim);
+    }
+    if (!budget.fits(estimate)) {
+      if (e.deferred_since < 0) e.deferred_since = frame_;
+      bool overdue = e.ev.relevance == Relevance::Visible && frame_ - e.deferred_since >= kOverrunAfterFrames;
+      if (!overdue) {
+        deferred_++;
+        keep.push_back(key);
+        continue;
+      }
+      budget.overruns++;
+      logf_limited("images-overrun", 10000, "images", "over the GPU budget for a visible image (%zu of %zu bytes)",
+                   budget.used(), budget.limit());
+    }
+    SDL_Texture *texture =
+        SDL_CreateTexture(renderer_, SDL_PIXELFORMAT_ABGR8888, SDL_TEXTUREACCESS_STATIC, e.pending->w, e.pending->h);
+    if (!texture) {
+      // Allocation failure: reclaim one more and retry once (study M4).
+      std::string victim = pick_victim(entries_, frame_, kMinAgeFrames);
+      if (!victim.empty()) evict(victim);
+      texture = SDL_CreateTexture(renderer_, SDL_PIXELFORMAT_ABGR8888, SDL_TEXTUREACCESS_STATIC, e.pending->w, e.pending->h);
+    }
+    if (!texture) {
+      logf_limited("images-create", 10000, "images", "texture %dx%d failed: %s", e.pending->w, e.pending->h, SDL_GetError());
+      deferred_++;
+      keep.push_back(key);
+      break;  // the GPU is out of room this frame
+    }
+    SDL_UpdateTexture(texture, nullptr, e.pending->data.data(), e.pending->w * 4);
+    SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_BLEND);
+    cpu_domains().pixels_in_flight -= static_cast<long long>(e.pending->data.size());
+    e.texture = texture;
+    e.w = e.pending->w;
+    e.h = e.pending->h;
+    e.pending.reset();
+    e.ev.bytes = estimate;
+    e.ev.resident = true;
+    budget.add(GpuClass::Images, estimate);
+    e.state = Entry::Ready;
+    // An image on screen fades in; one prefetched, or seen before an eviction, does not.
+    e.ready_at = !e.seen && e.ev.last_frame >= frame_ - 1 && e.ev.relevance == Relevance::Visible ? now_ : now_ - kFadeMs;
+    e.seen = true;
+    loaded_ = true;
+    count++;
+    bytes_this_frame += estimate;
+    uploads_++;
+    upload_bytes_ += static_cast<long long>(estimate);
+  }
+  pending_.swap(keep);
+  return count;
 }
 
 bool Images::end_frame() {
   bool fading = fading_;
   fading_ = false;
-  if (bytes_ > budget_) {
-    std::vector<std::pair<long long, std::string>> old;
-    for (auto &e : entries_)
-      if (e.second.state == Entry::Ready && e.second.used_at < now_ - 1000) old.push_back({e.second.used_at, e.first});
-    std::sort(old.begin(), old.end());
-    for (auto &o : old) {
-      if (bytes_ <= budget_ * 3 / 4) break;
-      Entry &e = entries_[o.second];
-      SDL_DestroyTexture(e.texture);
-      bytes_ -= e.bytes;
-      entries_.erase(o.second);
+  // Retire requests nobody drew for a while (study A6): queued work is skipped
+  // by the workers; decoded pixels awaiting upload are dropped.
+  for (auto &kv : entries_) {
+    Entry &e = kv.second;
+    if (frame_ - e.ev.last_frame <= kRetireFrames) continue;
+    if (e.state == Entry::Uploading) {
+      if (e.pending) cpu_domains().pixels_in_flight -= static_cast<long long>(e.pending->data.size());
+      e.pending.reset();
+      e.state = Entry::Idle;
+      cancelled_++;
+    } else if (e.state == Entry::Waiting) {
+      auto s = sources_.find(e.url);
+      if (s != sources_.end()) {
+        auto &w = s->second.waiters;
+        w.erase(std::remove(w.begin(), w.end(), kv.first), w.end());
+      }
+      e.state = Entry::Idle;
+      cancelled_++;
     }
+  }
+  // Keep within the budget (a lowered budget is reached here, one by one).
+  GpuBudget &budget = gpu_budget();
+  while (budget.used() > budget.limit()) {
+    std::string victim = pick_victim(entries_, frame_, kMinAgeFrames);
+    if (victim.empty()) break;
+    evict(victim);
+  }
+  // Decoded sources: keep recent ones for further variants, within a CPU budget.
+  long long total = 0;
+  for (auto &kv : sources_) total += kv.second.state == Source::Ready ? kv.second.bytes : 0;
+  while (total > kSourceBudget) {
+    const std::string *oldest = nullptr;
+    long long oldest_frame = 0;
+    for (auto &kv : sources_)
+      if (kv.second.state == Source::Ready && (!oldest || kv.second.last_frame < oldest_frame)) {
+        oldest = &kv.first;
+        oldest_frame = kv.second.last_frame;
+      }
+    if (!oldest) break;
+    total -= sources_[*oldest].bytes;
+    drop_source(*oldest);
   }
   // Forget bookkeeping for images requested long ago and never loaded.
   if (entries_.size() > 2000) {
     for (auto it = entries_.begin(); it != entries_.end();) {
-      if (it->second.state != Entry::Ready && it->second.state != Entry::Loading && it->second.used_at < now_ - 60000) it = entries_.erase(it);
+      const Entry &e = it->second;
+      bool idle = e.state == Entry::Idle || e.state == Entry::Failed;
+      if (idle && !e.texture && frame_ - e.ev.last_frame > 3600) it = entries_.erase(it);
       else ++it;
     }
   }
+  if (sources_.size() > 400) {
+    for (auto it = sources_.begin(); it != sources_.end();) {
+      const Source &s = it->second;
+      bool idle = s.state == Source::Idle || s.state == Source::Failed;
+      if (idle && s.waiters.empty() && frame_ - s.last_frame > 3600) it = sources_.erase(it);
+      else ++it;
+    }
+  }
+  frame_++;
+  frame_atomic_->store(frame_);
   bool any = loaded_;
   loaded_ = false;
   return fading || any;
+}
+
+void Images::drop_source(const std::string &url) {
+  auto it = sources_.find(url);
+  if (it == sources_.end()) return;
+  it->second.decoded.reset();
+  it->second.bytes = 0;
+  if (it->second.state == Source::Ready) it->second.state = Source::Idle;
+}
+
+void Images::release_handles() {
+  size_t released = 0;
+  for (auto &kv : entries_) {
+    Entry &e = kv.second;
+    if (e.texture) {
+      evict(kv.first);
+      released++;
+    }
+    if (e.state == Entry::Uploading) {
+      if (e.pending) cpu_domains().pixels_in_flight -= static_cast<long long>(e.pending->data.size());
+      e.pending.reset();
+      e.state = Entry::Idle;
+    }
+  }
+  pending_.clear();
+  for (auto &kv : sources_) drop_source(kv.first);
+  logf("images", "released %zu textures and the decoded sources", released);
+}
+
+void Images::set_suspended(bool suspended) {
+  if (suspended_ == suspended) return;
+  suspended_ = suspended;
+  if (suspended) return;
+  // Back: start the fetches that waited, most relevant first.
+  std::vector<std::pair<int, std::string>> waiting;
+  for (auto &kv : sources_)
+    if (kv.second.state == Source::Idle && !kv.second.waiters.empty()) waiting.push_back({kv.second.lane, kv.first});
+  std::sort(waiting.begin(), waiting.end());
+  for (auto &w : waiting) start_fetch(w.second);
+}
+
+Images::Stats Images::stats() const {
+  Stats s;
+  s.entries = entries_.size();
+  for (auto &kv : entries_) {
+    const Entry &e = kv.second;
+    if (e.texture) {
+      s.resident++;
+      s.resident_bytes[static_cast<int>(e.ev.relevance)] += e.ev.bytes;
+    }
+    switch (e.state) {
+      case Entry::Waiting: s.waiting++; break;
+      case Entry::Making: s.making++; break;
+      case Entry::Uploading: s.uploading++; break;
+      case Entry::Failed: s.failed++; break;
+      default: break;
+    }
+  }
+  s.sources = sources_.size();
+  for (auto &kv : sources_) {
+    if (kv.second.state == Source::Ready) s.sources_ready++;
+    if (kv.second.state == Source::Fetching) s.sources_fetching++;
+    if (kv.second.state == Source::Decoding) s.sources_decoding++;
+    s.source_bytes += kv.second.bytes;
+  }
+  s.uploads = uploads_;
+  s.upload_bytes = upload_bytes_;
+  s.deferred = deferred_;
+  s.evictions = evictions_;
+  s.cancelled = cancelled_;
+  s.overruns = static_cast<long long>(gpu_budget().overruns);
+  s.fetches = fetches_;
+  s.decodes = decodes_;
+  s.variants = variants_;
+  s.frame = frame_;
+  return s;
 }

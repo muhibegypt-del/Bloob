@@ -259,7 +259,7 @@ class BrowseScreen : public Screen {
     text_in_.snap(0);
     text_in_.to(1);
     // Warm the title art so it arrives with the backdrop.
-    if (!shown_.item.logo.empty()) ctx().images.prefetch(shown_.item.logo, 760, 240, 0, Fit::Contain);
+    if (!shown_.item.logo.empty()) ctx().images.prefetch(shown_.item.logo, 760, 240, 0, Fit::Contain, false, 0, Relevance::Near);
     // Focus has rested here: fetch the title's details so Details opens complete.
     prefetch_meta(shown_.item);
   }
@@ -664,10 +664,24 @@ class BrowseScreen : public Screen {
     std::vector<int> order;
     for (int j = first; j <= last; j++) if (!(focused_row && j == focus_col)) order.push_back(j);
     if (focused_row && focus_col >= first && focus_col <= last) order.push_back(focus_col);
-    for (int j : order) {
+    // Unfocused cards in passes (shadows, bodies, text) so same-texture draws
+    // batch; the focused card last, whole, so its lift sits above (R5a, G6).
+    int unfocused = static_cast<int>(order.size()) - (focused_row && focus_col >= first && focus_col <= last ? 1 : 0);
+    const CardPass passes[] = {CardPass::Shadow, CardPass::Body, CardPass::Text};
+    for (int p = 0; p < 3; p++)
+      for (int k = 0; k < unfocused; k++) draw_shelf_card(r, order[static_cast<size_t>(k)], y, alpha, focused_row, passes[p]);
+    for (int k = unfocused; k < static_cast<int>(order.size()); k++)
+      draw_shelf_card(r, order[static_cast<size_t>(k)], y, alpha, focused_row, CardPass::All);
+  }
+
+  void draw_shelf_card(size_t r, int j, int y, float alpha, bool focused_row, CardPass pass) {
+    const Row &row = rows_[r];
+    float hs = hscroll_[r].value;
+    int focus_col = cols_[r];
+    {
       const Item &it = row.continue_row() ? row.resume[static_cast<size_t>(j)].item : row.items[static_cast<size_t>(j)];
       int x = X0 + static_cast<int>(std::lround((j - hs) * STRIDE));
-      if (x > W || x + card_w < 0) continue;
+      if (x > W || x + card_w < 0) return;
       bool focused = focused_row && j == focus_col && !tabs_;
       bool was = static_cast<int>(r) == prev_row_ && j == prev_col_;
       CardSpec cs;
@@ -692,8 +706,9 @@ class BrowseScreen : public Screen {
         // A new episode or a date is news, so it shows without focus too.
         cs.sub = !res.item.series() || res.kind == "upcoming" || res.reason == "new" ? sub : "";
       }
+      cs.pass = pass;
       draw_card(x, y, cs);
-      if (focused) {
+      if (focused && (pass == CardPass::All || pass == CardPass::Text)) {
         int ly = y + card_h + 24;  // 14 for the focused card's growth, then 10 [EoA K8]
         text(Text::Caption1, it.name, x, ly, label(Label::Primary, alpha), card_w + 40);
         std::string under = row.continue_row() ? sub : join({it.year, it.series() ? "Series" : "Film"});

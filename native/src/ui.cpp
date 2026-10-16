@@ -1,5 +1,7 @@
 #include "ui.h"
 
+#include "clock.h"
+
 #include <cmath>
 #include <cstdio>
 
@@ -30,7 +32,7 @@ void Ctx::save_settings() {
 
 void Ctx::mark(const char *stage) {
   if (!marks.insert(stage).second) return;
-  logf("launch", "%s at %u ms", stage, SDL_GetTicks());
+  logf("launch", "%s at %lld ms", stage, now_ms());
 }
 
 static float ease(Ease e, float p) {
@@ -257,17 +259,21 @@ SDL_Rect draw_card(int x, int y, const CardSpec &cs) {
   int blur = static_cast<int>(theme::card_shadow_blur + (theme::card_focus_shadow_blur - theme::card_shadow_blur) * f);
   int dy = static_cast<int>(theme::card_shadow_dy + (theme::card_focus_shadow_dy - theme::card_shadow_dy) * f);
   float sa = theme::card_shadow_alpha + (theme::card_focus_shadow_alpha - theme::card_shadow_alpha) * f;
-  if (!c.lite()) c.gfx.shadow(cx, cy, w, h, cs.radius, blur, dy, static_cast<Uint8>(sa * cs.alpha));
+  bool all = cs.pass == CardPass::All;
+  if ((all || cs.pass == CardPass::Shadow) && !c.lite()) c.gfx.shadow(cx, cy, w, h, cs.radius, blur, dy, static_cast<Uint8>(sa * cs.alpha));
+  if (cs.pass == CardPass::Shadow) return SDL_Rect{cx, cy, w, h};
   ImageRef img = cs.art.empty() ? ImageRef{} : c.images.get(cs.art, cs.w, cs.h, cs.radius, Fit::Cover, cs.title_on_art);
   if ((img.failed || cs.art.empty()) && !cs.fallback_art.empty())
     img = c.images.get(cs.fallback_art, cs.w, cs.h, cs.radius, Fit::Cover, cs.title_on_art);
   bool missing = img.failed || (cs.art.empty() && cs.fallback_art.empty());
+  bool body = all || cs.pass == CardPass::Body;
+  bool words = all || cs.pass == CardPass::Text;
   if (missing) {
-    draw_missing_art(cx, cy, w, h, cs.radius, cs.title, cs.alpha);
+    if (body) draw_missing_art(cx, cy, w, h, cs.radius, cs.title, cs.alpha);
   } else {
-    if (img.alpha < 255) c.gfx.fill_round(cx, cy, w, h, cs.radius, fade(rgba(0xffffff, 18), cs.alpha));
-    if (img.texture) c.gfx.texture(img.texture, cx, cy, w, h, static_cast<Uint8>(img.alpha * cs.alpha));
-    if (cs.title_on_art && !cs.title.empty()) {
+    if (body && img.alpha < 255) c.gfx.fill_round(cx, cy, w, h, cs.radius, fade(rgba(0xffffff, 18), cs.alpha));
+    if (body && img.texture) c.gfx.texture(img.texture, cx, cy, w, h, static_cast<Uint8>(img.alpha * cs.alpha));
+    if (words && cs.title_on_art && !cs.title.empty()) {
       const int pad = theme::card_text_pad;
       int ty = cy + h - (cs.progress >= 0 ? theme::progress_pad_y + 5 + 10 : pad) - line_for(Text::Caption2);
       int sw = cs.sub.empty() ? 0 : measure(Text::Caption2, cs.sub);
@@ -275,6 +281,7 @@ SDL_Rect draw_card(int x, int y, const CardSpec &cs) {
       text(Text::Caption2, cs.title, cx + pad, ty, label(Label::Primary, cs.alpha), w - 2 * pad - 12 - sw);
     }
   }
+  if (!body) return SDL_Rect{cx, cy, w, h};
   if (cs.progress >= 0) {
     // Progress inset 18 / 12 inside the card [EoA K6]; tertiary under primary [EoA K7].
     int pw = w - 2 * theme::progress_pad_x, py = cy + h - theme::progress_pad_y - 5;

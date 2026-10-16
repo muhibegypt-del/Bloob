@@ -91,6 +91,14 @@ The owner chose native. `native/` is a C++ webOS app (`com.muhib.bloob`, "Bloob 
     8. accessibility.
 
   A retained scene and a separate render thread are deferred until TV measurements show a frame problem.
+- **2.4.0 runtime resources (16 October 2026, built, not yet on the TV).** The owner asked for every mechanism in the Elements of A CPU, memory and GPU study (`research/Elements-of-A-CPU-memory-GPU-map.md`) to be built into Bloob. `native/RUNTIME-RESOURCE-ADOPTION.md` maps all 52 findings to code and records each one's state.
+  - **Frames and events (R5a).** Wakes are coalesced notifications, and only a visible change repaints, so the media clock no longer redraws the screen. Animation time is the median of three intervals. Pumps are bounded, the renderer state is cached, and shelf cards are drawn in batched passes.
+  - **Resources (R5b).** One GPU budget is checked before any texture is created: 96 MB while browsing, 56 MB during playback or low system memory, 24 MB in the background. Eviction goes by relevance, then frame age. Background releases every texture and stops new fetches. The service trims its image cache to the same policy. Worker threads are named.
+  - **Artwork (R5c).** Fetch and decode are separate stages, and each source picture is decoded once for all its variants. Requests are ordered by relevance (visible, near, prefetch). Stale work is cancelled at each stage, and uploads are paced.
+  - **Retained layers (R6r).** Transitions paint the screen underneath once.
+  - **Inspector (R5d).** `/tmp/bloob-state.json`, read with `scripts/tv-inspect.sh`.
+  - **Found and fixed:** the worker pools had never woken the UI thread (a completion was tested after being moved), so replies and art could wait up to 1 s.
+  - **TV pass:** `native/TV-TEST.md` §10.
 - **Design (2.0, Glass):** the visual system, with materials, tokens, type, focus, motion, states, the spoken interface and per-screen layouts, is in `native/DESIGN.md`. The tokens live in `native/src/theme.h`, the type scale, label roles and components in `ui.cpp`, and the frost bake in `images.cpp`.
 - **Rendering and playback:**
   - The TV's SDL2 provides the window and remote. Bloob draws with its own renderer: Inter via stb_truetype with oversampling and gamma, exact-size anti-aliased shapes, and artwork via stb_image scaled on worker threads, on a 1920×1080 offscreen canvas.
@@ -107,7 +115,8 @@ The owner chose native. `native/` is a C++ webOS app (`com.muhib.bloob`, "Bloob 
   - watch progress and settings.
   If the bus will not start the service, the app runs it directly with the TV's Node and stops it on exit.
 - **Build and test scripts:**
-  - `native/scripts/build.sh`: tests, cross-build, ABI guard (GLIBC_2.4 only, no GLIBCXX), service staging, IPK with fixed modes (`native/artifacts/com.muhib.bloob_2.3.0_arm.ipk`).
+  - `native/scripts/build.sh`: tests, cross-build, ABI guards (no GLIBCXX, and since 2.4 no glibc symbol newer than GLIBC_2.4), service staging, IPK with fixed modes (`native/artifacts/com.muhib.bloob_2.4.0_arm.ipk`).
+  - `native/scripts/tv-inspect.sh`: reads the runtime inspector snapshot `/tmp/bloob-state.json` from the TV, read-only.
   - `native/scripts/ui-tour.sh`: drives the whole app on the desktop through the acceptance task, plus quick-menu, Home and pipeline-lost events, against the real service with fixture sources.
   - `native/scripts/ui-snapshots.sh`: covers player states.
   - `native/TV-TEST.md`: the TV pass, with the acceptance task, viewing distance and lifecycle.

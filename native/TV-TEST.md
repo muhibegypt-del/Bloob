@@ -169,3 +169,36 @@ Install `artifacts/com.muhib.bloob_2.1.0_arm.ipk`. These checks answer the 2.0 v
 **Next action (X2).**
 - [ ] For a show whose next episode hasn't aired, the title page says *You're up to date* and when it airs. Continue says the day, and pressing it opens the title page instead of playing.
 - [ ] An episode that aired since you finished the previous one shows *New episode* on Home.
+
+## 10. New in 2.4: runtime resources (R5a–R5d, R6r)
+
+Install `artifacts/com.muhib.bloob_2.4.0_arm.ipk`. These checks measure what the Elements of A resource study changed. Keep a second terminal on `native/scripts/tv-inspect.sh root@<tv> --watch`, which is read-only.
+
+**Baseline record.** Save one inspector snapshot for each of these:
+- Home idle;
+- Home while scrolling a row;
+- a title page;
+- playback with the controls hidden;
+- playback with the controls shown;
+- after pressing the Home key while playing;
+- after returning.
+
+Copy the `frames`, `gpu`, `images` and `memory` blocks into `research/` with the date.
+
+**Responsiveness.**
+- [ ] Open a title from Home: the title page's text and art should arrive without the brief stall that 2.3 could show. Before 2.4, worker replies waited for an unrelated wake.
+- [ ] While idle on Home, `frames.total` does not climb.
+- [ ] During playback with the controls hidden, `frames.total` grows by nearly nothing. In 2.3 every 200 ms clock report repainted the screen.
+- [ ] The first focus move after a pause glides; it does not jump.
+- [ ] `[perf]` lines: record key→submit p95, render p95, the stage p95s and allocations per frame on Home and while scrolling.
+
+**Memory.**
+- [ ] `memory.rss_kb` on Home after scrolling every row; `gpu.used` by class. These set the budgets in `resources.cpp`.
+- [ ] Press the Home key while on Bloob: the log says `policy background` and `released … textures`, and `memory.rss_kb` drops. Return: the visible art is back within a moment, without fading in again.
+- [ ] Start playback: the log says `policy playback`, and `gpu.used` stays under 56 MB.
+- [ ] The first `[memory] system memory state:` line says whether the TV's memory manager answers. Record it.
+
+**Transitions.**
+- [ ] Open and close a title page several times: `frames.layer_reuses` grows much faster than `layer_paints`, and the transition looks the same as in 2.3.
+
+**Log check.** `SDL linked …`, `renderer flags`, `vsync on|off`: record them. `vsync off` means frames are gated to one per refresh.

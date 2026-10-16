@@ -8,6 +8,7 @@
 #include <unistd.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -16,7 +17,11 @@
 #include <string>
 #include <vector>
 
+#include "alloc.h"
+#include "clock.h"
+#include "frames.h"
 #include "http.h"
+#include "inspect.h"
 #include "json.h"
 #include "keys.h"
 #include "log.h"
@@ -72,6 +77,8 @@ class App {
     SDL_SetHint("SDL_WEBOS_ACCESS_POLICY_KEYS_EXIT", "true");
     SDL_SetHint("SDL_WEBOS_CURSOR_SLEEP_TIME", "5000");
     SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "1");
+    // Study G6: let SDL batch compatible draws (SDL 2.0.10+; ignored by older SDL).
+    SDL_SetHint("SDL_RENDER_BATCHING", "1");
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS) != 0) {
       logf("app", "SDL_Init failed: %s", SDL_GetError());
       return false;
@@ -97,6 +104,18 @@ class App {
     SDL_GetRendererInfo(c.renderer, &info);
     logf("app", "video=%s renderer=%s window=%dx%d display=%dx%d@%d missing=[%s]", SDL_GetCurrentVideoDriver(), info.name, ww,
          wh, mode.w, mode.h, mode.refresh_rate, c.webos.missing().c_str());
+    SDL_version compiled, linked;
+    SDL_VERSION(&compiled);
+    SDL_GetVersion(&linked);
+    sdl_version_ = std::to_string(linked.major) + "." + std::to_string(linked.minor) + "." + std::to_string(linked.patch);
+    renderer_name_ = info.name ? info.name : "?";
+    refresh_hz_ = mode.refresh_rate;
+    logf("app", "SDL linked %s (built against %d.%d.%d), renderer flags 0x%x, max texture %dx%d, vsync %s",
+         sdl_version_.c_str(), compiled.major, compiled.minor, compiled.patch, info.flags, info.max_texture_width,
+         info.max_texture_height, (info.flags & SDL_RENDERER_PRESENTVSYNC) ? "on" : "off");
+    pacer_.set_refresh_hz(mode.refresh_rate);
+    gate_frames_ = !(info.flags & SDL_RENDERER_PRESENTVSYNC);
+    sdl_offset_ = now_ms() - static_cast<long long>(SDL_GetTicks());
     c.gfx.init(c.renderer, W, H);
     std::string fonts = c.dir + "/assets/fonts/";
     c.fonts.regular.load(c.renderer, fonts + "Inter-Regular.ttf");
@@ -106,18 +125,18 @@ class App {
     c.icons.init(c.renderer);
     c.mark("fonts");
 
+    // Wakes are notifications only (study C2): each worker pool and the bus has
+    // its own payload queue; the first producer after a drain posts one SDL
+    // event, later ones only count. The loop drains everything it wakes for.
     wake_event_ = SDL_RegisterEvents(1);
-    Uint32 wake = wake_event_;
-    auto push_wake = [wake] {
-      SDL_Event e{};
-      e.type = wake;
-      SDL_PushEvent(&e);
-    };
-    c.api_tasks.start(2, push_wake);
-    c.image_tasks.start(3, push_wake);
+    c.api_tasks.start(2, wake_for(kWakeApi), "bl-api");
+    c.fetch_tasks.start(4, wake_for(kWakeFetch), "bl-fetch", 256 * 1024);
+    c.image_tasks.start(3, wake_for(kWakeImage), "bl-img");
     c.api.init(&c.api_tasks);
-    c.images.init(c.renderer, &c.image_tasks, &c.api);
-    Luna::instance().start(push_wake);
+    c.images.init(c.renderer, &c.image_tasks, &c.fetch_tasks, &c.api);
+    gpu_budget().set_limit(budget_for(MemoryPolicy::Normal));
+    inspector_.init();
+    Luna::instance().start(wake_for(kWakeLuna));
     speech().start();
 
     c.push = [this](std::unique_ptr<Screen> s) { ops_.push_back({Op::Push, std::move(s)}); };
@@ -142,8 +161,10 @@ class App {
                               cx.tv_model = "System info unavailable";
                             }
                             logf("app", "system info: %s", cx.tv_model.c_str());
+                            cx.invalidate();
                           });
     watch_network();
+    watch_memory();
     start_service();
 
     roots_.resize(kTabCount);
@@ -158,8 +179,32 @@ class App {
       req.video_id = "launch";
       ops_.push_back({Op::Push, make_player(req, launch.uri, "", launch.load_type)});
     }
-    c.now = static_cast<long long>(SDL_GetTicks());
+    c.now = now_ms();
     return true;
+  }
+
+  // The system's memory pressure (study C8). webOS's memory manager reports a
+  // state such as "normal", "low" or "critical"; this was not verified on the
+  // TV, so the reply is logged once and anything unexpected is ignored. Low or
+  // critical memory moves browsing onto the smaller playback budget.
+  void watch_memory() {
+    Luna::instance().call("luna://com.webos.memorymanager/getCurrentMemState", "{\"subscribe\":true}",
+                          [this](const std::string &reply) {
+      Json j = Json::parse(reply);
+      static bool logged = false;
+      if (!logged) {
+        logged = true;
+        logf("memory", "system memory state: %s", reply.substr(0, 200).c_str());
+      }
+      std::string state = j["currentMemState"].as_string(j["memState"].as_string());
+      if (state.empty()) return;
+      bool low = state == "low" || state == "critical";
+      if (low != system_memory_low_) {
+        system_memory_low_ = low;
+        logf("memory", "system memory %s", state.c_str());
+        apply_memory_policy();
+      }
+    }, true);
   }
 
   // Online/offline and wired/Wi-Fi, pushed by the TV whenever they change.
@@ -175,16 +220,18 @@ class App {
         logf("net", "%s%s", online ? "online" : "offline", network.empty() ? "" : (" via " + network).c_str());
       c.online = online;
       c.network = network;
+      c.invalidate();
     }, true);
   }
 
   void start_service() {
     Ctx &c = ctx();
-    service_started_at_ = static_cast<long long>(SDL_GetTicks());
+    service_started_at_ = now_ms();
     std::string uri = "luna://" + c.app_id + ".service/start";
     logf("app", "starting service %s.service", c.app_id.c_str());
     Luna::instance().call(uri, "{}", [this](const std::string &reply) {
       Ctx &cx = ctx();
+      cx.invalidate();
       Json j = Json::parse(reply);
       if (j["ready"].as_bool() && j["port"].as_int() > 0) {
         cx.api.set_port(static_cast<int>(j["port"].as_int()));
@@ -295,6 +342,7 @@ class App {
     SDL_Delay(50);
     Luna::instance().pump();
     c.api_tasks.stop();
+    c.fetch_tasks.stop();
     c.image_tasks.stop();
     Luna::instance().stop();
     c.images.shutdown();
@@ -341,6 +389,7 @@ class App {
           stack_.push_back(std::move(op.screen));
           logf("nav", "push %s", stack_.back()->name());
           finish_leaving();
+          transition_id_++;
           entering_.snap(animate && !ctx().reduce_motion ? 0.0f : 1.0f);
           entering_.to(1);
           break;
@@ -354,6 +403,7 @@ class App {
           entering_.snap(1);
           if (!gone->over_video() && !top()->over_video() && !ctx().reduce_motion) {
             leaving_ = std::move(gone);  // fades out over the screen it returns to
+            transition_id_++;
             leaving_fade_.snap(1);
             leaving_fade_.to(0);
           }
@@ -415,7 +465,9 @@ class App {
       return;
     }
     dirty_ = true;
-    perf_.key(static_cast<long long>(event.timestamp));
+    input_ = true;
+    // Scripted presses carry no timestamp; real ones are stamped when queued.
+    perf_.key(event.timestamp ? static_cast<long long>(event.timestamp) + sdl_offset_ : now_ms());
     if (key == Key::Exit) {
       running_ = false;
       return;
@@ -523,13 +575,14 @@ class App {
     if (in_background_) return;
     in_background_ = true;
     top()->background();
+    apply_memory_policy();
   }
 
   void foreground() {
     bool was = in_background_;
     in_background_ = false;
     top()->foreground();
-    (void)was;
+    if (was) apply_memory_policy();
   }
 
   // ---------------------------------------------------------------- drawing
@@ -581,17 +634,40 @@ class App {
 
   void render() {
     Ctx &c = ctx();
-    long long render_started = static_cast<long long>(SDL_GetTicks());
+    long long render_started = now_ms();
+    long long allocs_before = alloc_stats().count.load(std::memory_order_relaxed);
+    PerfWindow::Stages stages;
+    stages.update = last_update_ms_;
     c.images.begin_frame(c.now);
+    // Uploads first, paced and admitted against the GPU budget, so new art
+    // appears in this frame (study G12, M4).
+    c.images.upload();
+    long long uploaded = now_ms();
+    stages.upload = uploaded - render_started;
     c.gfx.shadows = !c.lite();
     c.gfx.begin_frame();
     Screen *screen = top();
     bool entering = entering_.value < 0.999f && below_top();
     if (entering) {
-      // The new screen rises and fades in over the one it came from.
-      below_top()->draw();
+      // The new screen rises and fades in over the one it came from. The screen
+      // underneath does not change during the transition: paint it once into a
+      // retained layer and composite it (R6r, study G4), instead of every frame.
+      Screen *below = below_top();
+      std::string key = "below#" + std::to_string(transition_id_);
+      if (c.gfx.cached_valid("below", key)) {
+        c.gfx.composite_cached("below", 1.0f, 0);
+        layer_reuses_++;
+      } else if (c.gfx.begin_cached("below")) {
+        below->draw();
+        c.gfx.end_cached("below", key);
+        c.gfx.composite_cached("below", 1.0f, 0);
+        layer_paints_++;
+      } else {
+        below->draw();
+      }
       draw_screen(screen, true, entering_.value, 0);  // a plain crossfade [EoA M10]
     } else {
+      if (c.gfx.cached_count()) c.gfx.drop_cached("below");
       if (stack_.empty() && page_fade_.value < 0.999f) {
         c.gfx.clear(theme::black);
         draw_screen(screen, true, page_fade_.value, 0);
@@ -599,7 +675,21 @@ class App {
         screen->draw();
       }
       if (stack_.empty()) draw_tabs();
-      if (leaving_) draw_screen(leaving_.get(), true, leaving_fade_.value, 0);
+      if (leaving_) {
+        // The screen going away is frozen: paint it once, then fade the layer.
+        std::string key = "leaving#" + std::to_string(transition_id_);
+        if (c.gfx.cached_valid("leaving", key)) {
+          c.gfx.composite_cached("leaving", leaving_fade_.value, 0);
+          layer_reuses_++;
+        } else if (c.gfx.begin_cached("leaving")) {
+          leaving_->draw();
+          c.gfx.end_cached("leaving", key);
+          c.gfx.composite_cached("leaving", leaving_fade_.value, 0);
+          layer_paints_++;
+        } else {
+          draw_screen(leaving_.get(), true, leaving_fade_.value, 0);
+        }
+      }
     }
     if (!toast_.empty() && c.now < toast_until_) {
       // Notification [EoA N1]: 200–600 wide, at least 112 high, radius 30,
@@ -621,15 +711,33 @@ class App {
       }
       c.redraw_at(toast_until_);
     }
+    long long painted = now_ms();
+    stages.paint = painted - uploaded;
     c.gfx.end_frame();
-    if (c.images.end_frame()) c.animating = true;
     SDL_RenderPresent(c.renderer);
+    long long presented = now_ms();
+    stages.present = presented - painted;
+    if (c.images.end_frame()) c.animating = true;
+    if (c.images.pending_uploads()) c.animating = true;  // paced uploads continue next frame
+    advance_frame();
+    c.gfx.housekeeping();
+    c.icons.housekeeping();
+    pacer_.presented(presented);
     dirty_ = false;
-    long long presented = static_cast<long long>(SDL_GetTicks());
-    perf_.frame(presented, presented - render_started);
+    input_ = false;
+    c.dirty = false;
+    frames_++;
+    perf_.frame(presented, presented - render_started, stages);
+    frame_allocs_.push_back(alloc_stats().count.load(std::memory_order_relaxed) - allocs_before);
     if (c.marks.count("home-data") && !c.marks.count("home-frame")) c.mark("home-frame");
     if (perf_.due(presented)) {
       std::string line = perf_.flush(presented);
+      if (!frame_allocs_.empty()) {
+        std::sort(frame_allocs_.begin(), frame_allocs_.end());
+        alloc_p95_ = frame_allocs_[std::min(frame_allocs_.size() - 1, frame_allocs_.size() * 95 / 100)];
+        line += "; allocations/frame p95 " + std::to_string(alloc_p95_);
+        frame_allocs_.clear();
+      }
       c.perf_line = line;
       if (perf_.last_frames() > 0) logf("perf", "%s", line.c_str());
       // Two slow windows in a row: lighter effects for the rest of the session.
@@ -642,6 +750,174 @@ class App {
           logf("perf", "effects -> lite (render p95 %lld ms)", perf_.last_render_p95());
         }
       }
+    }
+  }
+
+  // ---------------------------------------------------------------- memory policy
+
+  // Study C8, M13: Normal while browsing, Playback while the player is on top
+  // (video decoding needs the memory), Background while another app is in front
+  // (every texture and decoded source released, no new fetches).
+  void apply_memory_policy() {
+    Ctx &c = ctx();
+    Screen *t = top();
+    MemoryPolicy p = in_background_ ? MemoryPolicy::Background
+                     : (t && t->over_video()) || system_memory_low_ ? MemoryPolicy::Playback
+                                                                    : MemoryPolicy::Normal;
+    if (p == c.memory_policy) return;
+    MemoryPolicy was = c.memory_policy;
+    c.memory_policy = p;
+    gpu_budget().set_limit(budget_for(p));
+    if (p == MemoryPolicy::Background) {
+      c.images.set_suspended(true);
+      c.images.release_handles();
+      c.gfx.release_caches();
+      c.icons.release();
+    } else if (was == MemoryPolicy::Background) {
+      c.images.set_suspended(false);
+    }
+    logf("memory", "policy %s, GPU budget %zu MB, in use %zu MB", memory_policy_name(p), gpu_budget().limit() >> 20,
+         gpu_budget().used() >> 20);
+    // The service trims its own image byte cache to match.
+    if (c.api.ready()) c.api.post("/api/memory", std::string("{\"policy\":\"") + memory_policy_name(p) + "\"}");
+    c.invalidate();
+  }
+
+  // ---------------------------------------------------------------- inspector
+
+  void inspect(long long now) {
+    if (!inspector_.due(now)) return;
+    Ctx &c = ctx();
+    JsonOut j;
+    j.begin();
+    j.str("version", BLOOB_VERSION).num("uptime_ms", now).str("sdl", sdl_version_).str("renderer", renderer_name_);
+    j.num("refresh_hz", refresh_hz_).str("memory_policy", memory_policy_name(c.memory_policy));
+    j.str("effects", c.lite() ? "lite" : "full").boolean("background", in_background_);
+    j.boolean("system_memory_low", system_memory_low_);
+    j.obj("allocations").num("count", alloc_stats().count.load()).num("bytes", alloc_stats().bytes.load())
+        .num("per_frame_p95", alloc_p95_).end();
+    j.arr("screens");
+    for (auto &r : stack_) j.item_str(r->name());
+    j.end_arr();
+    j.str("top", top() ? top()->name() : "");
+    const PerfWindow::Summary &ps = perf_.last();
+    j.obj("frames")
+        .num("total", frames_)
+        .num("window_frames", static_cast<long long>(ps.frames))
+        .num("window_ms", ps.window_ms)
+        .num("render_p50", ps.render_p50)
+        .num("render_p95", ps.render_p95)
+        .num("key_to_submit_p50", ps.key_p50)
+        .num("key_to_submit_p95", ps.key_p95)
+        .num("update_p95", ps.update_p95)
+        .num("paint_p95", ps.paint_p95)
+        .num("upload_p95", ps.upload_p95)
+        .num("present_p95", ps.present_p95)
+        .num("cause_input", cause_[0])
+        .num("cause_invalidate", cause_[1])
+        .num("cause_animation", cause_[2])
+        .num("cause_deadline", cause_[3])
+        .num("deferred_to_refresh", deferred_frames_)
+        .boolean("vsync_paced", !gate_frames_)
+        .num("layer_paints", layer_paints_)
+        .num("layer_reuses", layer_reuses_)
+        .end();
+    j.obj("wakes")
+        .num("api", wakes_[kWakeApi].load())
+        .num("fetch", wakes_[kWakeFetch].load())
+        .num("image", wakes_[kWakeImage].load())
+        .num("luna", wakes_[kWakeLuna].load())
+        .num("events_posted", wake_events_.load())
+        .num("loop_wakes", loop_wakes_)
+        .end();
+    auto task_stats = [&j](const char *name, const Tasks &t) {
+      Tasks::Stats s = t.stats();
+      j.obj(name)
+          .num("visible", static_cast<long long>(s.queued[0]))
+          .num("near", static_cast<long long>(s.queued[1]))
+          .num("prefetch", static_cast<long long>(s.queued[2]))
+          .num("busy", s.busy)
+          .num("completions_waiting", static_cast<long long>(s.completions_waiting))
+          .num("ran", s.ran)
+          .num("dropped_owner", s.dropped_owner)
+          .end();
+    };
+    j.obj("tasks");
+    task_stats("api", c.api_tasks);
+    task_stats("fetch", c.fetch_tasks);
+    task_stats("image", c.image_tasks);
+    j.end();
+    Luna::Stats ls = Luna::instance().stats();
+    j.obj("luna")
+        .num("live", static_cast<long long>(ls.live))
+        .num("retired", static_cast<long long>(ls.retired))
+        .num("queued", static_cast<long long>(ls.queued))
+        .num("delivered", ls.delivered)
+        .end();
+    GpuBudget &gb = gpu_budget();
+    j.obj("gpu").num("limit", static_cast<long long>(gb.limit())).num("used", static_cast<long long>(gb.used()));
+    for (int i = 0; i < static_cast<int>(GpuClass::Count); i++)
+      j.num(gpu_class_name(static_cast<GpuClass>(i)), static_cast<long long>(gb.used(static_cast<GpuClass>(i))));
+    j.num("overruns", static_cast<long long>(gb.overruns)).end();
+    Images::Stats is = c.images.stats();
+    j.obj("images")
+        .num("entries", static_cast<long long>(is.entries))
+        .num("resident", static_cast<long long>(is.resident))
+        .num("resident_visible_bytes", static_cast<long long>(is.resident_bytes[0]))
+        .num("resident_near_bytes", static_cast<long long>(is.resident_bytes[1]))
+        .num("resident_prefetch_bytes", static_cast<long long>(is.resident_bytes[2]))
+        .num("waiting", static_cast<long long>(is.waiting))
+        .num("making", static_cast<long long>(is.making))
+        .num("uploading", static_cast<long long>(is.uploading))
+        .num("failed", static_cast<long long>(is.failed))
+        .num("sources", static_cast<long long>(is.sources))
+        .num("sources_ready", static_cast<long long>(is.sources_ready))
+        .num("sources_fetching", static_cast<long long>(is.sources_fetching))
+        .num("sources_decoding", static_cast<long long>(is.sources_decoding))
+        .num("fetches", is.fetches)
+        .num("decodes", is.decodes)
+        .num("variants", is.variants)
+        .num("uploads", is.uploads)
+        .num("upload_bytes", is.upload_bytes)
+        .num("deferred", is.deferred)
+        .num("evictions", is.evictions)
+        .num("cancelled", is.cancelled)
+        .end();
+    Gfx::Stats gs = c.gfx.stats();
+    j.obj("shapes")
+        .num("discs", static_cast<long long>(gs.discs))
+        .num("rings", static_cast<long long>(gs.rings))
+        .num("shadows", static_cast<long long>(gs.shadows))
+        .num("sheens", static_cast<long long>(gs.sheens))
+        .num("triangles", static_cast<long long>(gs.triangles))
+        .num("icons", static_cast<long long>(c.icons.count()))
+        .num("layers", static_cast<long long>(gs.layers))
+        .num("target_pool", static_cast<long long>(gs.pool))
+        .num("state_calls_skipped", gs.state_calls_skipped)
+        .end();
+    ProcMemory pm = read_proc_memory();
+    j.obj("memory")
+        .num("rss_kb", pm.rss_kb)
+        .num("peak_rss_kb", pm.hwm_kb)
+        .num("swap_kb", pm.swap_kb)
+        .num("threads", pm.threads)
+        .num("decoded_sources_bytes", cpu_domains().decoded_sources.load())
+        .num("pixels_in_flight_bytes", cpu_domains().pixels_in_flight.load())
+        .end();
+    j.obj("service").boolean("ready", c.api.ready()).str("memory", service_memory_).end();
+    j.end();
+    inspector_.write(j.text(), now);
+    // The service's own memory, every 10 s, for the next snapshot.
+    if (c.api.ready() && now - service_polled_at_ >= 10000) {
+      service_polled_at_ = now;
+      c.api.get("/api/health", [this](const ApiResult &r) {
+        if (!r.ok()) return;
+        const Json &m = r.json["memory"];
+        if (!m.is_object()) return;
+        service_memory_ = "rss " + std::to_string(m["rss"].as_int() >> 20) + " MB, heap " +
+                          std::to_string(m["heapUsed"].as_int() >> 20) + " MB, image cache " +
+                          std::to_string(r.json["imageCacheBytes"].as_int() >> 20) + " MB";
+      }, nullptr);
     }
   }
 
@@ -738,32 +1014,47 @@ class App {
 
   void loop() {
     Ctx &c = ctx();
-    long long last = static_cast<long long>(SDL_GetTicks());
+    bool was_animating = false;
     while (running_) {
-      long long now = static_cast<long long>(SDL_GetTicks());
+      long long now = now_ms();
       int timeout;
-      if (c.animating || dirty_ || !ops_.empty()) timeout = 0;
+      if (!ops_.empty() || pump_more_) timeout = 0;
+      else if (c.animating || dirty_ || c.dirty || deferred_render_) timeout = gate_frames_ ? pacer_.wait_ms(now) : 0;
       else if (script_pos_ < script_.size()) timeout = 10;
       else if (c.next_redraw) timeout = static_cast<int>(std::max(0LL, std::min(1000LL, c.next_redraw - now)));
       else timeout = 1000;
       SDL_Event e;
       if (SDL_WaitEventTimeout(&e, timeout)) {
-        if (e.type == wake_event_) dirty_ = true;
-        else on_event(e);
+        // A wake only says "work is queued": clear the flag before draining so
+        // a producer that finishes during the drain posts a fresh event.
+        if (e.type == wake_event_) {
+          wake_pending_.store(false);
+          loop_wakes_++;
+        } else {
+          on_event(e);
+        }
         while (SDL_PollEvent(&e)) {
-          if (e.type == wake_event_) dirty_ = true;
-          else on_event(e);
+          if (e.type == wake_event_) {
+            wake_pending_.store(false);
+            loop_wakes_++;
+          } else {
+            on_event(e);
+          }
         }
       }
-      Luna::instance().pump();
-      c.api_tasks.pump();
-      c.image_tasks.pump();
-      now = static_cast<long long>(SDL_GetTicks());
-      c.dt = std::min(0.1, (now - last) / 1000.0);
-      last = now;
+      // Bounded work per iteration (study C5): what remains is handled next turn.
+      bool more_luna = Luna::instance().pump(kPumpBudgetMs);
+      bool more_api = false, more_fetch = false, more_image = false;
+      if (c.api_tasks.pump(kPumpBudgetMs, &more_api)) c.invalidate();  // API replies change what screens show
+      c.fetch_tasks.pump(kPumpBudgetMs, &more_fetch);
+      c.image_tasks.pump(kPumpBudgetMs, &more_image);
+      pump_more_ = more_luna || more_api || more_fetch || more_image;
+      now = now_ms();
+      c.dt = pacer_.step_seconds(now, was_animating);
       c.now = now;
       if (!script_.empty()) run_script(now);
       apply_ops();
+      apply_memory_policy();
       if (!c.api.ready() && !fallback_tried_ && now - service_started_at_ > kServiceBusWaitMs) {
         logf("app", "no reply from the service over the bus");
         start_service_fallback();
@@ -771,15 +1062,20 @@ class App {
       if (!c.api.ready() && c.service_error.empty() && now - service_started_at_ > kServiceTimeoutMs) {
         c.service_error = "Bloob's background service did not start. Close Bloob and open it again.";
         logf("app", "service start timed out");
+        c.invalidate();
       }
-      bool was_animating = c.animating;
       bool redraw_due = c.next_redraw && now >= c.next_redraw;
+      bool prev_animating = was_animating;
       c.animating = false;
       c.next_redraw = 0;
+      long long update_started = now_ms();
       top()->update(c.dt);
       if (leaving_) {
         leaving_->update(c.dt);
-        if (!leaving_fade_.step(c.dt)) finish_leaving();
+        if (!leaving_fade_.step(c.dt)) {
+          finish_leaving();
+          c.gfx.drop_cached("leaving");
+        }
         c.animating = true;
       }
       if (entering_.step(c.dt)) c.animating = true;
@@ -791,7 +1087,27 @@ class App {
         speech().focus(spoken_focus(), now);
         if (speech().due()) c.redraw_at(speech().due());
       }
-      if (dirty_ || was_animating || c.animating || redraw_due) render();
+      last_update_ms_ = now_ms() - update_started;
+      was_animating = c.animating;
+      bool want = dirty_ || c.dirty || prev_animating || c.animating || redraw_due || deferred_render_ ||
+                  c.images.pending_uploads();
+      if (want) {
+        // At most one frame per refresh period unless input is waiting (study C1).
+        // With vsync, SDL_RenderPresent paces frames; gating as well would start
+        // each frame late in the refresh and miss the next one.
+        if (!gate_frames_ || pacer_.due(now_ms(), input_)) {
+          if (input_ || dirty_) cause_[0]++;
+          else if (c.dirty) cause_[1]++;
+          else if (prev_animating || c.animating || c.images.pending_uploads()) cause_[2]++;
+          else cause_[3]++;
+          deferred_render_ = false;
+          render();
+        } else {
+          deferred_render_ = true;
+          deferred_frames_++;
+        }
+      }
+      inspect(now_ms());
     }
   }
 
@@ -804,9 +1120,45 @@ class App {
     std::unique_ptr<Screen> screen;
   };
 
+  // Wake sources, for the coalesced wake and the inspector's counts.
+  static constexpr int kWakeApi = 0, kWakeFetch = 1, kWakeImage = 2, kWakeLuna = 3;
+  static constexpr int kPumpBudgetMs = 6;
+  std::function<void()> wake_for(int source) {
+    return [this, source] {
+      wakes_[source]++;
+      if (!wake_pending_.exchange(true)) {
+        wake_events_++;
+        SDL_Event e{};
+        e.type = wake_event_;
+        SDL_PushEvent(&e);
+      }
+    };
+  }
+
   Uint32 wake_event_ = 0;
+  std::atomic<bool> wake_pending_{false};
+  std::atomic<long long> wakes_[4] = {{0}, {0}, {0}, {0}};
+  std::atomic<long long> wake_events_{0};
+  long long loop_wakes_ = 0;
   bool running_ = true;
-  bool dirty_ = true;
+  bool dirty_ = true;      // input or navigation since the last frame
+  bool input_ = false;     // input waiting: a frame may start before the refresh is due
+  bool pump_more_ = false;
+  bool deferred_render_ = false;
+  bool gate_frames_ = false;  // no vsync: at most one frame per refresh period
+  bool system_memory_low_ = false;
+  FramePacer pacer_;
+  Inspector inspector_;
+  long long sdl_offset_ = 0;
+  std::string sdl_version_ = "?", renderer_name_ = "?", service_memory_;
+  int refresh_hz_ = 0;
+  long long service_polled_at_ = 0;
+  long long frames_ = 0, deferred_frames_ = 0, layer_paints_ = 0, layer_reuses_ = 0;
+  long long cause_[4] = {0, 0, 0, 0};  // input, invalidate, animation, deadline
+  long long last_update_ms_ = 0;
+  std::vector<long long> frame_allocs_;
+  long long alloc_p95_ = 0;
+  long long transition_id_ = 0;
   std::vector<std::unique_ptr<Screen>> roots_;
   std::vector<std::unique_ptr<Screen>> stack_;
   std::unique_ptr<Screen> leaving_;

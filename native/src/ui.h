@@ -65,7 +65,7 @@ struct Ctx {
   Fonts fonts;
   Icons icons;
   Images images;
-  Tasks api_tasks, image_tasks;
+  Tasks api_tasks, image_tasks, fetch_tasks;
   Api api;
   WebOS webos;
   std::string dir, app_id;
@@ -131,6 +131,12 @@ struct Ctx {
   void save_settings();
   long long now = 0;
   double dt = 0;
+  // R5a: a wake only means "events to drain". A visible change asks for a frame
+  // here (or with animating / redraw_at); nothing else repaints.
+  bool dirty = false;
+  void invalidate() { dirty = true; }
+  // R5b: memory policy (normal, playback, background), set by the shell.
+  MemoryPolicy memory_policy = MemoryPolicy::Normal;
   bool animating = false;       // a screen needs another frame soon
   long long next_redraw = 0;    // a screen wants a frame at this time (0 = none)
   void redraw_at(long long t) {
@@ -184,6 +190,9 @@ struct ButtonSpec {
 
 // Artwork card: image (with missing-art fallback), optional title on the art,
 // progress, and the focus treatment (lift, shadow, frame).
+// A row of cards draws in passes (all shadows, then all bodies, then all text)
+// so draws that share a texture are adjacent and SDL can batch them (study G6).
+enum class CardPass { All, Shadow, Body, Text };
 struct CardSpec {
   std::string art, fallback_art, title;
   int w = theme::card_w, h = theme::card_h, radius = theme::card_radius;
@@ -193,6 +202,7 @@ struct CardSpec {
   bool focused = false;    // frame appears at once
   std::string sub;         // Glass, with title_on_art: right-aligned note ("6 min left")
   float alpha = 1.0f;
+  CardPass pass = CardPass::All;
 };
 // Draws centred on the card's resting box (x, y, w, h); returns the drawn box.
 SDL_Rect draw_card(int x, int y, const CardSpec &c);

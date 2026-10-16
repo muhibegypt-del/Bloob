@@ -257,6 +257,10 @@ class PlayerScreen : public Screen {
   void on_media(const MediaEvent &event) {
     Ctx &c = ctx();
     long long t = c.now;
+    // The media clock (every 200 ms in the reference pipeline) changes nothing
+    // on screen by itself: the HUD schedules its own redraws while it shows a
+    // time. Every other event can change what the player shows (R5a, F10).
+    if (event.kind != MediaEvent::Time) c.invalidate();
     if (event.kind == MediaEvent::Lost) {
       logf("player", "pipeline lost: %s", event.text.c_str());
       lost_ = true;

@@ -3,6 +3,9 @@
 #include <glib.h>
 #include <webos-helpers/libhelpers.h>
 
+#include <sys/prctl.h>
+
+#include "clock.h"
 #include "log.h"
 
 // The record starts with the HContext so the pointer libhelpers hands back
@@ -26,7 +29,10 @@ bool Luna::start(std::function<void()> wake) {
   // context running on its own thread so replies flow without blocking the UI.
   GMainLoop *loop = g_main_loop_new(nullptr, FALSE);
   loop_ = loop;
-  loop_thread_ = std::thread([loop] { g_main_loop_run(loop); });
+  loop_thread_ = std::thread([loop] {
+    prctl(PR_SET_NAME, "bl-luna", 0, 0, 0);
+    g_main_loop_run(loop);
+  });
   logf("luna", "GLib loop started");
   return true;
 }
@@ -97,31 +103,51 @@ void Luna::cancel(int id) {
   calls_.erase(it);
 }
 
-void Luna::pump() {
-  std::vector<std::pair<int, std::string>> ready;
-  {
-    std::lock_guard<std::mutex> lock(mutex_);
-    ready.swap(queue_);
-  }
-  for (auto &item : ready) {
+bool Luna::pump(int budget_ms) {
+  long long start = budget_ms > 0 ? now_ms() : 0;
+  for (;;) {
+    std::pair<int, std::string> item;
     Callback callback;
-    bool one_shot = false;
     {
       std::lock_guard<std::mutex> lock(mutex_);
+      if (queue_.empty()) return false;
+      item = std::move(queue_.front());
+      queue_.pop_front();
       auto it = calls_.find(item.first);
-      if (it == calls_.end()) continue;
-      callback = it->second->callback;
-      one_shot = !it->second->subscribe;
-      // One-shot calls are finished once their reply is delivered. The record
-      // is retired rather than freed: libhelpers may still touch its context
-      // after the callback returns on the GLib thread.
-      if (one_shot) {
-        retired_.push_back(std::move(it->second));
-        calls_.erase(it);
+      if (it != calls_.end()) {
+        callback = it->second->callback;
+        // One-shot calls are finished once their reply is delivered. The record
+        // is retired rather than freed: libhelpers may still touch its context
+        // after the callback returns on the GLib thread.
+        if (!it->second->subscribe) {
+          retired_.push_back(std::move(it->second));
+          calls_.erase(it);
+          if (retired_.size() > 512 && !retired_warned_) {
+            retired_warned_ = true;
+            logf("luna", "more than 512 retired call records this session");
+          }
+        }
       }
     }
-    if (callback) callback(item.second);
+    if (callback) {
+      callback(item.second);
+      delivered_++;
+    }
+    if (budget_ms > 0 && now_ms() - start >= budget_ms) {
+      std::lock_guard<std::mutex> lock(mutex_);
+      return !queue_.empty();
+    }
   }
+}
+
+Luna::Stats Luna::stats() {
+  std::lock_guard<std::mutex> lock(mutex_);
+  Stats s;
+  s.live = calls_.size();
+  s.retired = retired_.size();
+  s.queued = queue_.size();
+  s.delivered = delivered_;
+  return s;
 }
 
 void Luna::inject(const std::string &payload) {

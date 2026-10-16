@@ -609,7 +609,7 @@ None blocks R1–R4.
 | R2 | 15 Oct 2026 | No | No | No |
 | R3 | 15 Oct 2026 | No | No | No |
 | R4 | 15 Oct 2026 | No | No | No |
-| R5d, R5a, R5b, R5c | 16 Oct 2026 (split from R5) | No | No | No |
-| R6r | 16 Oct 2026 | No | No | No |
+| R5d, R5a, R5b, R5c | 16 Oct 2026 (split from R5) | Yes, 2.4.0 | Yes (unit tests, desktop tour) | No |
+| R6r | 16 Oct 2026 | Transitions, 2.4.0 | Yes (desktop tour) | No |
 | R6 | Outline only | No | No | No |
 | R7 | Gap documented; option 1 with R3, options 2–3 by owner decision | No | No | No |

@@ -455,6 +455,10 @@ How the app should *behave* (continuity, place, async work, component states) is
 | Layer capture for page transitions | Desktop |
 | *(1.2)* Glyphs beyond Latin-1 baked on demand (Polish, Czech, Greek, Cyrillic…), capped at 2,000 per size (F8) | Desktop |
 | *(1.2)* Shadows off in the Lite tier; `BLOOB_EFFECTS=full` pins the tier for desktop renders | Desktop |
+| *(2.4, R5a)* Redraw only on visible change: wakes are coalesced notifications and no longer repaint; the media clock alone never repaints; one frame per refresh when the renderer has no vsync; animation time is the median of three frame intervals, and the first frame after idle steps one refresh (2.3 stepped up to 100 ms) | Unit tests; desktop tour |
+| *(2.4, R5a)* SDL batching hint; render-state cache skips repeated colour and blend calls; shelf cards drawn in passes (shadows, bodies, text) so same-texture draws are adjacent | Desktop tour (pixel-identical Home) |
+| *(2.4, R5b)* Shape, sheen and icon textures and glyph atlases counted against the GPU budget; unused shapes pruned; released in the background | Desktop (inspector) |
+| *(2.4, R6r)* Transitions paint the screen underneath once into a retained layer and composite it; the leaving screen likewise; idle full-size targets freed after ~5 s | Desktop (inspector: 6 paints, 24 reuses in the tour) |
 
 **Gaps:**
 - **The glyph atlas covers Latin-1 and a few symbols only** (`atlas_codepoints`). Polish, Czech, Turkish, Greek, Cyrillic, Arabic, CJK and so on show as missing characters.
@@ -464,7 +468,7 @@ How the app should *behave* (continuity, place, async work, component states) is
 **Next:**
 - **12.1** Load glyphs on demand for any code point Inter has (Latin Extended, Greek, Cyrillic).
 - **12.2** Fallback font for scripts Inter lacks, starting with CJK and Arabic. Check the TV's system fonts first, which avoids shipping them.
-- **12.3** Frame-time log in Diagnostics: average and worst over the last 5 s.
+- **12.3** *(Done in 2.4 through the inspector and `[perf]` stages; Diagnostics shows GPU use.)* Frame-time log in Diagnostics: average and worst over the last 5 s.
 
 ### 13. Artwork pipeline
 
@@ -482,13 +486,18 @@ How the app should *behave* (continuity, place, async work, component states) is
 | Least-recently-drawn eviction above a 192 MB budget | Desktop |
 | Fade-in; a failed backdrop keeps the previous one | Desktop |
 | *(2.0)* Frost bake per panel on the image workers (quarter-size blur, half-resolution crop, tint, rounded corners), cached by rect and picture; luminance of the text region measured at decode for adaptive scrims (G1) | Desktop |
+| *(2.4, R5c)* Fetch (4 I/O workers) and decode (3 CPU workers) are separate stages; one decode per source picture feeds the sharp, blurred and frost variants; requests carry a relevance (visible, near, prefetch) that orders both queues | Desktop (inspector: 19 fetches, 19 decodes, 25 variants in the tour) |
+| *(2.4, R5c)* Staged cancellation: a request nobody drew for 30 frames is retired; workers check again after the fetch and before decoding and scaling. Uploads paced (6 textures or 12 MB per frame) | Desktop |
+| *(2.4, R5b)* One GPU budget for every texture, admitted before creation; eviction by relevance then frame age, never a texture drawn in the last 3 frames; an evicted image keeps its record and reloads without fading in. Budgets: 96 MB browsing, 56 MB playback or low system memory, 24 MB background | Unit tests (policy); desktop |
+| *(2.4, R5b)* Background releases every texture and decoded source and stops new fetches; foreground resumes them, most relevant first | Desktop tour |
 
 **Gaps:**
-- The 192 MB budget is a guess; TV memory is unmeasured.
+- The budgets are starting values; TV memory is unmeasured (the inspector now reports it).
+- Art that was not on screen when Bloob went to the background reloads on return (the reference does the same).
 - No progressive or low-resolution placeholder before the full image.
 
 **Next:**
-- **13.1** Measure resident memory on the TV after scrolling every Home row. Set the budget from that.
+- **13.1** Measure resident memory on the TV after scrolling every Home row (now readable with `tv-inspect.sh`). Set the budgets in `resources.cpp` from that.
 - **13.2** Show a tiny blurred placeholder while a backdrop loads.
 
 ### 14. Data, workers and system bus
@@ -497,7 +506,7 @@ How the app should *behave* (continuity, place, async work, component states) is
 
 **Lives in:**
 - `src/http.*`: blocking HTTP/1.1, 127.0.0.1 only.
-- `src/tasks.*`: worker pools (API 2, images 3). Newest jobs run first, and results are dropped if their screen has gone.
+- `src/tasks.*`: worker pools (API 2, fetch 4, images 3), named threads with explicit stacks, three priority lanes, budgeted completion pumps. Newest jobs run first within a lane, and results are dropped if their screen has gone.
 - `src/api.*`: the service client.
 - `src/json.*`, `src/model.*`: parsing into `Item`, `Meta`, `Ranking`, `PlayRequest` and the rest.
 - `src/luna.*`: the bus over LG libhelpers, with replies handed to the UI thread. `src/luna_host.cpp` stands in for it on the desktop.
@@ -514,6 +523,9 @@ How the app should *behave* (continuity, place, async work, component states) is
 | *(1.2)* Chunked-response parser rejects oversized chunk lengths (F1) | Desktop |
 | *(1.2)* Slow requests (over 20 s) logged; status-0 errors split into timed out and not responding (P6) | Desktop |
 | *(2.0)* Audio Guidance subscription (settingsservice) and TTS speak calls (`speech.cpp`); one refusal turns speech off (G7) | Desktop (host bus); TV untested |
+| *(2.4)* **Fixed: workers never woke the UI thread.** The completion was moved into the queue before the wake test, so the test always failed (since 1.x); replies and artwork waited for an unrelated wake, up to 1 s when idle. Covered by `runtime_test` | Unit test (fails on the old code) |
+| *(2.4, R5a)* Wakes coalesced (one SDL event per drain); bus and task pumps bounded to 6 ms per turn; retired Luna records counted (libhelpers is closed, so freeing them cannot be proved safe) | Unit tests; desktop |
+| *(2.4, R5b)* Subscribes to the system memory state (`com.webos.memorymanager/getCurrentMemState`, unverified on the TV; the first reply is logged); low or critical moves browsing onto the playback budget | Desktop (host bus) |
 
 **Gaps:**
 - No unit tests for the model parsers.
@@ -745,14 +757,14 @@ How the app should *behave* (continuity, place, async work, component states) is
 | Log of navigation, media commands and events, first frame, seek landing, reloads | TV ✓ (0.3/0.4 logs read over SSH) |
 | URLs reduced to host; no keys | By design, reviewed |
 | *(1.2)* `[perf]` every 5 s while drawing: key-to-present p50/p95/max, render p50/p95/max, frames over 33 ms; `[launch]` and `[qoe]` lines (U1) | Desktop |
+| *(2.4, R5d)* Runtime inspector: `/tmp/bloob-state.json` once a second (frames and their stages and causes, wakes, worker queues, Luna records, GPU budget by class, artwork pipeline, shapes, process memory, allocations per frame, the service's memory). `scripts/tv-inspect.sh` reads it, read-only. `[perf]` now names key→submit and adds stage p95s and allocations per frame; repeated failures are rate-limited in the log | Desktop |
 
 **Gaps:**
-- No metrics summary per session.
-- No memory, CPU or frame-time sampling for our own app.
+- No metrics summary per session (22.1).
 
 **Next:**
 - **22.1** End-of-session summary line: first frame, seeks and their landing error, stalls, reloads, duration watched. Include the streaming quality metrics that predict abandonment: startup time (target under 2 s), **rebuffering ratio** (time stalled divided by time watched; target under 1%), and whether the start failed.
-- **22.2** Sampling script for the native app, read-only over SSH, like `research/live-episode-study.md`: threads, resident memory and CPU during browse, play, pause and after exit.
+- **22.2** *(Partly done in 2.4: the inspector reports memory and frame stages.)* Sampling script for the native app, read-only over SSH, like `research/live-episode-study.md`: threads, resident memory and CPU during browse, play, pause and after exit.
 
 ### 23. External services
 

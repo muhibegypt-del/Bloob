@@ -18,9 +18,15 @@ class Icons {
   void draw(Icon icon, int x, int y, int size, Color color);
   // A rotating spinner arc centred on (cx, cy).
   void spinner(int cx, int cy, int size, double angle_degrees, Color color);
+  // Unused icons go after ~10 s beyond a working set; background releases all.
+  void housekeeping() {
+    if (current_frame() % 120 == 0) cache_.prune(600, 48);
+  }
+  void release() { cache_.clear(); }
+  size_t count() const { return cache_.size(); }
 
  private:
   SDL_Texture *texture(Icon icon, int size);
   SDL_Renderer *renderer_ = nullptr;
-  std::map<std::pair<int, int>, SDL_Texture *> cache_;
+  TexCache<std::pair<int, int>> cache_{GpuClass::Icons};
 };

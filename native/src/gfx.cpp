@@ -90,7 +90,11 @@ bool invisible(unsigned cp) {
 }  // namespace
 
 Font::~Font() {
-  for (auto &entry : atlases_) SDL_DestroyTexture(entry.second.texture);
+  for (auto &entry : atlases_) {
+    if (!entry.second.texture) continue;
+    SDL_DestroyTexture(entry.second.texture);
+    gpu_budget().remove(GpuClass::Glyphs, gpu_bytes(entry.second.tex_w, entry.second.tex_h));
+  }
   delete static_cast<stbtt_fontinfo *>(info_);
 }
 
@@ -192,7 +196,11 @@ bool Font::bake(Atlas &a, const std::vector<int> &cps) {
     return false;
   }
   if (texture) SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_BLEND);
-  if (a.texture) SDL_DestroyTexture(a.texture);
+  if (a.texture) {
+    SDL_DestroyTexture(a.texture);
+    gpu_budget().remove(GpuClass::Glyphs, gpu_bytes(a.tex_w, a.tex_h));
+  }
+  if (texture) gpu_budget().add(GpuClass::Glyphs, gpu_bytes(w, h));
   a.texture = texture;
   a.tex_w = w;
   a.tex_h = h;
@@ -425,6 +433,7 @@ bool Gfx::init(SDL_Renderer *renderer, int w, int h) {
 
   canvas_ = SDL_CreateTexture(renderer_, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_TARGET, w_, h_);
   if (canvas_) {
+    gpu_budget().add(GpuClass::Surfaces, gpu_bytes(w_, h_));
     SDL_SetTextureBlendMode(canvas_, SDL_BLENDMODE_NONE);
   } else {
     logf("gfx", "no render-target support (%s); using logical scaling", SDL_GetError());
@@ -433,10 +442,31 @@ bool Gfx::init(SDL_Renderer *renderer, int w, int h) {
   return true;
 }
 
+void Gfx::set_color(Color c) {
+  if (color_known_ && c.r == color_.r && c.g == color_.g && c.b == color_.b && c.a == color_.a) {
+    skipped_++;
+    return;
+  }
+  SDL_SetRenderDrawColor(renderer_, c.r, c.g, c.b, c.a);
+  color_ = c;
+  color_known_ = true;
+}
+
+void Gfx::set_blend(SDL_BlendMode mode) {
+  if (blend_known_ && mode == blend_) {
+    skipped_++;
+    return;
+  }
+  SDL_SetRenderDrawBlendMode(renderer_, mode);
+  blend_ = mode;
+  blend_known_ = true;
+}
+
 void Gfx::begin_frame() {
+  forget_state();
   if (canvas_) SDL_SetRenderTarget(renderer_, canvas_);
   // end_frame() leaves blending off for the final copy; drawing needs it on.
-  SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
+  set_blend(SDL_BLENDMODE_BLEND);
 }
 
 void Gfx::end_frame() {
@@ -444,50 +474,172 @@ void Gfx::end_frame() {
   SDL_SetRenderTarget(renderer_, nullptr);
   // Copy without blending so transparent pixels stay transparent and the
   // hardware video plane beneath the window remains visible.
-  SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_NONE);
-  SDL_SetRenderDrawColor(renderer_, 0, 0, 0, 0);
+  set_blend(SDL_BLENDMODE_NONE);
+  set_color({0, 0, 0, 0});
   SDL_RenderClear(renderer_);
   SDL_RenderCopy(renderer_, canvas_, nullptr, nullptr);
+  forget_state();
 }
 
 void Gfx::shutdown() {
-  for (auto &d : discs_) SDL_DestroyTexture(d.second);
-  for (auto &t : triangles_) SDL_DestroyTexture(t.second);
-  for (auto &t : shadows_) SDL_DestroyTexture(t.second);
+  release_caches();
+  for (SDL_Texture *t : pool_) {
+    SDL_DestroyTexture(t);
+    gpu_budget().remove(GpuClass::Layers, gpu_bytes(w_, h_));
+  }
+  pool_.clear();
+  if (canvas_) {
+    SDL_DestroyTexture(canvas_);
+    gpu_budget().remove(GpuClass::Surfaces, gpu_bytes(w_, h_));
+  }
+  if (ramp_h_) SDL_DestroyTexture(ramp_h_);
+  if (ramp_v_) SDL_DestroyTexture(ramp_v_);
+  canvas_ = ramp_h_ = ramp_v_ = nullptr;
+}
+
+void Gfx::housekeeping() {
+  // Every couple of seconds: shapes unused for ~10 s go, beyond a working set.
+  if (current_frame() % 120 != 0) return;
+  // Full-size targets cost 8 MB each: once transitions and page fades have
+  // been idle for ~5 s, the spare and the fade layer go too (recreated on use).
+  if (current_frame() - targets_used_ > 300) {
+    if (layer_) give_target(layer_);
+    layer_ = nullptr;
+    for (SDL_Texture *t : pool_) {
+      SDL_DestroyTexture(t);
+      gpu_budget().remove(GpuClass::Layers, gpu_bytes(w_, h_));
+    }
+    pool_.clear();
+  }
+  discs_.prune(600, 48);
+  rings_.prune(600, 24);
+  shadows_.prune(600, 24);
+  sheens_.prune(600, 8);
+  triangles_.prune(600, 8);
+}
+
+void Gfx::release_caches() {
   discs_.clear();
   triangles_.clear();
   shadows_.clear();
-  if (canvas_) SDL_DestroyTexture(canvas_);
-  if (layer_) SDL_DestroyTexture(layer_);
-  layer_ = nullptr;
-  if (ramp_h_) SDL_DestroyTexture(ramp_h_);
-  if (ramp_v_) SDL_DestroyTexture(ramp_v_);
-  for (auto &r : rings_) SDL_DestroyTexture(r.second);
-  for (auto &s : sheens_) SDL_DestroyTexture(s.second);
-  sheens_.clear();
   rings_.clear();
-  canvas_ = ramp_h_ = ramp_v_ = nullptr;
+  sheens_.clear();
+  for (auto &kv : cached_) give_target(kv.second.texture);
+  cached_.clear();
+  if (layer_) give_target(layer_);
+  layer_ = nullptr;
+  for (SDL_Texture *t : pool_) {
+    SDL_DestroyTexture(t);
+    gpu_budget().remove(GpuClass::Layers, gpu_bytes(w_, h_));
+  }
+  pool_.clear();
+}
+
+Gfx::Stats Gfx::stats() const {
+  Stats s;
+  s.discs = discs_.size();
+  s.rings = rings_.size();
+  s.shadows = shadows_.size();
+  s.sheens = sheens_.size();
+  s.triangles = triangles_.size();
+  s.layers = cached_.size() + (layer_ ? 1 : 0);
+  s.pool = pool_.size();
+  s.state_calls_skipped = skipped_;
+  return s;
+}
+
+SDL_Texture *Gfx::take_target() {
+  if (!pool_.empty()) {
+    SDL_Texture *t = pool_.back();
+    pool_.pop_back();
+    return t;
+  }
+  SDL_Texture *t = SDL_CreateTexture(renderer_, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_TARGET, w_, h_);
+  if (t) {
+    SDL_SetTextureBlendMode(t, SDL_BLENDMODE_BLEND);
+    gpu_budget().add(GpuClass::Layers, gpu_bytes(w_, h_));
+  }
+  return t;
+}
+
+void Gfx::give_target(SDL_Texture *t) {
+  if (!t) return;
+  // Keep one spare; more would only hold memory.
+  if (pool_.empty()) {
+    pool_.push_back(t);
+  } else {
+    SDL_DestroyTexture(t);
+    gpu_budget().remove(GpuClass::Layers, gpu_bytes(w_, h_));
+  }
+}
+
+bool Gfx::cached_valid(const std::string &name, const std::string &key) const {
+  auto it = cached_.find(name);
+  return it != cached_.end() && it->second.texture && it->second.key == key;
+}
+
+bool Gfx::begin_cached(const std::string &name) {
+  if (!canvas_) return false;
+  targets_used_ = current_frame();
+  Cached &c = cached_[name];
+  if (!c.texture) c.texture = take_target();
+  if (!c.texture) {
+    cached_.erase(name);
+    return false;
+  }
+  c.key.clear();
+  SDL_SetRenderTarget(renderer_, c.texture);
+  forget_state();
+  set_blend(SDL_BLENDMODE_NONE);
+  set_color({0, 0, 0, 0});
+  SDL_RenderClear(renderer_);
+  set_blend(SDL_BLENDMODE_BLEND);
+  return true;
+}
+
+void Gfx::end_cached(const std::string &name, const std::string &key) {
+  auto it = cached_.find(name);
+  if (it != cached_.end()) it->second.key = key;
+  SDL_SetRenderTarget(renderer_, canvas_);
+  forget_state();
+  set_blend(SDL_BLENDMODE_BLEND);
+}
+
+void Gfx::composite_cached(const std::string &name, float alpha, int dy) {
+  targets_used_ = current_frame();
+  auto it = cached_.find(name);
+  if (it == cached_.end() || !it->second.texture) return;
+  SDL_Texture *t = it->second.texture;
+  SDL_SetTextureAlphaMod(t, static_cast<Uint8>(std::max(0.0f, std::min(1.0f, alpha)) * 255));
+  SDL_Rect dst{0, dy, w_, h_};
+  SDL_RenderCopy(renderer_, t, nullptr, &dst);
+}
+
+void Gfx::drop_cached(const std::string &name) {
+  auto it = cached_.find(name);
+  if (it == cached_.end()) return;
+  give_target(it->second.texture);
+  cached_.erase(it);
 }
 
 void Gfx::clear(Color color) {
   // No blending: alpha 0 must reach the window so the video plane shows through.
-  SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_NONE);
-  SDL_SetRenderDrawColor(renderer_, color.r, color.g, color.b, color.a);
+  set_blend(SDL_BLENDMODE_NONE);
+  set_color(color);
   SDL_RenderClear(renderer_);
-  SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
+  set_blend(SDL_BLENDMODE_BLEND);
 }
 
 void Gfx::fill_rect(int x, int y, int w, int h, Color color) {
   if (w <= 0 || h <= 0) return;
-  SDL_SetRenderDrawColor(renderer_, color.r, color.g, color.b, color.a);
+  set_color(color);
   SDL_Rect rect{x, y, w, h};
   SDL_RenderFillRect(renderer_, &rect);
 }
 
 SDL_Texture *Gfx::disc(int radius) {
   radius = std::max(1, radius);
-  auto it = discs_.find(radius);
-  if (it != discs_.end()) return it->second;
+  if (SDL_Texture *found = discs_.find(radius)) return found;
   const int size = radius * 2;
   std::vector<float> coverage(static_cast<size_t>(size) * size);
   for (int y = 0; y < size; y++) {
@@ -502,19 +654,14 @@ SDL_Texture *Gfx::disc(int radius) {
       coverage[static_cast<size_t>(y) * size + x] = sum / 16.0f;
     }
   }
-  SDL_Texture *t = texture_from_coverage(renderer_, coverage, size);
-  discs_[radius] = t;
-  return t;
+  return discs_.put(radius, texture_from_coverage(renderer_, coverage, size), size, size);
 }
 
 void Gfx::sheen(int x, int y, int w, int h, int radius, int base_w, int base_h, Uint8 alpha) {
   if (!shadows || alpha == 0 || base_w <= 0 || base_h <= 0) return;
   std::string key = std::to_string(base_w) + "," + std::to_string(base_h) + "," + std::to_string(radius);
-  SDL_Texture *t = nullptr;
-  auto it = sheens_.find(key);
-  if (it != sheens_.end()) {
-    t = it->second;
-  } else {
+  SDL_Texture *t = sheens_.find(key);
+  if (!t) {
     std::vector<Uint32> px(static_cast<size_t>(base_w) * base_h);
     float r = static_cast<float>(std::min(radius, std::min(base_w, base_h) / 2));
     for (int py = 0; py < base_h; py++)
@@ -533,15 +680,14 @@ void Gfx::sheen(int x, int y, int w, int h, int radius, int base_w, int base_h, 
     t = SDL_CreateTextureFromSurface(renderer_, surface);
     SDL_FreeSurface(surface);
     if (t) SDL_SetTextureBlendMode(t, SDL_BLENDMODE_BLEND);
-    sheens_[key] = t;
+    sheens_.put(key, t, base_w, base_h);
   }
   if (t) texture(t, x, y, w, h, alpha);
 }
 
 SDL_Texture *Gfx::triangle(int size) {
   size = std::max(4, size);
-  auto it = triangles_.find(size);
-  if (it != triangles_.end()) return it->second;
+  if (SDL_Texture *found = triangles_.find(size)) return found;
   std::vector<float> tri(static_cast<size_t>(size) * size);
   for (int y = 0; y < size; y++) {
     for (int x = 0; x < size; x++) {
@@ -558,9 +704,7 @@ SDL_Texture *Gfx::triangle(int size) {
       tri[static_cast<size_t>(y) * size + x] = inside / 16.0f;
     }
   }
-  SDL_Texture *t = texture_from_coverage(renderer_, tri, size);
-  triangles_[size] = t;
-  return t;
+  return triangles_.put(size, texture_from_coverage(renderer_, tri, size), size, size);
 }
 
 void Gfx::fill_circle(int cx, int cy, int radius, Color color) {
@@ -590,8 +734,7 @@ void Gfx::fill_round(int x, int y, int w, int h, int radius, Color color) {
 
 SDL_Texture *Gfx::shadow_texture(int radius, int blur) {
   auto key = std::make_pair(radius, blur);
-  auto it = shadows_.find(key);
-  if (it != shadows_.end()) return it->second;
+  if (SDL_Texture *found = shadows_.find(key)) return found;
   // A rounded box inset by 2·blur, with an erf falloff of its signed distance:
   // close to a Gaussian-blurred box at a fraction of the cost.
   const int e = radius + 2 * blur;  // corner slice size
@@ -608,9 +751,7 @@ SDL_Texture *Gfx::shadow_texture(int radius, int blur) {
       coverage[static_cast<size_t>(y) * size + x] = 0.5f * (1.0f - std::erf(d / (sigma * 1.41421356f)));
     }
   }
-  SDL_Texture *t = texture_from_coverage(renderer_, coverage, size);
-  shadows_[key] = t;
-  return t;
+  return shadows_.put(key, texture_from_coverage(renderer_, coverage, size), size, size);
 }
 
 void Gfx::shadow(int x, int y, int w, int h, int radius, int blur, int dy, Uint8 alpha) {
@@ -639,8 +780,7 @@ void Gfx::shadow(int x, int y, int w, int h, int radius, int blur, int dy, Uint8
 
 SDL_Texture *Gfx::ring(int radius, int width) {
   auto key = std::make_pair(radius, width);
-  auto it = rings_.find(key);
-  if (it != rings_.end()) return it->second;
+  if (SDL_Texture *found = rings_.find(key)) return found;
   const int size = radius * 2;
   std::vector<float> coverage(static_cast<size_t>(size) * size);
   for (int y = 0; y < size; y++) {
@@ -651,9 +791,7 @@ SDL_Texture *Gfx::ring(int radius, int width) {
       coverage[static_cast<size_t>(y) * size + x] = std::max(0.0f, std::min(1.0f, std::min(outer, inner)));
     }
   }
-  SDL_Texture *t = texture_from_coverage(renderer_, coverage, size);
-  rings_[key] = t;
-  return t;
+  return rings_.put(key, texture_from_coverage(renderer_, coverage, size), size, size);
 }
 
 void Gfx::stroke_round(int x, int y, int w, int h, int radius, int width, Color color) {
@@ -711,10 +849,12 @@ static void ramp_copy(SDL_Renderer *renderer, SDL_Texture *ramp, bool vertical, 
 
 void Gfx::gradient_h(int x, int y, int w, int h, Color color, Uint8 a0, Uint8 a1) {
   ramp_copy(renderer_, ramp_h_, false, x, y, w, h, color, a0, a1);
+  color_known_ = false;  // ramp_copy may set the draw colour directly
 }
 
 void Gfx::gradient_v(int x, int y, int w, int h, Color color, Uint8 a0, Uint8 a1) {
   ramp_copy(renderer_, ramp_v_, true, x, y, w, h, color, a0, a1);
+  color_known_ = false;
 }
 
 void Gfx::texture(SDL_Texture *texture, int x, int y, int w, int h, Uint8 alpha) {
@@ -734,22 +874,22 @@ void Gfx::unclip() { SDL_RenderSetClipRect(renderer_, nullptr); }
 
 bool Gfx::begin_layer() {
   if (!canvas_) return false;
-  if (!layer_) {
-    layer_ = SDL_CreateTexture(renderer_, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_TARGET, w_, h_);
-    if (!layer_) return false;
-    SDL_SetTextureBlendMode(layer_, SDL_BLENDMODE_BLEND);
-  }
+  targets_used_ = current_frame();
+  if (!layer_) layer_ = take_target();
+  if (!layer_) return false;
   SDL_SetRenderTarget(renderer_, layer_);
-  SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_NONE);
-  SDL_SetRenderDrawColor(renderer_, 0, 0, 0, 0);
+  forget_state();
+  set_blend(SDL_BLENDMODE_NONE);
+  set_color({0, 0, 0, 0});
   SDL_RenderClear(renderer_);
-  SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
+  set_blend(SDL_BLENDMODE_BLEND);
   return true;
 }
 
 void Gfx::end_layer(float alpha, int dy) {
   SDL_SetRenderTarget(renderer_, canvas_);
-  SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
+  forget_state();
+  set_blend(SDL_BLENDMODE_BLEND);
   SDL_SetTextureAlphaMod(layer_, static_cast<Uint8>(std::max(0.0f, std::min(1.0f, alpha)) * 255));
   SDL_Rect dst{0, dy, w_, h_};
   SDL_RenderCopy(renderer_, layer_, nullptr, &dst);

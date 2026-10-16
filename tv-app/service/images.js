@@ -10,7 +10,10 @@ const { get } = require('./net');
 const config = require('./config');
 
 const HOSTS = /(^|\.)metahub\.space$|^image\.tmdb\.org$|^m\.media-amazon\.com$/;
-const MEMORY_BUDGET = 40 * 1024 * 1024;
+// The in-memory byte cache follows the app's memory policy (R5b): full while
+// browsing, small during playback and in the background. The disk cache stays.
+const MEMORY_BUDGETS = { normal: 40 * 1024 * 1024, playback: 12 * 1024 * 1024, background: 4 * 1024 * 1024 };
+let memoryBudget = MEMORY_BUDGETS.normal;
 const DISK_BUDGET = 200 * 1024 * 1024;
 
 const memory = new Map(); // key -> { body, type }, in recency order
@@ -37,12 +40,27 @@ function remember(key, value) {
   if (memory.has(key)) { memoryBytes -= memory.get(key).body.length; memory.delete(key); }
   memory.set(key, value);
   memoryBytes += value.body.length;
-  while (memoryBytes > MEMORY_BUDGET && memory.size > 1) {
+  trim();
+}
+
+function trim() {
+  while (memoryBytes > memoryBudget && memory.size > 1) {
     const oldest = memory.keys().next().value;
     memoryBytes -= memory.get(oldest).body.length;
     memory.delete(oldest);
   }
 }
+
+/** Applies the app's memory policy; returns the budget in bytes, or 0 if unknown. */
+function setMemoryPolicy(policy) {
+  const budget = MEMORY_BUDGETS[policy];
+  if (!budget) return 0;
+  memoryBudget = budget;
+  trim();
+  return budget;
+}
+
+function cacheBytes() { return memoryBytes; }
 
 function prune() {
   if (!diskDir) return;
@@ -110,4 +128,4 @@ async function fetchImage(url) {
 
 setTimeout(() => { if (diskDir === null) diskDir = pickDiskDir() || ''; prune(); }, 5000).unref();
 
-module.exports = { fetchImage, HOSTS };
+module.exports = { fetchImage, HOSTS, setMemoryPolicy, cacheBytes };

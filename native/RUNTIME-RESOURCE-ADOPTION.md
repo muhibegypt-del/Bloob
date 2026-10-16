@@ -1,6 +1,6 @@
 # Adopting the Elements of A runtime resource findings in Bloob
 
-**Status: planned. Nothing here is implemented.**
+**Status: implemented in 2.4.0 (16 October 2026), locally verified, not yet run on the TV.** Section 5 lists each finding's state.
 
 **Basis:**
 - The 16 October 2026 resource study, in five documents:
@@ -310,12 +310,42 @@ R5d records them first, so every later increment has a before and an after. Two 
 - the TV's SDL version, which decides whether batching and `SDL_GetTicks64` exist;
 - whether a webOS low-memory signal is available (check, read-only).
 
-## 5. Status
+## 5. Status in 2.4.0
 
 | ID | Planned | Implemented | Locally verified | TV-verified |
 | --- | --- | --- | --- | --- |
-| R5d | 16 Oct 2026 | No | No | No |
-| R5a | 16 Oct 2026 | No | No | No |
-| R5b | 16 Oct 2026 | No | No | No |
-| R5c | 16 Oct 2026 | No | No | No |
-| R6r | 16 Oct 2026 | No | No | No |
+| R5d | 16 Oct 2026 | Yes | Inspector snapshot and schema read back in the desktop tour | No |
+| R5a | 16 Oct 2026 | Yes | Unit tests (pacer, tasks); desktop tour pixel-identical apart from timing | No |
+| R5b | 16 Oct 2026 | Yes | Unit tests (budget, eviction order); desktop tour; inspector | No |
+| R5c | 16 Oct 2026 | Yes | Desktop tour; inspector (one decode per source, no stale work) | No |
+| R6r | 16 Oct 2026 | Transitions and the leaving screen; target pool | Inspector: 6 paints and 24 reuses across the tour | No |
+
+**Found while implementing:** the worker pools never woke the UI thread. `Tasks::loop` moved the completion into the queue and only then tested it, and a moved-from `std::function` is empty, so the wake never fired. Every API reply and image then waited for an unrelated wake: up to 1 s when the app was idle (the loop's longest wait). This is the "task-completion wake bug" the branch review suspected but could not reproduce. It has been there since 1.x and was in the 2.2.0 build that ran on the TV. Fixed in `tasks.cpp`; `tests/runtime_test.cpp` fails on the old code.
+
+**Per finding:**
+
+| Finding | State in 2.4.0 |
+| --- | --- |
+| C1 | Done. One paint per drain; when the renderer has no vsync, frames are also gated to one per refresh. With vsync, `SDL_RenderPresent` paces frames (gating as well would start each frame late and miss the next refresh) |
+| C2, C5, C6, C11, C12 | Done |
+| C3 | Already done in 2.3 (listener snapshot); kept |
+| C4 | Partial: `Tasks::stop` counts and logs what it drops. Per-job "must run" belongs to R1's final reports |
+| C7 | Partial: deadline frames are counted per cause; the owner of each deadline is not yet recorded |
+| C8 | Done: policies Normal, Playback (player on top, or low system memory), Background. The service trims its byte cache to match. The system memory subscription is unverified on the TV |
+| C9, C10 | Done |
+| M1, G3 | Measured, not built: allocations per frame are counted (`alloc.cpp`) and reported. An arena waits for the TV numbers |
+| M2 | Partial: decoded sources and pixels in flight are counted. There is no zero-at-shutdown assertion yet |
+| M3, M4, M6, M7, M8, M9, M10, M13 | Done (M10's estimate awaits TV calibration) |
+| M5 | Done with frame-age protection instead of explicit pins: anything drawn in the last 3 frames cannot be evicted, which covers everything on screen |
+| M11 | Not needed: the largest texture Bloob creates is 1920×1080. The renderer's maximum is logged at start |
+| M12 | Done: `settled()` re-requests an evicted image |
+| G1 | Deferred: splitting every screen into layout and paint is a large refactor. The inspector's paint time on the TV decides whether it is needed |
+| G2, G4 | Done for transitions: the screen underneath and the leaving screen are painted once, then composited. Per-screen cached layers wait for G1 |
+| G5 | Inherent: layers are used only where a whole screen is reused |
+| G6, G7, G12, G13, G15 | Done |
+| G8, A7 | Not applicable (no meshes, no animated art) |
+| G9 | Counted. YUV and OES formats belong to R7 |
+| G10 | Shared-source decode removes the repeated fetch and decode behind frosts. GPU blur stays conditional on a GLES path |
+| G11 | Already lean; kept |
+| G14 | Deferred: the tab bar is about a twentieth of the screen, and a cached copy needs its own target. Its frost and pills also change with every backdrop fade and focus move, so the key would rarely hold. Revisit if the inspector shows shell paint cost |
+| A1–A6, A8, A9, O1–O3 | Done |

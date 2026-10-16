@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(bloob_native VERSION 2.3.0 LANGUAGES C CXX)
+project(bloob_native VERSION 2.4.0 LANGUAGES C CXX)
 
 # Cross-compile for the TV with the webOS NDK (openlgtv buildroot-nc4):
 #   cmake -B build -DCMAKE_TOOLCHAIN_FILE=/opt/arm-webos-linux-gnueabi_sdk-buildroot/share/buildroot/toolchainfile.cmake
@@ -19,15 +19,17 @@ if (CMAKE_CROSSCOMPILING)
 endif ()
 
 # Platform-free core, shared by the app and the tests.
-add_library(buna_core STATIC src/session.cpp src/json.cpp src/log.cpp src/model.cpp src/play.cpp)
+add_library(buna_core STATIC src/session.cpp src/json.cpp src/log.cpp src/model.cpp src/play.cpp src/resources.cpp src/tasks.cpp)
+find_package(Threads REQUIRED)
+target_link_libraries(buna_core PUBLIC Threads::Threads)
 target_include_directories(buna_core PUBLIC src)
 
 # The app: shell, renderer, screens and media. The TV build talks to the real
 # system bus; the desktop build swaps in a stand-in (luna_host.cpp).
 set(APP_SOURCES
-  src/main.cpp src/gfx.cpp src/media.cpp src/platform.cpp src/http.cpp src/tasks.cpp src/api.cpp
+  src/main.cpp src/gfx.cpp src/media.cpp src/platform.cpp src/http.cpp src/api.cpp
   src/images.cpp src/icons.cpp src/ui.cpp src/common.cpp src/pairing.cpp src/speech.cpp
-  src/browse.cpp src/details.cpp src/sources.cpp src/player.cpp src/search.cpp src/settings.cpp)
+  src/browse.cpp src/details.cpp src/sources.cpp src/player.cpp src/search.cpp src/settings.cpp src/inspect.cpp src/alloc.cpp)
 
 if (CMAKE_CROSSCOMPILING)
   find_package(PkgConfig REQUIRED)
@@ -73,7 +75,7 @@ else ()
     target_link_libraries(bloob_host PRIVATE buna_core ${SDL2_LIBRARIES} pthread dl)
   endif ()
   enable_testing()
-  add_executable(native_tests tests/session_test.cpp tests/play_test.cpp)
+  add_executable(native_tests tests/session_test.cpp tests/play_test.cpp tests/runtime_test.cpp)
   target_link_libraries(native_tests PRIVATE buna_core)
   add_test(NAME native_tests COMMAND native_tests)
 endif ()

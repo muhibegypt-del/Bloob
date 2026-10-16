@@ -222,6 +222,7 @@ static void test_json() {
 }
 
 int run_play_tests();
+int run_runtime_tests();
 
 int main() {
   test_startup();
@@ -236,6 +237,7 @@ int main() {
   test_end_and_replay();
   test_json();
   failures += run_play_tests();
+  failures += run_runtime_tests();
   if (failures) {
     std::printf("%d check(s) failed\n", failures);
     return 1;

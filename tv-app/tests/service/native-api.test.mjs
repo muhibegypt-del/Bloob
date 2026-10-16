@@ -248,3 +248,15 @@ describe('service catalogue', () => {
     expect(await cachedRuntime('movie', 'tt0000001')).toBe(0);
   });
 });
+
+describe('service memory policy (R5b)', () => {
+  it('trims the image byte cache to the app policy and reports it', async () => {
+    const imagesModule = await import('../../service/images.js');
+    const images = imagesModule.default || imagesModule;
+    expect(images.setMemoryPolicy('playback')).toBe(12 * 1024 * 1024);
+    expect(images.setMemoryPolicy('background')).toBe(4 * 1024 * 1024);
+    expect(images.setMemoryPolicy('normal')).toBe(40 * 1024 * 1024);
+    expect(images.setMemoryPolicy('anything else')).toBe(0);
+    expect(typeof images.cacheBytes()).toBe('number');
+  });
+});

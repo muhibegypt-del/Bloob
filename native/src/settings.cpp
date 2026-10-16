@@ -343,8 +343,9 @@ class DiagnosticsScreen : public Screen {
     int ww = 0, wh = 0;
     SDL_GetWindowSize(c.window, &ww, &wh);
     std::string missing = c.webos.missing();
-    char mem[64];
-    std::snprintf(mem, sizeof mem, "%.1f MB in textures", c.images.bytes() / 1048576.0);
+    char mem[160];
+    std::snprintf(mem, sizeof mem, "%.1f of %.0f MB GPU (%.1f MB art), %s", gpu_budget().used() / 1048576.0,
+                  gpu_budget().limit() / 1048576.0, c.images.bytes() / 1048576.0, memory_policy_name(c.memory_policy));
     std::vector<std::pair<std::string, std::string>> rows = {
         {"TV", c.tv_model},
         {"Service", c.api.ready() ? "running on port " + std::to_string(c.api.port()) : (c.service_error.empty() ? "starting" : c.service_error)},

@@ -237,7 +237,14 @@ async function handleApi(req, res, url) {
   const query = url.searchParams;
   const input = req.method === 'POST' ? await readBody(req) : {};
   if (req.method === 'GET') {
-    if (pathname === '/api/health') return reply(res, 200, { ok: true, version: VERSION, app: config.appId, paired: !!apiKey });
+    if (pathname === '/api/health') {
+      const mem = process.memoryUsage();
+      return reply(res, 200, {
+        ok: true, version: VERSION, app: config.appId, paired: !!apiKey,
+        memory: { rss: mem.rss, heapUsed: mem.heapUsed, external: mem.external },
+        imageCacheBytes: images.cacheBytes(),
+      });
+    }
     if (pathname === '/api/home') {
       const result = await catalog.home();
       const resume = await progress.continueWatching().catch(() => []);
@@ -270,6 +277,11 @@ async function handleApi(req, res, url) {
     if (pathname === '/api/settings') return reply(res, 200, await progress.getSettings());
   }
   if (pathname === '/api/settings' && req.method === 'POST') return reply(res, 200, await progress.saveSettings(input));
+  if (pathname === '/api/memory' && req.method === 'POST') {
+    const budget = images.setMemoryPolicy(String(input.policy || ''));
+    return budget ? reply(res, 200, { policy: String(input.policy), imageCacheBudget: budget, imageCacheBytes: images.cacheBytes() })
+      : reply(res, 400, { error: 'Unknown memory policy' });
+  }
   if (pathname === '/api/sources/ranked' && req.method === 'POST') {
     const type = input.type;
     const id = String(input.videoId || '');

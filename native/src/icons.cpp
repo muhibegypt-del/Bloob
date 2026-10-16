@@ -147,15 +147,11 @@ float seg_distance(float px, float py, const Seg &s) {
 
 }  // namespace
 
-void Icons::shutdown() {
-  for (auto &e : cache_) SDL_DestroyTexture(e.second);
-  cache_.clear();
-}
+void Icons::shutdown() { cache_.clear(); }
 
 SDL_Texture *Icons::texture(Icon icon, int size) {
   auto key = std::make_pair(static_cast<int>(icon), size);
-  auto it = cache_.find(key);
-  if (it != cache_.end()) return it->second;
+  if (SDL_Texture *found = cache_.find(key)) return found;
   Shape shape = shape_for(icon);
   const float scale = size / 24.0f;
   // Strokes never thinner than ~1.6 px so small icons stay legible.
@@ -175,8 +171,7 @@ SDL_Texture *Icons::texture(Icon icon, int size) {
   SDL_Texture *texture = SDL_CreateTextureFromSurface(renderer_, surface);
   SDL_FreeSurface(surface);
   if (texture) SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_BLEND);
-  cache_[key] = texture;
-  return texture;
+  return cache_.put(key, texture, size, size);
 }
 
 void Icons::draw(Icon icon, int x, int y, int size, Color color) {

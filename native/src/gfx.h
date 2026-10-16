@@ -10,6 +10,8 @@
 #include <string>
 #include <vector>
 
+#include "resources.h"
+
 struct Color {
   Uint8 r, g, b, a;
 };
@@ -74,6 +76,65 @@ class Font {
   std::set<unsigned> missing_;  // code points this font has no glyph for (any size)
 };
 
+// Textures made on demand (shapes, icons), counted against the GPU budget and
+// pruned when unused (study M5, M8): each item remembers the frame it was last
+// drawn; housekeeping removes long-unused items beyond a small working set.
+template <typename K>
+class TexCache {
+ public:
+  explicit TexCache(GpuClass cls) : cls_(cls) {}
+  SDL_Texture *find(const K &key) {
+    auto it = items_.find(key);
+    if (it == items_.end()) return nullptr;
+    it->second.used = current_frame();
+    return it->second.texture;
+  }
+  SDL_Texture *put(const K &key, SDL_Texture *texture, int w, int h) {
+    if (!texture) return nullptr;
+    Item &item = items_[key];
+    if (item.texture) {
+      SDL_DestroyTexture(item.texture);
+      gpu_budget().remove(cls_, item.bytes);
+    }
+    item.texture = texture;
+    item.bytes = gpu_bytes(w, h);
+    item.used = current_frame();
+    gpu_budget().add(cls_, item.bytes);
+    return texture;
+  }
+  // Removes items unused for `idle_frames` while more than `keep` remain.
+  void prune(long long idle_frames, size_t keep) {
+    if (items_.size() <= keep) return;
+    long long frame = current_frame();
+    for (auto it = items_.begin(); it != items_.end() && items_.size() > keep;) {
+      if (frame - it->second.used >= idle_frames) {
+        SDL_DestroyTexture(it->second.texture);
+        gpu_budget().remove(cls_, it->second.bytes);
+        it = items_.erase(it);
+      } else {
+        ++it;
+      }
+    }
+  }
+  void clear() {
+    for (auto &kv : items_) {
+      SDL_DestroyTexture(kv.second.texture);
+      gpu_budget().remove(cls_, kv.second.bytes);
+    }
+    items_.clear();
+  }
+  size_t size() const { return items_.size(); }
+
+ private:
+  struct Item {
+    SDL_Texture *texture = nullptr;
+    size_t bytes = 0;
+    long long used = 0;
+  };
+  GpuClass cls_;
+  std::map<K, Item> items_;
+};
+
 class Gfx {
  public:
   // Draws every frame at exactly `w`×`h` into an offscreen canvas, then scales
@@ -114,13 +175,37 @@ class Gfx {
   bool begin_layer();
   void end_layer(float alpha, int dy);
 
+  // Retained layers (R6r, study G2, G4): a named full-size target that keeps
+  // its pixels between frames with a validity key. While the key is unchanged
+  // the layer is composited, not repainted. Backing comes from a small pool of
+  // same-size targets (study M9) and counts against the GPU budget.
+  bool cached_valid(const std::string &name, const std::string &key) const;
+  // Starts painting into the named layer (cleared). False: unavailable.
+  bool begin_cached(const std::string &name);
+  // Finishes painting and records the key the pixels are valid for.
+  void end_cached(const std::string &name, const std::string &key);
+  void composite_cached(const std::string &name, float alpha, int dy);
+  void drop_cached(const std::string &name);
+  size_t cached_count() const { return cached_.size(); }
+
+  // Frame housekeeping: prune unused shape textures. Call once per frame.
+  void housekeeping();
+  // Background (study M13): release every texture Gfx can recreate on demand
+  // (shapes, sheens, layers); keeps the canvas, which the window still shows.
+  void release_caches();
+  struct Stats {
+    size_t discs = 0, rings = 0, shadows = 0, sheens = 0, triangles = 0, layers = 0, pool = 0;
+    long long state_calls_skipped = 0;
+  };
+  Stats stats() const;
+
  private:
   SDL_Renderer *renderer_ = nullptr;
   // Shapes are rasterised at the exact size they are drawn: scaling one large
   // texture down without mipmaps aliases (jagged corners on the TV).
-  std::map<int, SDL_Texture *> discs_;      // radius -> disc
-  std::map<int, SDL_Texture *> triangles_;  // size -> play glyph
-  std::map<std::pair<int, int>, SDL_Texture *> shadows_;  // (radius, blur) -> 9-slice source
+  TexCache<int> discs_{GpuClass::Shapes};                      // radius -> disc
+  TexCache<int> triangles_{GpuClass::Shapes};                  // size -> play glyph
+  TexCache<std::pair<int, int>> shadows_{GpuClass::Shapes};    // (radius, blur) -> 9-slice source
   SDL_Texture *disc(int radius);
   SDL_Texture *triangle(int size);
   SDL_Texture *shadow_texture(int radius, int blur);
@@ -128,10 +213,29 @@ class Gfx {
   SDL_Texture *ramp_v_ = nullptr;    // 1×256 alpha ramp
   SDL_Texture *canvas_ = nullptr;
   SDL_Texture *layer_ = nullptr;
-  std::map<std::pair<int, int>, SDL_Texture *> rings_;  // (radius, width) -> anti-aliased annulus
-  std::map<std::string, SDL_Texture *> sheens_;         // "w,h,r" -> sheen
+  TexCache<std::pair<int, int>> rings_{GpuClass::Shapes};  // (radius, width) -> anti-aliased annulus
+  TexCache<std::string> sheens_{GpuClass::Shapes};         // "w,h,r" -> sheen
   SDL_Texture *ring(int radius, int width);
   int w_ = 1920, h_ = 1080;
+
+  // Render state cache (study G7): skip SDL calls that set what is already set.
+  void set_color(Color c);
+  void set_blend(SDL_BlendMode mode);
+  void forget_state() { color_known_ = blend_known_ = false; }
+  Color color_{0, 0, 0, 0};
+  SDL_BlendMode blend_ = SDL_BLENDMODE_NONE;
+  bool color_known_ = false, blend_known_ = false;
+  long long skipped_ = 0;
+
+  struct Cached {
+    SDL_Texture *texture = nullptr;
+    std::string key;
+  };
+  std::map<std::string, Cached> cached_;
+  std::vector<SDL_Texture *> pool_;  // spare full-size targets
+  long long targets_used_ = 0;      // frame a full-size target was last used
+  SDL_Texture *take_target();
+  void give_target(SDL_Texture *t);
 };
 
 // UTF-8 → code points.

@@ -3,7 +3,9 @@
 #include <cstdarg>
 #include <cstdio>
 #include <ctime>
+#include <chrono>
 #include <deque>
+#include <map>
 #include <mutex>
 
 static FILE *g_file = nullptr;
@@ -36,6 +38,30 @@ void logf(const char *tag, const char *fmt, ...) {
   }
   g_tail.emplace_back(line);
   if (g_tail.size() > 200) g_tail.pop_front();
+}
+
+void logf_limited(const char *key, long long interval_ms, const char *tag, const char *fmt, ...) {
+  static std::mutex limit_mutex;
+  static std::map<std::string, std::pair<long long, long long>> last;  // key -> (at, skipped)
+  long long now = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+  long long skipped = 0;
+  {
+    std::lock_guard<std::mutex> lock(limit_mutex);
+    auto it = last.find(key);
+    if (it != last.end() && now - it->second.first < interval_ms) {
+      it->second.second++;
+      return;
+    }
+    if (it != last.end()) skipped = it->second.second;
+    last[key] = {now, 0};
+  }
+  char message[1024];
+  va_list args;
+  va_start(args, fmt);
+  std::vsnprintf(message, sizeof message, fmt, args);
+  va_end(args);
+  if (skipped) logf(tag, "%s (%lld similar lines skipped)", message, skipped);
+  else logf(tag, "%s", message);
 }
 
 std::vector<std::string> log_tail(size_t count) {

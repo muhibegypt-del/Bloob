@@ -66,23 +66,35 @@ void Luna::cancel(int id) {
   calls_.erase(id);
 }
 
-void Luna::pump() {
-  std::vector<std::pair<int, std::string>> ready;
-  {
-    std::lock_guard<std::mutex> lock(mutex_);
-    ready.swap(queue_);
-  }
-  for (auto &item : ready) {
+bool Luna::pump(int budget_ms) {
+  (void)budget_ms;
+  for (;;) {
+    std::pair<int, std::string> item;
     Callback callback;
     {
       std::lock_guard<std::mutex> lock(mutex_);
+      if (queue_.empty()) return false;
+      item = std::move(queue_.front());
+      queue_.pop_front();
       auto it = calls_.find(item.first);
       if (it == calls_.end()) continue;
       callback = it->second->callback;
       if (!it->second->subscribe) calls_.erase(it);
     }
-    if (callback) callback(item.second);
+    if (callback) {
+      callback(item.second);
+      delivered_++;
+    }
   }
+}
+
+Luna::Stats Luna::stats() {
+  std::lock_guard<std::mutex> lock(mutex_);
+  Stats s;
+  s.live = calls_.size();
+  s.queued = queue_.size();
+  s.delivered = delivered_;
+  return s;
 }
 
 void Luna::inject(const std::string &payload) {

@@ -18,6 +18,16 @@ cmake --build build-webos -j"$(nproc)"
 if readelf -V build-webos/pkg/bin/bloob | grep -q GLIBCXX; then
   echo "error: binary depends on the NDK's libstdc++" >&2; exit 1
 fi
+# And no glibc symbol newer than the TV is known to provide (validation A3:
+# this was claimed, never enforced). Raise BLOOB_MAX_GLIBC only with TV evidence.
+MAX_GLIBC=${BLOOB_MAX_GLIBC:-2.4}
+NEWEST=$(readelf -V build-webos/pkg/bin/bloob | grep -o 'GLIBC_[0-9.]*' | sed 's/GLIBC_//' | sort -uV | tail -1)
+if [ -n "$NEWEST" ] && [ "$(printf '%s\n%s\n' "$NEWEST" "$MAX_GLIBC" | sort -V | tail -1)" != "$MAX_GLIBC" ]; then
+  echo "error: binary needs GLIBC_$NEWEST, newer than GLIBC_$MAX_GLIBC:" >&2
+  readelf -V build-webos/pkg/bin/bloob | grep -o 'GLIBC_[0-9.]*' | sort -uV >&2
+  exit 1
+fi
+echo "glibc: newest symbol version GLIBC_$NEWEST (limit $MAX_GLIBC)"
 
 # The app's own copy of the Bloob service (catalogue, sources, AllDebrid, artwork).
 VERSION=$(node -p "require('./package/appinfo.json').version")

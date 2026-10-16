@@ -1,5 +1,7 @@
 #include "api.h"
 
+#include "clock.h"
+
 #include "http.h"
 #include "log.h"
 #include "ui.h"
@@ -28,9 +30,9 @@ void Api::request(const std::string &method, const std::string &path, const std:
   std::string where = path.substr(0, path.find('?'));
   tasks_->run(
       [=]() -> std::function<void()> {
-        long long started = static_cast<long long>(SDL_GetTicks());
+        long long started = now_ms();
         HttpResponse res = http_request(method, port, path, body, 30000);
-        long long took = static_cast<long long>(SDL_GetTicks()) - started;
+        long long took = now_ms() - started;
         if (took > 20000) logf("api", "%s %s slow: %lld ms", method.c_str(), where.c_str(), took);
         auto result = std::make_shared<ApiResult>();
         result->status = res.status;
