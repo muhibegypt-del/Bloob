@@ -23,11 +23,17 @@ Layer numbers refer to [`APP-MAP.md`](APP-MAP.md).
 | **R2** | Both service start routes reach the same initialised state; no writes before load | F08 | S | R1 (durable settings reply) |
 | **R3** | Playback truth: intent ownership, confirmed clock, acknowledged tracks | F03, F04, F05, A2 | M | R1 (saves the confirmed position) |
 | **R4** | Watch attempts: source identity, resolve generations, reliable cancel | F06, F07, A1 (resolve) | M | R3 (attempt ID on the session) |
-| **R5** | Inspector snapshot, visible invalidation, bounded queues and records | F10, A2, A4, review §4.1 | M | R3 and R4 (state to show) |
-| **R6** | Shared focus and layout, text, accessibility, startup rows | review §4.2–4.4, A5 | L, split | R5 (measurements) |
+| **R5d** | Runtime inspector and resource counters (process memory, GPU estimate by class, frame stages, queues) | F10, A2, review §4.1; resource study C7, C9, C10, O1–O3, A9, G15 | M | none: can run alongside R1–R4 |
+| **R5a** | Frames and events: coalesced wakes, invalidation instead of wake-redraw, one paint per refresh, smoothed animation time, bounded pumps, texture-grouped drawing | F10; study C1, C2, C5, C6, C11, G2, G6, G7 | M | R5d (baseline) |
+| **R5b** | Resource ownership and memory: one GPU budget with admission, priority and frame-age eviction, objects outliving handles, background release, memory policy, Luna record reclamation | A4, review §4.1; study C8, C12, M1–M13, G9, G13, A8 | L | R5d |
+| **R5c** | Artwork pipeline: separate fetch and decode, relevance, one decode per source, staged cancellation, frame-end retirement, upload pacing, frost bake-ahead | Review §4.1; study A1–A6, G10, G12 | M | R5b |
+| **R6r** | Retained layers: cached intermediates with validity keys; transitions paint the outgoing screen once; separate shell layer | Study G1, G2, G4, G5, G14, M9 | M | R5a, R5b |
+| **R6** | Shared focus and layout, text, accessibility, startup rows | review §4.2–4.4, A5 | L, split | R5d (measurements) |
 | **R7** | Another media route, only for a diagnosed capability gap | none yet | L | R5 evidence |
 
 **Why R1 ships first.** It is the only increment that loses data the viewer cannot recover. A lost resume point or a reverted setting survives the session and every restart, while the playback-truth defects in R3 heal on the next action. R1 is also mostly service code with unit tests that run on any machine, so it is the cheapest to verify, and R3 depends on it: a confirmed position helps only if it reaches the disk.
+
+**Where the resource study fits.** The Elements of A CPU, memory and GPU study (16 October 2026) is mapped finding by finding in [RUNTIME-RESOURCE-ADOPTION.md](RUNTIME-RESOURCE-ADOPTION.md): 52 mechanisms, each with Bloob's current code and what Bloob adopts. That file specifies R5a–R5d and R6r in full. They replace the single R5 below, which stays as background for R5a and R5d. R5d has no dependency, so it can be built alongside R1–R4 and give every later increment a measured baseline. The data-loss fixes (R1–R4) still ship first, as the study's own map recommends.
 
 **Why R2 comes before R3.** F08 can overwrite every saved preference with defaults the first time the viewer touches Settings. That is the same data-loss class as R1. The fix is small, and R1's durable settings reply is what makes "do not write before load" checkable.
 
@@ -437,6 +443,8 @@ Service first (additive), then native, then the ordered lane. Version 2.4.x. Rol
 
 ## R5: inspector, visible invalidation, bounded work
 
+**Split and extended (16 October 2026).** This section is now specified as R5d (inspector), R5a (frames and events) and R5b (resources, including the Luna record reclamation below) in [RUNTIME-RESOURCE-ADOPTION.md](RUNTIME-RESOURCE-ADOPTION.md). That file is the source of truth; the text below remains as background.
+
 ### Identity and purpose
 
 - **Findings and gaps:**
@@ -601,6 +609,7 @@ None blocks R1–R4.
 | R2 | 15 Oct 2026 | No | No | No |
 | R3 | 15 Oct 2026 | No | No | No |
 | R4 | 15 Oct 2026 | No | No | No |
-| R5 | 15 Oct 2026 | No | No | No |
+| R5d, R5a, R5b, R5c | 16 Oct 2026 (split from R5) | No | No | No |
+| R6r | 16 Oct 2026 | No | No | No |
 | R6 | Outline only | No | No | No |
 | R7 | Gap documented; option 1 with R3, options 2–3 by owner decision | No | No | No |

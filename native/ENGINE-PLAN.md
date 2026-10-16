@@ -3,6 +3,7 @@
 **Target:** `docs/Buna-engine-specification.md` (from `bloob-v1` `73da849`), the finished-system spec.
 **Baseline:** Bloob Native 2.3.0 (`native/src`, about 9,000 lines of C++), 15 October 2026.
 **Reliability first:** [`RELIABILITY-IMPLEMENTATION-PLAN.md`](RELIABILITY-IMPLEMENTATION-PLAN.md) (planned, 15 October 2026) comes before the phases below. It fixes the validated findings in [`docs/Claude-review-validation.md`](../docs/Claude-review-validation.md) and takes over the parts of E1–E3 they need. The marks in §1 were corrected on the same date against that validation; each correction cites its finding.
+**Resource runtime:** [`RUNTIME-RESOURCE-ADOPTION.md`](RUNTIME-RESOURCE-ADOPTION.md) (planned, 16 October 2026) maps every mechanism in the Elements of A CPU, memory and GPU study to Bloob's code. It specifies increments R5a–R5d and R6r, which take over the queue, frame, resource and layer parts of E2, E4 and E6.
 **Evidence:** on the TV, only 2.2.0 has run (user report: "extremely smooth", with four quirks). Everything else is desktop builds and tests. Where this file says something "works", it means in the code and on the desktop, unless it says "TV".
 
 ## 1. Where we stand, section by section
