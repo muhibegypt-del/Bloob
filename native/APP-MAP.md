@@ -245,6 +245,7 @@ How the app should *behave* (continuity, place, async work, component states) is
 | *(2.0)* The Sources screen is now *All versions* (opened on request) and the direct-start progress sheet; versions, release details, file and quality questions and the failure sheet restyled as glass; a chosen alternative travels as `PlayRequest.candidate` (G4) | Desktop |
 | *(2.0)* Pairing sheet on frosted glass over whichever screen opened it (G6) | Desktop |
 | *(2.1)* Episode versions in sections (matches the last episode, other versions, *May not play well on this TV*). Each is tagged *Season pack* or *Single episode*. A hand-picked version becomes the show's intent. The starting sheet names a continued version and offers *Other versions* (X3.3) | Desktop (tour 19b, 19c) |
+| *(2.5)* Filter pills by resolution with counts; sections by kind of release (Remux, Blu-ray encodes, Web downloads, Web rips…); two-line rows (what you get; source, size, group); *Found by* in release details and the indexes named under the list (6.4) | Desktop (tour 10, 11, 11b, 11c, 19c) |
 
 **Gaps:**
 - Nothing shows whether a release is already cached on AllDebrid (instant) or must download.
@@ -255,6 +256,7 @@ How the app should *behave* (continuity, place, async work, component states) is
 - **6.1** First real-source run on the TV: is the Best match the one you would have picked? Feed the answer into **17.1**.
 - **6.2** Show "Ready now" when AllDebrid already has a release, once **18.3** exists.
 - **6.3** Manual link entry, through the Search keyboard.
+- **6.4** *(done in 2.5, desktop)* Structured versions list. Next: does the owner find it easier on the TV?
 
 ### 7. Player screen
 
@@ -604,7 +606,7 @@ How the app should *behave* (continuity, place, async work, component states) is
 **Lives in:**
 - `release.js`: turns stream names into typed claims (resolution, HDR, codec, audio, channels, source type, size, seeders, languages).
 - `rank.js`: explainable scores, cautions, groups.
-- Torrentio is the indexer.
+- `sources.js` *(2.5)*: Torrentio, TorrentsDB, StremThru Torznab, The Pirate Bay and EZTV, merged by hash.
 
 **State:**
 
@@ -616,15 +618,17 @@ How the app should *behave* (continuity, place, async work, component states) is
 | *(1.2)* TV profile table (`tv-profile.js`, `lg-2022-oled`) drives warnings; all weights in one `WEIGHTS` table; bitrate from size over running time; a DTS-only version is never recommended while one with playable sound exists (P3) | Desktop (unit tests) |
 | *(1.2)* Parser: 3D, disc image and sample claims; ambiguous source words read only after the title (P4) | Desktop (unit tests) |
 | *(2.1)* Continuity: a show keeps to its version. Matches are the same pack or group (+25), then the same resolution and picture (+12); dropping below costs −10. Seeders are capped at 6, below one resolution step. Sections: matches, other versions, *May not play well on this TV*. Release group and binge group are parsed (X3.2) | Desktop (unit tests, tour) |
+| *(2.5)* Several indexes behind a provider interface (17.2); episode filter for show-wide indexes; reply 2.5 s after Torrentio at most, late answers join the cache; Settings > Sources | Unit tests; live from a datacenter (Torrentio blocked there) |
+| *(2.5)* Picture preference (best, HDR10, SDR); Dolby Vision in MKV labelled as the HDR10 webOS 24 shows; probable profile 5 warned; sections capped at 120/40 | Unit tests |
 
 **Gaps:**
-- One indexer, called directly.
+- Knaben (title text search, the CocoScrapers approach) is not added yet.
 - Every quality field is a *claim from the name*, not a probe.
 - Weights are untuned.
 
 **Next:**
 - **17.1** Log the top 5 ranked releases (names only) for 10 real titles on the TV. Tune the weights from that.
-- **17.2** Put the indexer behind a provider interface.
+- **17.2** *(done in 2.5)* Put the indexer behind a provider interface.
 
 ### 18. AllDebrid: pairing and resolving
 

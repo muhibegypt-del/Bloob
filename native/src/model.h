@@ -87,12 +87,18 @@ struct SourceOption {
   bool excluded = false;
   std::string match;  // "same" or "like": continues the show's last version
   bool pack = false;  // part of a season pack (else a single episode file)
+  std::string source, group;  // "REMUX", "BluRay", "WEB-DL"…; the release group
+  std::string family;       // picture family: "DV", "HDR" or "SDR"
+  int dolby_vision = 0;     // guessed Dolby Vision profile for the player's hint: 5, 8 or 0
+  std::vector<std::string> sources;  // the indexes that listed it
+  int seeders = -1;         // from the availability text; -1 unknown
 };
 
 struct SourceGroup {
   std::string label;
   std::string kind;  // "continue", "resolution" or "problems"
   std::vector<SourceOption> items;
+  int more = 0;  // versions the service left out of this section
 };
 
 struct Ranking {

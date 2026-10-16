@@ -119,7 +119,7 @@ describe('version continuity', () => {
     release: id, claims: {}, languages: [], claimsFrom: 'release-name' }, over);
 
   it('keeps the next episode in the 4K version, even against a better-seeded 1080p', () => {
-    const uhd = c('u', { claims: { resolution: '4K', hdr: ['DV'] }, seeders: 12 });
+    const uhd = c('u', { claims: { resolution: '4K', hdr: ['DV', 'HDR10'] }, seeders: 12 });
     const hd = c('h', { claims: { resolution: '1080p' }, seeders: 2000 });
     expect(rank([uhd, hd], {}).recommended.id).toBe(uhd.id);
     const intent = { resolution: '4K', hdr: 'DV' };
@@ -129,8 +129,8 @@ describe('version continuity', () => {
   });
 
   it('prefers the same season pack, and lists other matches first', () => {
-    const pack = c('a', { claims: { resolution: '4K', hdr: ['DV'] }, seeders: 8, pack: true });
-    const other = c('b', { claims: { resolution: '4K', hdr: ['DV'] }, seeders: 300 });
+    const pack = c('a', { claims: { resolution: '4K', hdr: ['DV', 'HDR10'] }, seeders: 8, pack: true });
+    const other = c('b', { claims: { resolution: '4K', hdr: ['DV', 'HDR10'] }, seeders: 300 });
     const lower = c('d', { claims: { resolution: '1080p' }, seeders: 900 });
     const result = rank([other, pack, lower], { intent: { hash: HASH_A, resolution: '4K', hdr: 'DV' } });
     expect(result.recommended).toMatchObject({ id: pack.id, match: 'same', scope: 'pack' });

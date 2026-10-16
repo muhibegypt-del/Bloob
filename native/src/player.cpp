@@ -142,8 +142,9 @@ enum class Ctl { Toggle, Audio, Subtitles, StartOver, Next };
 
 class PlayerScreen : public Screen {
  public:
-  PlayerScreen(const PlayRequest &req, const std::string &url, const std::string &source, const std::string &load_type)
-      : req_(req), url_(url), source_(source), load_type_(load_type) {
+  PlayerScreen(const PlayRequest &req, const std::string &url, const std::string &source, const std::string &load_type,
+               int dolby_vision)
+      : req_(req), url_(url), source_(source), load_type_(load_type), dolby_vision_(dolby_vision) {
     start_at_ = req.resume_ms;
     // One viewing, one session: reports carry it and a rising sequence so the
     // service can drop late ones (UX-PLAN X1). A reopen keeps the session.
@@ -182,6 +183,8 @@ class PlayerScreen : public Screen {
     opened_ = true;
     // A reopen continues exactly where it was; a first start only past the resume threshold.
     load_start_ = start_at_ >= (reconnecting_ ? 1000 : play::kResumeMinMs) ? start_at_ : 0;
+    ums_.set_subtitle_style({c.subtitle_size, c.subtitle_background});
+    ums_.set_dolby_vision_hint(c.picture == "best" ? dolby_vision_ : 0);
     ums_.load(url_, c.app_id, window_id_, load_type_, [this](const MediaEvent &event) { on_media(event); }, load_start_);
   }
 
@@ -277,10 +280,11 @@ class PlayerScreen : public Screen {
     // The version promised Dolby Vision: say in the log whether the TV agrees, so
     // a TV run shows if Dolby Vision is lost on the way (TV, 2.2.0: "HDR every
     // time the video is DV").
-    if (event.kind == MediaEvent::VideoInfo && !ums_.info().hdr.empty() && source_.find("Dolby Vision") != std::string::npos) {
+    if (event.kind == MediaEvent::VideoInfo && !ums_.info().hdr.empty() && (dolby_vision_ || source_.find("Dolby Vision") != std::string::npos)) {
       std::string got = upper(ums_.info().hdr);
       bool dv = got.find("DOLBY") != std::string::npos || got == "DV";
-      logf("qoe", "picture: version claims Dolby Vision, TV reports %s%s", ums_.info().hdr.c_str(), dv ? "" : " (Dolby Vision not engaged)");
+      logf("qoe", "picture: version claims Dolby Vision (p%d), load option %s, TV reports %s%s", dolby_vision_,
+           ums_.dolby_vision_hint_sent() ? "sent" : "not sent", ums_.info().hdr.c_str(), dv ? "" : " (Dolby Vision not engaged)");
     }
     if (event.kind == MediaEvent::VideoInfo || event.kind == MediaEvent::SourceInfo || event.kind == MediaEvent::Loaded)
       place_video(ums_.info().width, ums_.info().height);
@@ -1092,6 +1096,7 @@ class PlayerScreen : public Screen {
  private:
   PlayRequest req_;
   std::string url_, source_, load_type_;
+  int dolby_vision_ = 0;  // the version's guessed Dolby Vision profile (5 or 8), 0 for none
   UmsPlayer ums_;
   UmsPort port_{ums_};
   Session session_;
@@ -1140,6 +1145,6 @@ class PlayerScreen : public Screen {
 }  // namespace
 
 std::unique_ptr<Screen> make_player(const PlayRequest &request, const std::string &url, const std::string &source_label,
-                                    const std::string &load_type) {
-  return std::make_unique<PlayerScreen>(request, url, source_label, load_type);
+                                    const std::string &load_type, int dolby_vision) {
+  return std::make_unique<PlayerScreen>(request, url, source_label, load_type, dolby_vision);
 }

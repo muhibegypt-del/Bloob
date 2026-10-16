@@ -242,6 +242,10 @@ class App {
           Ctx &x = ctx();
           x.language = r.json["language"].as_string("English");
           x.subtitle_language = r.json["subtitleLanguage"].as_string("Off");
+          x.subtitle_size = static_cast<int>(std::max<long long>(0, std::min<long long>(4, r.json["subtitleSize"].as_int(0))));
+          x.subtitle_background = r.json["subtitleBackground"].as_bool(false);
+          x.picture = r.json["picture"].as_string("best");
+          x.sources = r.json["sources"].as_string("all");
           x.autoplay_next = r.json["autoplayNext"].as_bool(true);
           x.reduce_motion = r.json["reduceMotion"].as_bool(false);
           x.reduce_transparency = r.json["reduceTransparency"].as_bool(false);

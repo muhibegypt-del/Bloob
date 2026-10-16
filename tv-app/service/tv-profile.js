@@ -15,6 +15,11 @@ const PROFILES = {
     truehdPassthrough: 'unverified',
     // Disc Dolby Vision (profile 7, dual layer): 'yes' or 'no'. 'no' plays the HDR10 base layer.
     dolbyVisionProfile7: 'no',
+    // Containers LG's media player reads Dolby Vision from. webOS 24 signals it
+    // only from MP4 (ISOBMFF) and MPEG-TS; Dolby Vision in MKV plays as its HDR10
+    // base layer (LG developer forum, Dec 2022; Jellyfin's webOS rule; the owner's
+    // 2.2.0 report "HDR every time"). webOS 25 adds MKV.
+    dolbyVisionContainers: ['MP4', 'M4V', 'TS'],
     hdr10plus: false,
     threeD: false,
     // Wired connection speed; the 2022 OLEDs have a 100 Mbit port.

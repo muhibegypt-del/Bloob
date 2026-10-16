@@ -202,3 +202,30 @@ Copy the `frames`, `gpu`, `images` and `memory` blocks into `research/` with the
 - [ ] Open and close a title page several times: `frames.layer_reuses` grows much faster than `layer_paints`, and the transition looks the same as in 2.3.
 
 **Log check.** `SDL linked …`, `renderer flags`, `vsync on|off`: record them. `vsync off` means frames are gated to one per refresh.
+
+## 11. New in 2.5: sources, picture, subtitles, versions list
+
+Install `artifacts/com.muhib.bloob_2.5.0_arm.ipk`. Keep `/tmp/bloob-native.log` open; every check below names the line to read.
+
+**Subtitles (the size and background are new; the TV draws the text).**
+- [ ] Settings > Subtitle size is *Small* by default (the TV's level 0; the TV's own default is level 2). Turn subtitles on in a film: the log shows `setSubtitleFontSize,"fontSize":0` after `setSubtitleEnable`. Is the text clearly smaller than before?
+- [ ] Try *Medium* and *Large (the TV's usual size)*: each step should be visibly larger. If no step changes anything, record it: the TV ignores the call, and the next step is drawing subtitles in Bloob (see `research/Subtitle-styling-on-webOS.md`).
+- [ ] Subtitle background on: a dark box behind the words (`setSubtitleBackgroundOpacity,"bgOpacity":191`).
+- [ ] Switch subtitles off and on again from the player's track panel: the size stays (it is re-sent on every enable).
+
+**Dolby Vision (an experiment, and honest labels).**
+- [ ] A Dolby Vision version in MKV is now labelled `HDR10 (Dolby Vision version)`, because webOS 24 reads Dolby Vision only from MP4 and MPEG-TS.
+- [ ] Play one. The log shows `load … dolbyVision=p8` and then `[qoe] picture: version claims Dolby Vision (p8), load option sent, TV reports …`. Record what the TV reports, and whether the TV's own Dolby Vision badge or picture mode appears. If the load is refused or fails before the picture, the log says `loading without it` and playback carries on.
+- [ ] If an MP4 Dolby Vision version is listed (the release name ends in `.mp4` or says MP4), play it and record the same line. If MP4 engages Dolby Vision, a remux route is worth building (see `research/Dolby-Vision-on-webOS.md`).
+- [ ] Settings > Picture: *HDR10, skip Dolby Vision* and *Prefer SDR* change the best version (the card's reason says "as your picture setting asks" for SDR).
+
+**Sources (several indexes).**
+- [ ] Open All versions for a popular film: the bottom line says `Found by Torrentio, TorrentsDB, StremThru, The Pirate Bay · N versions`. Record N and how long the list took compared with 2.4.
+- [ ] Open a rarer title: are there 4K remux or Dolby Vision versions that 2.4 did not list?
+- [ ] Settings > Sources > *Torrentio only*: the list is back to Torrentio's alone.
+- [ ] Play a version found only by StremThru or The Pirate Bay (Right shows *Found by*). It has no file index, so AllDebrid's file list decides; a series pack should still pick the right episode.
+
+**Versions list.**
+- [ ] Down from the best version reaches the filter pills (*All · 4K · 1080p · 720p and below · May not play well*, with counts); Left and Right filter; Down enters the list.
+- [ ] Sections by kind of release: *Remux*, *Blu-ray encodes*, *Web downloads*, *Web rips*… Each row's second line says source, size and release group.
+- [ ] Is this easier to choose from than 2.4? Note what still isn't.

@@ -227,11 +227,14 @@ function resetForTests() {
   if (timer) { clearTimeout(timer); timer = null; }
 }
 
-// App settings (audio and subtitle language, motion, transparency, contrast, autoplay,
+// App settings (audio and subtitle language, subtitle look, picture, sources, motion,
+// transparency, contrast, autoplay,
 // recent searches):
 // one small document.
 const settingsStore = accountStore.createFileStore('settings.json', accountStore.defaultLocations);
-const SETTINGS_DEFAULTS = { language: 'English', subtitleLanguage: 'Off', reduceMotion: false, reduceTransparency: false, highContrast: false, autoplayNext: true, welcomeSeen: false, recentSearches: [] };
+// subtitleSize: the TV's subtitle size level, 0 (smallest) to 4; the TV's own default is 2,
+// which viewers found far too large. picture: 'best' | 'hdr10' | 'sdr'. sources: 'all' | 'torrentio'.
+const SETTINGS_DEFAULTS = { language: 'English', subtitleLanguage: 'Off', subtitleSize: 0, subtitleBackground: false, picture: 'best', sources: 'all', reduceMotion: false, reduceTransparency: false, highContrast: false, autoplayNext: true, welcomeSeen: false, recentSearches: [] };
 const LANGUAGE = /^[A-Za-z ]{2,30}$/;
 let settings = null;
 
@@ -246,6 +249,10 @@ async function saveSettings(input) {
   const current = await getSettings();
   if (typeof input.language === 'string' && LANGUAGE.test(input.language)) current.language = input.language;
   if (typeof input.subtitleLanguage === 'string' && LANGUAGE.test(input.subtitleLanguage)) current.subtitleLanguage = input.subtitleLanguage;
+  if (Number.isInteger(input.subtitleSize) && input.subtitleSize >= 0 && input.subtitleSize <= 4) current.subtitleSize = input.subtitleSize;
+  if (typeof input.subtitleBackground === 'boolean') current.subtitleBackground = input.subtitleBackground;
+  if (['best', 'hdr10', 'sdr'].indexOf(input.picture) >= 0) current.picture = input.picture;
+  if (['all', 'torrentio'].indexOf(input.sources) >= 0) current.sources = input.sources;
   if (typeof input.reduceMotion === 'boolean') current.reduceMotion = input.reduceMotion;
   if (typeof input.reduceTransparency === 'boolean') current.reduceTransparency = input.reduceTransparency;
   if (typeof input.highContrast === 'boolean') current.highContrast = input.highContrast;

@@ -14,6 +14,19 @@ const char *kLanguages[] = {"English", "French", "Spanish", "German", "Italian",
                             "Arabic", "Turkish", "Japanese", "Korean"};
 constexpr int kLanguageCount = sizeof kLanguages / sizeof kLanguages[0];
 
+// The TV's subtitle size levels (setSubtitleFontSize). Its own default is 2,
+// which viewers found far too large; Bloob starts at the smallest.
+const char *kSubtitleSizes[] = {"Small", "Medium", "Large (the TV's usual size)", "Larger", "Largest"};
+
+const char *picture_name(const std::string &p) {
+  return p == "sdr" ? "Prefer SDR" : p == "hdr10" ? "HDR10, skip Dolby Vision" : "Best available";
+}
+const char *picture_note(const std::string &p) {
+  return p == "sdr" ? "SDR versions first, whatever their resolution"
+       : p == "hdr10" ? "HDR10 first; Dolby Vision versions play as HDR10"
+       : "Dolby Vision or HDR first, at the highest resolution";
+}
+
 #ifndef BLOOB_VERSION
 #define BLOOB_VERSION "dev"
 #endif
@@ -38,6 +51,10 @@ class SettingsScreen : public Screen {
       case Row::Disconnect: say = confirm_ ? "Press OK again to forget the pairing" : "Disconnect AllDebrid, button"; break;
       case Row::Audio: say = "Preferred audio language, " + c.language + ", adjustable"; break;
       case Row::Subtitles: say = "Subtitles, " + c.subtitle_language + ", adjustable"; break;
+      case Row::SubtitleSize: say = std::string("Subtitle size, ") + kSubtitleSizes[c.subtitle_size] + ", adjustable"; break;
+      case Row::SubtitleBackground: say = std::string("Subtitle background, switch, ") + (c.subtitle_background ? "on" : "off"); break;
+      case Row::Picture: say = std::string("Picture, ") + picture_name(c.picture) + ", adjustable"; break;
+      case Row::Sources: say = std::string("Sources, ") + (c.sources == "torrentio" ? "Torrentio only" : "every index") + ", adjustable"; break;
       case Row::Autoplay: say = std::string("Play the next episode automatically, switch, ") + (c.autoplay_next ? "on" : "off"); break;
       case Row::Motion: say = std::string("Reduce motion, switch, ") + (c.reduce_motion ? "on" : "off"); break;
       case Row::Transparency: say = std::string("Reduce transparency, switch, ") + (c.reduce_transparency ? "on" : "off"); break;
@@ -71,12 +88,14 @@ class SettingsScreen : public Screen {
     }, alive_);
   }
 
-  enum class Row { Account, Disconnect, Audio, Subtitles, Autoplay, Motion, Transparency, Contrast, About, Diagnostics };
+  enum class Row { Account, Disconnect, Audio, Subtitles, SubtitleSize, SubtitleBackground, Picture, Sources, Autoplay, Motion,
+                   Transparency, Contrast, About, Diagnostics };
 
   std::vector<Row> rows() const {
     std::vector<Row> list = {Row::Account};
     if (ctx().paired) list.push_back(Row::Disconnect);
-    for (Row r : {Row::Audio, Row::Subtitles, Row::Autoplay, Row::Motion, Row::Transparency, Row::Contrast, Row::About, Row::Diagnostics})
+    for (Row r : {Row::Audio, Row::Subtitles, Row::SubtitleSize, Row::SubtitleBackground, Row::Picture, Row::Sources, Row::Autoplay,
+                  Row::Motion, Row::Transparency, Row::Contrast, Row::About, Row::Diagnostics})
       list.push_back(r);
     return list;
   }
@@ -116,6 +135,13 @@ class SettingsScreen : public Screen {
     Ctx &c = ctx();
     if (r == Row::Audio) c.language = step(c.language, d, false);
     else if (r == Row::Subtitles) c.subtitle_language = step(c.subtitle_language, d, true);
+    else if (r == Row::SubtitleSize) c.subtitle_size = std::max(0, std::min(4, c.subtitle_size + d));
+    else if (r == Row::SubtitleBackground) c.subtitle_background = !c.subtitle_background;
+    else if (r == Row::Picture) {
+      static const char *order[] = {"best", "hdr10", "sdr"};
+      int i = c.picture == "sdr" ? 2 : c.picture == "hdr10" ? 1 : 0;
+      c.picture = order[(i + d + 3) % 3];
+    } else if (r == Row::Sources) c.sources = c.sources == "torrentio" ? "all" : "torrentio";
     else if (r == Row::Autoplay) c.autoplay_next = !c.autoplay_next;
     else if (r == Row::Motion) c.reduce_motion = !c.reduce_motion;
     else if (r == Row::Transparency) c.reduce_transparency = !c.reduce_transparency;
@@ -212,6 +238,27 @@ class SettingsScreen : public Screen {
         case Row::Subtitles:
           title = "Subtitles";
           value = c.subtitle_language == "Off" ? "Off" : c.subtitle_language + " when the video has them";
+          choice = true;
+          break;
+        case Row::SubtitleSize:
+          title = "Subtitle size";
+          value = kSubtitleSizes[c.subtitle_size];
+          choice = true;
+          break;
+        case Row::SubtitleBackground:
+          title = "Subtitle background";
+          value = c.subtitle_background ? "A dark box behind the words" : "Off";
+          toggle = c.subtitle_background;
+          break;
+        case Row::Picture:
+          title = "Picture";
+          value = std::string(picture_name(c.picture)) + " \xC2\xB7 " + picture_note(c.picture);
+          choice = true;
+          break;
+        case Row::Sources:
+          title = "Sources";
+          value = c.sources == "torrentio" ? "Torrentio only: fastest, fewer versions"
+                                           : "Torrentio, StremThru, TorrentsDB, The Pirate Bay and EZTV";
           choice = true;
           break;
         case Row::Autoplay:
@@ -311,7 +358,7 @@ class AboutScreen : public Screen {
         {"SDL2", "Sam Lantinga and contributors \xC2\xB7 zlib licence (the TV's own copy)"},
         {"Big Buck Bunny (test clip)", "Blender Foundation, peach.blender.org \xC2\xB7 Creative Commons Attribution 3.0"},
         {"Titles and artwork", "Cinemeta and Metahub catalogue services \xC2\xB7 rights stay with their owners"},
-        {"Sources", "Found by a public indexer and prepared by your own AllDebrid account"},
+        {"Sources", "Found by public indexes (Torrentio, StremThru, TorrentsDB, The Pirate Bay, EZTV) and prepared by your own AllDebrid account"},
     };
     for (auto &cr : credits) {
       text(Text::Callout, cr.first, x, y, label(Label::Primary), 560);

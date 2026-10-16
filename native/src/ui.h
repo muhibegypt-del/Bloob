@@ -78,6 +78,10 @@ struct Ctx {
   bool welcome_seen = false;    // the one-time AllDebrid note was shown
   std::string language = "English";            // preferred audio language: ranking and the starting track
   std::string subtitle_language = "Off";        // subtitles to switch on at start ("Off" = none)
+  int subtitle_size = 0;                        // the TV's subtitle size level, 0 smallest .. 4 (TV default 2)
+  bool subtitle_background = false;             // a dark box behind subtitles
+  std::string picture = "best";                 // picture preference: "best", "hdr10" or "sdr"
+  std::string sources = "all";                  // source indexes: "all" or "torrentio"
   bool autoplay_next = true;                    // Up next starts the next episode by itself
   bool reduce_motion = false;                   // no auto-advancing hero, page movement or focus zoom
   bool reduce_transparency = false;             // Glass panels become solid

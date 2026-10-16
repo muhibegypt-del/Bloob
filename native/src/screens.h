@@ -58,4 +58,4 @@ void start_playback(const PlayRequest &req, PlayOrigin origin, bool replace_top 
 // Set by the player before it closes to return to the source list instead of leaving it.
 bool &player_wants_another_source();
 std::unique_ptr<Screen> make_player(const PlayRequest &request, const std::string &url, const std::string &source_label,
-                                    const std::string &load_type = "media");
+                                    const std::string &load_type = "media", int dolby_vision = 0);

@@ -35,9 +35,15 @@ const WEIGHTS = {
   sameEdition: 25,   // the same season pack, or the same release group's file
   sameQuality: 12,   // same resolution and picture
   belowIntent: 10,   // lower resolution than the viewer has been watching
+  // The picture setting outranks resolution and continuity: asked-for SDR wins.
+  picturePreferred: 45,
+  dolbyVisionOnly: 15,
 };
 
 const RANK_OF = { '4K': 4, '1080p': 3, '720p': 2, '480p': 1, SD: 1 };
+// With several indexes a film can have hundreds of versions; the list keeps the
+// best of each section (the count of the rest is reported).
+const SECTION_LIMIT = { continue: 30, others: 120, problems: 40 };
 const PROBLEM_SECTION = 'May not play well on this TV';
 
 const plural = (n, one, many) => `${n} ${n === 1 ? one : (many || one + 's')}`;
@@ -46,26 +52,63 @@ function textOf(candidate) {
   return `${candidate.release || ''} ${candidate.fileName || ''}`;
 }
 
-/** What the picture will look like on this TV, from the claims. */
-function pictureOn(candidate, profile) {
+// Picture preferences (Settings > Picture): 'best' takes the best this TV shows,
+// 'hdr10' avoids Dolby Vision, 'sdr' prefers SDR versions.
+const PICTURE_PREFERENCES = ['best', 'hdr10', 'sdr'];
+
+function picturePreference(value) {
+  return PICTURE_PREFERENCES.indexOf(value) >= 0 ? value : 'best';
+}
+
+/**
+ * Which Dolby Vision profile a release probably carries, from its name:
+ * 'p7' (disc remux, dual layer), 'p8' (with an HDR10 base layer), 'p5' (Dolby
+ * Vision only, no HDR10 fallback: streaming releases tagged "DV" alone), or ''.
+ * A guess from naming habits, never a probe.
+ */
+function dolbyVisionProfile(candidate) {
   const c = candidate.claims || {};
   const hdr = c.hdr || [];
-  const dv = hdr.indexOf('DV') >= 0;
-  // Disc Dolby Vision (profile 7) on a TV without it plays the HDR10 base layer.
-  // Only a remux (or a disc image) keeps the disc's profile 7; Blu-ray encodes
-  // with Dolby Vision are normally converted to profile 8, which this TV plays.
-  // (2.2.0 treated every 4K Blu-ray as disc Dolby Vision and ranked it as HDR10.)
+  if (hdr.indexOf('DV') < 0) return '';
+  const text = textOf(candidate);
+  if (/\b(dv|dovi)[ .-]?p?5\b|\bprofile[ .-]?5\b/i.test(text)) return 'p5';
+  if (/\b(dv|dovi)[ .-]?p?8(\.\d)?\b|\bprofile[ .-]?8\b/i.test(text)) return 'p8';
   const disc = candidate.sourceType === 'REMUX' || !!c.discImage;
-  const profile8 = /\b(dv|dovi)[ .-]?p8\b|\bprofile[ .-]?8\b/i.test(textOf(candidate));
-  if (dv && disc && !profile8 && profile.dolbyVisionProfile7 !== 'yes') {
-    return { label: 'HDR10 (disc Dolby Vision unsupported)', short: 'HDR10', bonus: WEIGHTS.hdr, discDolbyVision: true };
+  if (disc) return 'p7';
+  return hdr.some(h => h !== 'DV') ? 'p8' : 'p5';
+}
+
+/** What the picture will look like on this TV, from the claims and the viewer's preference. */
+function pictureOn(candidate, profile, preference) {
+  const c = candidate.claims || {};
+  const hdr = c.hdr || [];
+  const pref = picturePreference(preference);
+  const dvProfile = dolbyVisionProfile(candidate);
+  // Most releases are MKV; an unknown container is treated as one.
+  const container = String(c.container || 'MKV').toUpperCase();
+  const containers = profile.dolbyVisionContainers || [];
+  const dvShows = containers.indexOf(container) >= 0;
+  const base = hdr.filter(h => h !== 'DV')[0];
+  const baseLabel = !base ? 'HDR10' : base === 'HDR10+' && !profile.hdr10plus ? 'HDR10' : base === 'HDR' ? 'HDR10' : base;
+  if (dvProfile === 'p7' && profile.dolbyVisionProfile7 !== 'yes') {
+    return { label: 'HDR10 (disc Dolby Vision unsupported)', short: 'HDR10', bonus: WEIGHTS.hdr, discDolbyVision: true, family: 'HDR', dolbyVision: dvProfile };
   }
-  if (dv) return { label: hdr.length > 1 ? 'Dolby Vision + HDR' : 'Dolby Vision', short: 'Dolby Vision', bonus: WEIGHTS.dolbyVision };
+  if (dvProfile === 'p5' && (!dvShows || pref === 'hdr10')) {
+    // No HDR10 layer to fall back to: without Dolby Vision the colours are wrong.
+    return { label: 'Dolby Vision only (colours may be wrong here)', short: 'Dolby Vision', bonus: 0, dolbyVisionOnly: true, family: 'DV', dolbyVision: dvProfile };
+  }
+  if (dvProfile && pref === 'hdr10') {
+    return { label: `${baseLabel} (Dolby Vision skipped)`, short: baseLabel, bonus: WEIGHTS.hdr - 1, family: 'HDR', dolbyVision: dvProfile };
+  }
+  if (dvProfile && !dvShows) {
+    return { label: `${baseLabel} (Dolby Vision version)`, short: baseLabel, bonus: WEIGHTS.hdr + 0.5, dolbyVisionAsHdr: true, family: 'HDR', dolbyVision: dvProfile };
+  }
+  if (dvProfile) return { label: hdr.length > 1 ? 'Dolby Vision + HDR' : 'Dolby Vision', short: 'Dolby Vision', bonus: WEIGHTS.dolbyVision, family: 'DV', dolbyVision: dvProfile };
   if (hdr.length) {
     const label = hdr[0] === 'HDR10+' && !profile.hdr10plus ? 'HDR10' : hdr[0];
-    return { label, short: label, bonus: WEIGHTS.hdr };
+    return { label, short: label, bonus: WEIGHTS.hdr, family: 'HDR', dolbyVision: '' };
   }
-  return { label: 'SDR', short: '', bonus: 0 };
+  return { label: 'SDR', short: '', bonus: 0, family: 'SDR', dolbyVision: '' };
 }
 
 /** What the sound will be on this TV, from the claims. */
@@ -160,10 +203,17 @@ function score(candidate, prefs) {
   let value = claims.resolution && RESOLUTION_SCORE[claims.resolution] !== undefined ? RESOLUTION_SCORE[claims.resolution] : 10;
   let excluded = false;
 
-  const picture = pictureOn(candidate, profile);
+  const preference = picturePreference(prefs.picture);
+  const picture = pictureOn(candidate, profile, preference);
   value += picture.bonus;
   if (picture.short) notes.push(picture.short);
   if (picture.discDolbyVision) issue(1, 'This TV doesn\'t support disc Dolby Vision; it plays as HDR10');
+  if (picture.dolbyVisionAsHdr) issue(1, `A Dolby Vision version; this TV shows Dolby Vision in an MKV file as HDR10`);
+  if (picture.dolbyVisionOnly) {
+    value -= WEIGHTS.dolbyVisionOnly;
+    issue(4, 'Dolby Vision without an HDR10 layer; this TV may show it with wrong colours', 'Colours may be wrong');
+  }
+  if (preference === 'sdr' && picture.family === 'SDR') value += WEIGHTS.picturePreferred;
 
   const sound = soundOn(candidate, profile);
   if (sound.silent) {
@@ -277,7 +327,7 @@ function headline(candidate, prefs) {
   const profile = profileFor((prefs || {}).profile);
   const c = candidate.claims || {};
   const parts = [c.resolution || 'Unknown quality'];
-  const picture = pictureOn(candidate, profile);
+  const picture = pictureOn(candidate, profile, (prefs || {}).picture);
   if (picture.short) parts.push(picture.short);
   if (soundOn(candidate, profile).atmos) parts.push('Atmos');
   return parts.join(' · ');
@@ -312,7 +362,9 @@ function view(ranked, prefs) {
     resolution: (c.claims || {}).resolution || (c.sourceType && LOW_QUALITY.has(c.sourceType) ? c.sourceType : '—'),
     picture: ranked.picture.label,
     audio: audioText(c),
-    size: sizeText(c.sizeBytes),
+    size: c.sizeBytes ? sizeText(c.sizeBytes) : c.packBytes ? `${sizeText(c.packBytes)} pack` : '',
+    source: c.sourceType || '',
+    group: c.group || '',
     availability: availability(c),
     bitrateMbps: ranked.mbps === undefined ? null : Math.round(ranked.mbps),
     facts: [c.sourceType, (c.claims || {}).videoCodec, audioText(c), sizeText(c.sizeBytes), bitrateText(ranked.mbps), availability(c)].filter(Boolean).join(' · '),
@@ -324,11 +376,21 @@ function view(ranked, prefs) {
     score: ranked.score,
     match: ranked.match === 'same' || ranked.match === 'like' ? ranked.match : '',
     scope: c.pack ? 'pack' : 'episode',
+    // Picture family for the list's filters, and the guessed Dolby Vision
+    // profile the player may signal (never 'p7': the TV can't show it).
+    family: ranked.picture.family,
+    dolbyVision: ranked.picture.dolbyVision === 'p7' ? '' : ranked.picture.dolbyVision,
+    container: (c.claims || {}).container || '',
+    sources: (c.providers || [c.provider]).filter(Boolean),
   };
 }
 
-function explain(best, all, intent) {
+function explain(best, all, intent, preference) {
   const c = best.candidate;
+  if (preference === 'sdr') {
+    if (best.picture.family === 'SDR') return 'SDR, as your picture setting asks.';
+    return 'No SDR version is offered; this is the best of the rest.';
+  }
   if (best.match === 'same') return 'The same version as your last episode.';
   if (best.match === 'like') return `Matches your last episode: ${[intent.resolution, intent.hdr === 'DV' ? 'Dolby Vision' : intent.hdr === 'HDR' ? 'HDR' : ''].filter(Boolean).join(' · ')}.`;
   const mine = RESOLUTION_SCORE[(c.claims || {}).resolution] || 0;
@@ -365,18 +427,32 @@ function rank(candidates, prefs) {
     if (!r.problem && continuing.indexOf(r) < 0 && groupOf(r.candidate) === label) others.push(r);
   }));
   const groups = [];
+  const section = (label, kind, list) => {
+    const kept = list.slice(0, SECTION_LIMIT[kind]);
+    groups.push({ label, kind, items: kept.map(r => view(r, prefs)), more: list.length - kept.length });
+  };
   if (continuing.length) {
-    const label = continuing.every(r => r.match === 'same') ? 'Same as your last episode' : 'Matches your last episode';
-    groups.push({ label, kind: 'continue', items: continuing.map(r => view(r, prefs)) });
+    section(continuing.every(r => r.match === 'same') ? 'Same as your last episode' : 'Matches your last episode', 'continue', continuing);
   }
-  if (others.length) groups.push({ label: 'Other versions', kind: 'others', items: others.map(r => view(r, prefs)) });
-  if (problems.length) groups.push({ label: PROBLEM_SECTION, kind: 'problems', items: problems.map(r => view(r, prefs)) });
+  // "Other versions" keeps the best of each resolution when trimmed, not only 4K.
+  if (others.length) {
+    let kept = others;
+    if (others.length > SECTION_LIMIT.others) {
+      const share = Math.floor(SECTION_LIMIT.others / GROUP_ORDER.length);
+      const chosen = new Set();
+      GROUP_ORDER.forEach(label => others.filter(r => groupOf(r.candidate) === label).slice(0, share).forEach(r => chosen.add(r)));
+      others.forEach(r => { if (chosen.size < SECTION_LIMIT.others) chosen.add(r); });
+      kept = others.filter(r => chosen.has(r));
+    }
+    groups.push({ label: 'Other versions', kind: 'others', items: kept.map(r => view(r, prefs)), more: others.length - kept.length });
+  }
+  if (problems.length) section(PROBLEM_SECTION, 'problems', problems);
   return {
     recommended: recommended ? view(recommended, prefs) : null,
-    why: recommended ? explain(recommended, ranked, prefs.intent) : '',
+    why: recommended ? explain(recommended, ranked, prefs.intent, picturePreference(prefs.picture)) : '',
     groups,
     total: candidates.length,
   };
 }
 
-module.exports = { rank, score, headline, sizeText, bitrateMbps, editionOf, hashOf, WEIGHTS };
+module.exports = { rank, score, headline, sizeText, bitrateMbps, editionOf, hashOf, dolbyVisionProfile, picturePreference, WEIGHTS };

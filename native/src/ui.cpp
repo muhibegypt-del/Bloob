@@ -23,6 +23,9 @@ void Ctx::save_settings() {
   std::string list;
   for (auto &s : recent_searches) list += (list.empty() ? "" : ",") + Json::quote(s);
   api.post("/api/settings", "{\"language\":" + Json::quote(language) + ",\"subtitleLanguage\":" + Json::quote(subtitle_language) +
+                                ",\"subtitleSize\":" + std::to_string(subtitle_size) +
+                                ",\"subtitleBackground\":" + (subtitle_background ? "true" : "false") +
+                                ",\"picture\":" + Json::quote(picture) + ",\"sources\":" + Json::quote(sources) +
                                 ",\"autoplayNext\":" + (autoplay_next ? "true" : "false") +
                                 ",\"reduceMotion\":" + (reduce_motion ? "true" : "false") +
                                 ",\"reduceTransparency\":" + (reduce_transparency ? "true" : "false") +

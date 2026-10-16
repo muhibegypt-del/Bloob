@@ -14,7 +14,7 @@ describe('service ranking', () => {
   it('recommends the best non-excluded source with readable labels', () => {
     const result = rank([
       candidate({ id: 'cam', claims: { resolution: '4K' }, sourceType: 'CAM', seeders: 900 }),
-      candidate({ id: 'dv', claims: { resolution: '4K', hdr: ['DV', 'HDR10'], audio: ['TrueHD', 'Atmos'], channels: '7.1' }, sourceType: 'WEB-DL', seeders: 120, sizeBytes: 18.4e9 }),
+      candidate({ id: 'dv', claims: { resolution: '4K', hdr: ['DV', 'HDR10'], audio: ['TrueHD', 'Atmos'], channels: '7.1', container: 'MP4' }, sourceType: 'WEB-DL', seeders: 120, sizeBytes: 18.4e9 }),
       candidate({ id: 'hd', claims: { resolution: '1080p', audio: ['DD+'], channels: '5.1' }, seeders: 400, sizeBytes: 4.2e9 }),
     ], { language: 'English' });
     expect(result.recommended.id).toBe('dv');
@@ -85,9 +85,9 @@ describe('service ranking', () => {
 
   it('scores disc Dolby Vision as HDR10 and keeps web Dolby Vision ahead', () => {
     const same = { seeders: 100 };
-    const disc = candidate({ id: 'disc', release: 'Film.2024.2160p.UHD.BluRay.REMUX.DV.HDR10.HEVC.DDP5.1', claims: { resolution: '4K', hdr: ['DV', 'HDR10'], audio: ['Dolby Digital Plus'], channels: '5.1' }, sourceType: 'REMUX', seeders: same.seeders, sizeBytes: 30e9 });
-    const encode = candidate({ id: 'encode', claims: { resolution: '4K', hdr: ['DV', 'HDR10'], audio: ['Dolby Digital Plus'], channels: '5.1' }, sourceType: 'BluRay', seeders: same.seeders, sizeBytes: 20e9 });
-    const web = candidate({ id: 'web', claims: { resolution: '4K', hdr: ['DV', 'HDR10'], audio: ['Dolby Digital Plus'], channels: '5.1' }, sourceType: 'WEB-DL', seeders: same.seeders, sizeBytes: 20e9 });
+    const disc = candidate({ id: 'disc', release: 'Film.2024.2160p.UHD.BluRay.REMUX.DV.HDR10.HEVC.DDP5.1', claims: { resolution: '4K', hdr: ['DV', 'HDR10'], audio: ['Dolby Digital Plus'], channels: '5.1', container: 'MP4' }, sourceType: 'REMUX', seeders: same.seeders, sizeBytes: 30e9 });
+    const encode = candidate({ id: 'encode', claims: { resolution: '4K', hdr: ['DV', 'HDR10'], audio: ['Dolby Digital Plus'], channels: '5.1', container: 'MP4' }, sourceType: 'BluRay', seeders: same.seeders, sizeBytes: 20e9 });
+    const web = candidate({ id: 'web', claims: { resolution: '4K', hdr: ['DV', 'HDR10'], audio: ['Dolby Digital Plus'], channels: '5.1', container: 'MP4' }, sourceType: 'WEB-DL', seeders: same.seeders, sizeBytes: 20e9 });
     const result = rank([disc, encode, web], {});
     expect(['web', 'encode']).toContain(result.recommended.id);
     expect(result.recommended.picture).toBe('Dolby Vision + HDR');

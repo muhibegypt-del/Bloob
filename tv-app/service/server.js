@@ -14,13 +14,14 @@ const progress = require('./progress');
 const next = require('./next');
 const { rank, editionOf, hashOf } = require('./rank');
 const { createResolver } = require('./resolve');
+const sources = require('./sources');
 
 const PORT = config.port;
 const VERSION = require('./package.json').version;
 const UI_DIR = path.resolve(process.env.TV_APP_UI_DIR || path.join(__dirname, 'www'));
 const API = 'api.alldebrid.com';
 const SOURCE_HOST = 'torrentio.strem.fun';
-const PROVIDER = 'Torrentio';
+const PROVIDER = 'Torrentio';  // the provider fixtures stand in for
 let apiKey = process.env.ALLDEBRID_API_KEY || '';
 let pendingPin = null;
 let ready = false;
@@ -155,15 +156,43 @@ function publicEdition(edition) {
   };
 }
 
+/** Which providers the viewer chose in Settings: every index, or Torrentio alone. */
+async function providerChoice() {
+  const settings = await progress.getSettings().catch(() => ({}));
+  return settings.sources === 'torrentio' ? ['torrentio'] : null;
+}
+
 async function discoverCached(type, id) {
-  const key = `${type}:${id}`;
+  const only = await providerChoice();
+  const key = `${type}:${id}:${only ? only.join(',') : 'all'}`;
   const hit = discoveries.get(key);
-  if (hit && Date.now() - hit.at < DISCOVERY_TTL) return hit.candidates;
-  const candidates = devFixtures ? parseStreams(await devFixtures.streams(type, id), PROVIDER) : await discover(type, id);
-  discoveries.set(key, { at: Date.now(), candidates });
+  if (hit && Date.now() - hit.at < DISCOVERY_TTL) return hit;
+  let found;
+  if (devFixtures) {
+    found = { candidates: parseStreams(await devFixtures.streams(type, id), 'torrentio'), report: [{ id: 'torrentio', label: PROVIDER, count: 0, ms: 0, error: '' }] };
+    found.report[0].count = found.candidates.length;
+  } else {
+    // Late answers (after the reply went back) join the cached list for the next look.
+    found = await sources.discoverAll(type, id, {
+      only,
+      onLate: (candidates, report) => {
+        const entry = discoveries.get(key);
+        if (!entry) return;
+        entry.candidates = candidates;
+        entry.report = report.map(r => Object.assign({}, r));
+        remember(candidates);
+      },
+    });
+  }
+  const entry = { at: Date.now(), candidates: found.candidates, report: found.report };
+  if (!found.candidates.length && found.report.every(r => r.error)) {
+    // Every index failed: say why, and don't cache the failure.
+    throw new Error(`No source index answered (${found.report.map(r => `${r.label}: ${r.error}`).join('; ')})`);
+  }
+  discoveries.set(key, entry);
   if (discoveries.size > 50) discoveries.delete(discoveries.keys().next().value);
-  remember(candidates);
-  return candidates;
+  remember(found.candidates);
+  return entry;
 }
 
 function withArt(entry) {
@@ -185,33 +214,6 @@ function videoFiles(nodes, result = [], folder = '') {
     }
   }
   return result.sort((a, b) => b.size - a.size);
-}
-
-function discover(type, id) {
-  return new Promise((resolve, reject) => {
-    const request = https.get({
-      hostname: SOURCE_HOST,
-      path: `/stream/${type}/${encodeURIComponent(id).replace(/%3A/g, ':')}.json`,
-      timeout: 15000,
-      headers: { Accept: 'application/json', 'User-Agent': 'Bloob/0.2 (webOS)' },
-    }, response => {
-      if (response.statusCode !== 200) {
-        response.resume();
-        return reject(new Error(`Source indexer returned ${response.statusCode}`));
-      }
-      let body = '';
-      response.on('data', chunk => {
-        body += chunk;
-        if (body.length > 5000000) request.destroy(new Error('Source list is too large'));
-      });
-      response.on('end', () => {
-        try { resolve(parseStreams(JSON.parse(body).streams, PROVIDER)); }
-        catch (_) { reject(new Error('Source indexer returned an unreadable response')); }
-      });
-    });
-    request.on('timeout', () => request.destroy(new Error('Source search timed out')));
-    request.on('error', reject);
-  });
 }
 
 function accountStatus() {
@@ -286,16 +288,21 @@ async function handleApi(req, res, url) {
     const type = input.type;
     const id = String(input.videoId || '');
     if (!validVideoId(type, id)) return reply(res, 400, { error: 'Invalid title or episode ID' });
-    const candidates = await discoverCached(type, id);
+    const found = await discoverCached(type, id);
+    const candidates = found.candidates;
+    const settings = await progress.getSettings().catch(() => ({}));
     // Runtime for the bitrate estimate: the app's, else the cached catalogue's,
     // else the ranker's typical film or episode length.
     const sent = Number(input.runtimeMinutes);
     const runtimeMinutes = sent > 0 && sent < 1000 ? sent : await catalog.cachedRuntime(type, id.split(':')[0]);
     // A show keeps to the version the viewer chose or last played (UX-PLAN X3).
     const intent = type === 'series' ? await progress.intentFor(id.split(':')[0]).catch(() => null) : null;
-    const prefs = { language: input.language || 'English', type, runtimeMinutes: runtimeMinutes || undefined, intent: intent || undefined };
+    const prefs = { language: input.language || 'English', type, runtimeMinutes: runtimeMinutes || undefined, intent: intent || undefined, picture: settings.picture };
+    const answered = found.report.filter(r => !r.error && r.count > 0).map(r => r.label);
     return reply(res, 200, Object.assign({
-      provider: PROVIDER,
+      provider: answered.length ? answered.join(', ') : PROVIDER,
+      providers: found.report,
+      picturePreference: settings.picture || 'best',
       runtimeMinutes: runtimeMinutes || null,
       runtimeFrom: sent > 0 && sent < 1000 ? 'app' : runtimeMinutes ? 'catalogue' : 'typical',
     }, rank(candidates, prefs)));
@@ -345,7 +352,8 @@ async function handleApi(req, res, url) {
       return reply(res, 400, { error: 'Invalid title or episode ID' });
     }
     if (type === 'series' && !/:\d+:\d+$/.test(id)) return reply(res, 400, { error: 'Choose an episode first' });
-    return reply(res, 200, { provider: PROVIDER, sources: await discover(type, id) });
+    const found = await discoverCached(type, id);
+    return reply(res, 200, { provider: PROVIDER, providers: found.report, sources: found.candidates });
   }
   if (pathname === '/api/account' && req.method === 'GET') {
     return reply(res, 200, accountStatus());

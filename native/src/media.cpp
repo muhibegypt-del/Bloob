@@ -12,13 +12,24 @@ bool UmsPlayer::load(const std::string &uri, const std::string &app_id, const st
                      const std::string &load_type, Listener listener, long long start_ms) {
   listener_ = std::move(listener);
   info_ = MediaInfo{};
+  last_ = {uri, app_id, window_id, load_type, start_ms};
+  playing_seen_ = false;
+  dv_sent_ = dv_profile_ > 0 && !dv_refused_;
   std::string option = "{\"appId\":" + Json::quote(app_id);
   if (!window_id.empty()) option += ",\"windowId\":" + Json::quote(window_id);
   if (start_ms > 0) option += ",\"transmission\":{\"playTime\":{\"start\":" + std::to_string(start_ms) + "}}";
+  // Experiment (2.5.0): the Dolby Vision description Kodi gives the same
+  // pipeline on its elementary-stream path. webOS 24 reads Dolby Vision only
+  // from MP4 and MPEG-TS on a URI load; whether it honours this for MKV is what
+  // the log line "[qoe] picture" answers on the TV.
+  if (dv_sent_)
+    option += ",\"externalStreamingInfo\":{\"contents\":{\"DolbyHdrInfo\":{\"encryptionType\":\"clear\",\"profileId\":" +
+              std::to_string(dv_profile_) + ",\"trackType\":\"single\"}}}";
   option += "}";
   std::string payload = "{\"uri\":" + Json::quote(uri) + ",\"type\":" + Json::quote(load_type) +
                         ",\"payload\":{\"option\":" + option + "}}";
-  logf("media", "load %s type=%s window=%s start=%lld", redact_uri(uri).c_str(), load_type.c_str(), window_id.c_str(), start_ms);
+  logf("media", "load %s type=%s window=%s start=%lld%s", redact_uri(uri).c_str(), load_type.c_str(), window_id.c_str(), start_ms,
+       dv_sent_ ? (" dolbyVision=p" + std::to_string(dv_profile_)).c_str() : "");
 
   int generation = ++generation_;
   std::weak_ptr<int> alive = alive_;
@@ -36,6 +47,13 @@ bool UmsPlayer::load(const std::string &uri, const std::string &app_id, const st
       return;
     }
     if (!ok || !json["returnValue"].as_bool()) {
+      if (dv_sent_) {
+        logf("media", "load with the Dolby Vision option refused (%lld %s); loading without it",
+             json["errorCode"].as_int(-1), json["errorText"].as_string().c_str());
+        dv_refused_ = true;
+        load(uri, app_id, window_id, load_type, listener_, start_ms);
+        return;
+      }
       if (start_ms > 0) {
         logf("media", "load with a start position refused (%lld %s); loading from the beginning",
              json["errorCode"].as_int(-1), json["errorText"].as_string().c_str());
@@ -104,7 +122,19 @@ void UmsPlayer::select_track(const std::string &type, int index) {
 }
 
 void UmsPlayer::set_subtitles(bool enabled) {
-  command("setSubtitleEnable", std::string(",\"enable\":") + (enabled ? "true" : "false"));
+  std::weak_ptr<int> alive = alive_;
+  command("setSubtitleEnable", std::string(",\"enable\":") + (enabled ? "true" : "false"), [this, alive, enabled](bool ok) {
+    if (enabled && ok && !alive.expired()) apply_subtitle_style();
+  });
+}
+
+void UmsPlayer::apply_subtitle_style() {
+  int size = style_.size < 0 ? 0 : style_.size > 4 ? 4 : style_.size;
+  command("setSubtitleFontSize", ",\"fontSize\":" + std::to_string(size));
+  command("setSubtitleCharacterColor", ",\"charColor\":\"white\"");
+  command("setSubtitleBackgroundColor", ",\"bgColor\":\"black\"");
+  // 0 is no box (the TV's default); 191 is a 75% box.
+  command("setSubtitleBackgroundOpacity", std::string(",\"bgOpacity\":") + (style_.background ? "191" : "0"));
 }
 
 void UmsPlayer::unload() {
@@ -244,7 +274,10 @@ void UmsPlayer::on_event(const std::string &payload) {
     listener_({MediaEvent::TrackSelected, 0, type, index});
   }
   if (json.has("loadCompleted")) listener_({MediaEvent::Loaded});
-  if (json.has("playing")) listener_({MediaEvent::Playing});
+  if (json.has("playing")) {
+    playing_seen_ = true;
+    listener_({MediaEvent::Playing});
+  }
   if (json.has("paused")) listener_({MediaEvent::Paused});
   if (json.has("bufferingStart")) listener_({MediaEvent::BufferingStart});
   if (json.has("bufferingEnd")) listener_({MediaEvent::BufferingEnd});
@@ -261,6 +294,16 @@ void UmsPlayer::on_event(const std::string &payload) {
   if (json.has("error")) {
     const Json &e = json["error"];
     logf("media", "error %lld %s", e["errorCode"].as_int(), e["errorText"].as_string().c_str());
+    if (dv_sent_ && !playing_seen_) {
+      // The experiment may be what broke it: load again without the option.
+      logf("media", "failed before playing with the Dolby Vision option; loading without it");
+      dv_refused_ = true;
+      LastLoad again = last_;
+      Listener keep = listener_;
+      unload();
+      load(again.uri, again.app_id, again.window_id, again.load_type, keep, again.start_ms);
+      return;
+    }
     listener_({MediaEvent::Error, 0, e["errorText"].as_string("Playback failed."), static_cast<int>(e["errorCode"].as_int())});
   }
 }

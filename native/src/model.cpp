@@ -1,6 +1,7 @@
 #include "model.h"
 
 #include <cstdio>
+#include <cstdlib>
 #include <ctime>
 
 static std::vector<std::string> strings(const Json &list) {
@@ -142,6 +143,15 @@ static SourceOption parse_option(const Json &j) {
   o.excluded = j["excluded"].as_bool();
   o.match = j["match"].as_string();
   o.pack = j["scope"].as_string() == "pack";
+  o.family = j["family"].as_string();
+  o.source = j["source"].as_string();
+  o.group = j["group"].as_string();
+  std::string dv = j["dolbyVision"].as_string();
+  o.dolby_vision = dv == "p8" ? 8 : dv == "p5" ? 5 : 0;
+  o.sources = strings(j["sources"]);
+  // "120 seeders" leads with the number; anything else is unknown.
+  const std::string &a = o.availability;
+  if (!a.empty() && a[0] >= '0' && a[0] <= '9') o.seeders = std::atoi(a.c_str());
   return o;
 }
 
@@ -157,6 +167,7 @@ Ranking parse_ranking(const Json &j) {
     g.label = groups[i]["label"].as_string();
     g.kind = groups[i]["kind"].as_string("resolution");
     for (size_t k = 0; k < groups[i]["items"].size(); k++) g.items.push_back(parse_option(groups[i]["items"][k]));
+    g.more = static_cast<int>(groups[i]["more"].as_int(0));
     r.groups.push_back(g);
   }
   return r;

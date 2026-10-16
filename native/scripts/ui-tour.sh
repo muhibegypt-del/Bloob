@@ -63,7 +63,7 @@ run task 0 \
   "key:back" "key:back" "key:back" "wait:1500" "snap:19-back-to-details" \
   "key:up" "key:up" "wait:1200" "snap:19a-details-next-episode" \
   "key:right" "key:ok" "wait:2500" "snap:19b-episode-versions" \
-  "key:down" "key:down" "key:down" "key:down" "wait:800" "snap:19c-episode-versions-problems" \
+  "key:down" "key:down" "key:down" "key:down" "key:down" "wait:800" "snap:19c-episode-versions-list" \
   "key:back" "wait:1000" "key:back" "wait:1500" "snap:20-back-to-home" \
   "key:up" "key:up" "key:up" "key:up" "wait:400" "snap:21-tabs" \
   "key:left" "key:left" "key:down" "key:right" "key:right" "key:right" "key:ok" "key:down" "key:down" "key:down" "key:ok" \
@@ -76,11 +76,14 @@ run states 1 \
   "wait:8000" "snap:29-welcome" "key:right" "key:ok" "wait:400" "key:down" "wait:1500" "key:ok" "wait:4000" "snap:30-details-film" \
   "key:down" "wait:1500" "snap:30a-how-to-watch" "key:up" \
   "key:right" "key:ok" "wait:2500" "snap:10-sources-all-versions" \
-  "key:down" "wait:500" "snap:11-sources-other" \
+  "key:down" "wait:500" "snap:11-sources-filters" \
+  "key:right" "wait:500" "snap:11b-sources-filter-4k" \
+  "key:down" "key:down" "wait:500" "snap:11c-sources-row" \
   "key:right" "wait:600" "snap:11a-sources-release-details" "key:left" "key:back" "wait:800" \
   "key:left" "key:ok" "wait:2500" "snap:31-pairing" \
   "key:back" "wait:800" "key:back" "wait:800" \
   "key:up" "key:up" "key:up" "wait:300" "key:right" "key:right" "key:right" "wait:800" "snap:32-settings" \
+  "key:down" "key:down" "key:down" "key:down" "key:down" "wait:800" "snap:33-settings-subtitles-picture" \
   "quit"
 
 # Player shots have a transparent hole where the TV's video plane shows through;
