@@ -101,10 +101,11 @@ The owner chose native. `native/` is a C++ webOS app (`com.muhib.bloob`, "Bloob 
   - **TV pass:** `native/TV-TEST.md` §10.
 - **2.5.0 sources, picture and subtitles (16 October 2026, built, not yet on the TV).** The owner's report on 2.4: subtitles far too large with no size option, Dolby Vision still showing as HDR, a wish for SDR, a versions list that isn't intuitive, and a question about better scrapers than Torrentio. Research is in `research/Source-indexes-for-Bloob.md`, `research/Dolby-Vision-on-webOS.md` and `research/Subtitle-styling-on-webOS.md`.
   - **Sources.** `tv-app/service/sources.js` asks Torrentio, TorrentsDB, StremThru's public Torznab (which carries Debrid Media Manager hash lists: many 4K remux, DV and Atmos releases), The Pirate Bay's API and EZTV. All are keyed by IMDb ID, and none is sent the AllDebrid key. Results merge by hash. The reply goes back 2.5 s after Torrentio answers at most, and later answers join the cache. Settings > Sources can return to Torrentio only.
-  - **Picture.** Settings > Picture: Best available, HDR10 (skip Dolby Vision) or Prefer SDR (outranks resolution). `tv-profile.js` says webOS 24 reads Dolby Vision only from MP4/TS, so MKV Dolby Vision is labelled as the HDR10 it plays as. "DV" without an HDR10 layer (probably profile 5) is warned about. As an experiment, Dolby Vision loads carry Kodi's `DolbyHdrInfo` option with a fallback; the `[qoe] picture` log line reports the result. The real fix (an MP4/HLS remux, or the Starfish ES route) is not built.
+  - **Picture.** Settings > Picture: Best available, HDR10 (skip Dolby Vision) or Prefer SDR (outranks resolution).
+  - **Dolby Vision (2.5.1 correction).** The owner reports Dolby Vision in MKV works on this TV. That overrides the public sources 2.5.0 relied on, so do not reintroduce an "MP4 only" rule. `tv-profile.js` lists MKV among the Dolby Vision containers. The `DolbyHdrInfo` load experiment is removed. The player's badge follows a Dolby Vision version when uMediaServer reports only the HDR10 base layer; `[qoe] picture` logs what the TV reported.
   - **Subtitles.** Settings > Subtitle size (TV levels 0–4, default the smallest) and Subtitle background, sent with `setSubtitleFontSize` and friends after every enable.
   - **Versions list.** Filter pills by resolution with counts, sections by kind of release (Remux, Blu-ray, Web download…), two-line rows with source, size and group, and *Found by* in release details.
-  - **TV pass:** `native/TV-TEST.md` §11; the IPK is `native/artifacts/com.muhib.bloob_2.5.0_arm.ipk`.
+  - **TV pass:** `native/TV-TEST.md` §11; the IPK is `native/artifacts/com.muhib.bloob_2.5.1_arm.ipk`.
 - **Design (2.0, Glass):** the visual system, with materials, tokens, type, focus, motion, states, the spoken interface and per-screen layouts, is in `native/DESIGN.md`. The tokens live in `native/src/theme.h`, the type scale, label roles and components in `ui.cpp`, and the frost bake in `images.cpp`.
 - **Rendering and playback:**
   - The TV's SDL2 provides the window and remote. Bloob draws with its own renderer: Inter via stb_truetype with oversampling and gamma, exact-size anti-aliased shapes, and artwork via stb_image scaled on worker threads, on a 1920×1080 offscreen canvas.
@@ -121,7 +122,7 @@ The owner chose native. `native/` is a C++ webOS app (`com.muhib.bloob`, "Bloob 
   - watch progress and settings.
   If the bus will not start the service, the app runs it directly with the TV's Node and stops it on exit.
 - **Build and test scripts:**
-  - `native/scripts/build.sh`: tests, cross-build, ABI guards (no GLIBCXX, and since 2.4 no glibc symbol newer than GLIBC_2.4), service staging, IPK with fixed modes (`native/artifacts/com.muhib.bloob_2.5.0_arm.ipk`).
+  - `native/scripts/build.sh`: tests, cross-build, ABI guards (no GLIBCXX, and since 2.4 no glibc symbol newer than GLIBC_2.4), service staging, IPK with fixed modes (`native/artifacts/com.muhib.bloob_2.5.1_arm.ipk`).
   - `native/scripts/tv-inspect.sh`: reads the runtime inspector snapshot `/tmp/bloob-state.json` from the TV, read-only.
   - `native/scripts/ui-tour.sh`: drives the whole app on the desktop through the acceptance task, plus quick-menu, Home and pipeline-lost events, against the real service with fixture sources.
   - `native/scripts/ui-snapshots.sh`: covers player states.

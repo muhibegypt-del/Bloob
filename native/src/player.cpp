@@ -184,7 +184,6 @@ class PlayerScreen : public Screen {
     // A reopen continues exactly where it was; a first start only past the resume threshold.
     load_start_ = start_at_ >= (reconnecting_ ? 1000 : play::kResumeMinMs) ? start_at_ : 0;
     ums_.set_subtitle_style({c.subtitle_size, c.subtitle_background});
-    ums_.set_dolby_vision_hint(c.picture == "best" ? dolby_vision_ : 0);
     ums_.load(url_, c.app_id, window_id_, load_type_, [this](const MediaEvent &event) { on_media(event); }, load_start_);
   }
 
@@ -283,8 +282,8 @@ class PlayerScreen : public Screen {
     if (event.kind == MediaEvent::VideoInfo && !ums_.info().hdr.empty() && (dolby_vision_ || source_.find("Dolby Vision") != std::string::npos)) {
       std::string got = upper(ums_.info().hdr);
       bool dv = got.find("DOLBY") != std::string::npos || got == "DV";
-      logf("qoe", "picture: version claims Dolby Vision (p%d), load option %s, TV reports %s%s", dolby_vision_,
-           ums_.dolby_vision_hint_sent() ? "sent" : "not sent", ums_.info().hdr.c_str(), dv ? "" : " (Dolby Vision not engaged)");
+      logf("qoe", "picture: version claims Dolby Vision (p%d), TV reports %s%s", dolby_vision_, ums_.info().hdr.c_str(),
+           dv ? "" : " (the TV did not report Dolby Vision)");
     }
     if (event.kind == MediaEvent::VideoInfo || event.kind == MediaEvent::SourceInfo || event.kind == MediaEvent::Loaded)
       place_video(ums_.info().width, ums_.info().height);
@@ -795,7 +794,12 @@ class PlayerScreen : public Screen {
     if (info.height >= 2000) out.push_back("4K");
     else if (info.height >= 1000) out.push_back("HD");
     std::string hdr = upper(info.hdr);
-    if (hdr.find("DOLBY") != std::string::npos || hdr == "DV") out.push_back("Dolby Vision");
+    // uMediaServer may name only a Dolby Vision file's HDR10 base layer while the
+    // TV shows Dolby Vision (the owner reports Dolby Vision in MKV works on this
+    // TV). For a Dolby Vision version the badge follows the version; the log
+    // line "[qoe] picture" keeps what the TV reported.
+    bool base_layer = hdr.empty() || hdr.find("HDR10") != std::string::npos;
+    if (hdr.find("DOLBY") != std::string::npos || hdr == "DV" || (dolby_vision_ && base_layer)) out.push_back("Dolby Vision");
     // Name the format the TV reports, not a generic "HDR".
     else if (hdr.find("HLG") != std::string::npos) out.push_back("HLG");
     else if (hdr.find("HDR10PLUS") != std::string::npos || hdr.find("HDR10+") != std::string::npos) out.push_back("HDR10+");

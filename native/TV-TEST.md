@@ -205,7 +205,7 @@ Copy the `frames`, `gpu`, `images` and `memory` blocks into `research/` with the
 
 ## 11. New in 2.5: sources, picture, subtitles, versions list
 
-Install `artifacts/com.muhib.bloob_2.5.0_arm.ipk`. Keep `/tmp/bloob-native.log` open; every check below names the line to read.
+Install `artifacts/com.muhib.bloob_2.5.1_arm.ipk`. Keep `/tmp/bloob-native.log` open; every check below names the line to read.
 
 **Subtitles (the size and background are new; the TV draws the text).**
 - [ ] Settings > Subtitle size is *Small* by default (the TV's level 0; the TV's own default is level 2). Turn subtitles on in a film: the log shows `setSubtitleFontSize,"fontSize":0` after `setSubtitleEnable`. Is the text clearly smaller than before?
@@ -213,10 +213,9 @@ Install `artifacts/com.muhib.bloob_2.5.0_arm.ipk`. Keep `/tmp/bloob-native.log` 
 - [ ] Subtitle background on: a dark box behind the words (`setSubtitleBackgroundOpacity,"bgOpacity":191`).
 - [ ] Switch subtitles off and on again from the player's track panel: the size stays (it is re-sent on every enable).
 
-**Dolby Vision (an experiment, and honest labels).**
-- [ ] A Dolby Vision version in MKV is now labelled `HDR10 (Dolby Vision version)`, because webOS 24 reads Dolby Vision only from MP4 and MPEG-TS.
-- [ ] Play one. The log shows `load … dolbyVision=p8` and then `[qoe] picture: version claims Dolby Vision (p8), load option sent, TV reports …`. Record what the TV reports, and whether the TV's own Dolby Vision badge or picture mode appears. If the load is refused or fails before the picture, the log says `loading without it` and playback carries on.
-- [ ] If an MP4 Dolby Vision version is listed (the release name ends in `.mp4` or says MP4), play it and record the same line. If MP4 engages Dolby Vision, a remux route is worth building (see `research/Dolby-Vision-on-webOS.md`).
+**Dolby Vision (2.5.1: MKV Dolby Vision works on this TV, per the owner).**
+- [ ] A Dolby Vision MKV version is labelled *Dolby Vision* in the versions list and on the player's info line.
+- [ ] Play one and record two things: whether the TV's own picture mode or Dolby Vision badge shows Dolby Vision, and the log line `[qoe] picture: version claims Dolby Vision (p8), TV reports …`. If the TV shows Dolby Vision but the line says `HDR10`, uMediaServer names only the base layer, and the player's badge is right to follow the version.
 - [ ] Settings > Picture: *HDR10, skip Dolby Vision* and *Prefer SDR* change the best version (the card's reason says "as your picture setting asks" for SDR).
 
 **Sources (several indexes).**

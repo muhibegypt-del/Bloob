@@ -1,6 +1,8 @@
 ## Dolby Vision on LG webOS: how Kodi does it, and what Bloob can do
 
-> Research note, 16 October 2026 (public sources and code reading, not a TV measurement). Acted on in 2.5.0: option (a) is tried automatically on Dolby Vision loads with a fallback, and MKV Dolby Vision is labelled as the HDR10 the TV shows. Options (b) and (c) are not built.
+> Research note, 16 October 2026 (public sources and code reading, not a TV measurement).
+>
+> **Correction (owner report, 16 October 2026): Dolby Vision in MKV works on this TV (OLED55G26LA, webOS 9.2.2).** That overrides this note's main conclusion, which rested on LG's 2022 forum reply and Jellyfin's webOS rule. The MP4/HLS remux and Starfish routes below are not needed for MKV here. 2.5.0 briefly labelled MKV Dolby Vision as HDR10 and sent the `DolbyHdrInfo` option; 2.5.1 removed both. The Kodi and LG details are kept for reference.
 
 Short answer: the URI `com.webos.media/load` path has no documented option that makes LG's demuxer signal Dolby Vision for MKV on webOS 24. Two routes are known to work:
 - **Change the container.** LG engages DV from MP4 (ISOBMFF) or MPEG-TS that carry the correct DV signalling.

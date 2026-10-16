@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import sourcesModule from '../../service/sources.js';
 import rankModule from '../../service/rank.js';
+import profileModule from '../../service/tv-profile.js';
 
 const { discoverAll, fitsEpisode, merge, candidatesFrom } = sourcesModule;
 const { rank, dolbyVisionProfile } = rankModule;
+const { PROFILES } = profileModule;
 
 const hash = ch => ch.repeat(40);
 
@@ -103,24 +105,39 @@ describe('picture preference and Dolby Vision on this TV', () => {
     expect(dolbyVisionProfile(c('a', { hdr: ['HDR10'] }))).toBe('');
   });
 
-  it('names Dolby Vision in MKV as the HDR10 this TV shows, and in MP4 as Dolby Vision', () => {
+  // A TV whose player shows Dolby Vision only from MP4 (not the owner's: theirs shows it from MKV too).
+  const mp4Only = Object.assign({}, PROFILES['lg-2022-oled'], { dolbyVisionContainers: ['MP4'] });
+
+  it('shows Dolby Vision in MKV as Dolby Vision on this TV', () => {
     const mkv = c('m', { resolution: '4K', hdr: ['DV', 'HDR10'], container: 'MKV' });
-    const mp4 = c('p', { resolution: '4K', hdr: ['DV', 'HDR10'], container: 'MP4' });
-    const result = rank([mkv, mp4], {});
-    expect(result.recommended.id).toBe(mp4.id);
-    expect(result.recommended.headline).toBe('4K · Dolby Vision');
-    expect(result.recommended.dolbyVision).toBe('p8');
-    expect(byId(result, 'm').headline).toBe('4K · HDR10');
-    expect(byId(result, 'm').picture).toBe('HDR10 (Dolby Vision version)');
-    expect(byId(result, 'm').warnings[0]).toMatch(/Dolby Vision in an MKV file as HDR10/);
+    const unknown = c('u', { resolution: '4K', hdr: ['DV', 'HDR10'] });
+    const result = rank([mkv, unknown], {});
+    for (const id of ['m', 'u']) {
+      expect(byId(result, id).headline).toBe('4K · Dolby Vision');
+      expect(byId(result, id).dolbyVision).toBe('p8');
+    }
   });
 
-  it('warns about Dolby Vision without an HDR10 layer', () => {
+  it('names Dolby Vision as HDR10 on a TV that cannot show it from that container', () => {
+    const mkv = c('m', { resolution: '4K', hdr: ['DV', 'HDR10'], container: 'MKV' });
+    const mp4 = c('p', { resolution: '4K', hdr: ['DV', 'HDR10'], container: 'MP4' });
+    const result = rank([mkv, mp4], { profile: mp4Only });
+    expect(result.recommended.id).toBe(mp4.id);
+    expect(result.recommended.headline).toBe('4K · Dolby Vision');
+    expect(byId(result, 'm').headline).toBe('4K · HDR10');
+    expect(byId(result, 'm').picture).toBe('HDR10 (Dolby Vision version)');
+    expect(byId(result, 'm').warnings[0]).toMatch(/Dolby Vision in MKV files as HDR10/);
+  });
+
+  it('warns about Dolby Vision without an HDR10 layer only where Dolby Vision is not shown', () => {
     const p5 = c('a', { resolution: '4K', hdr: ['DV'] }, { sourceType: 'WEB-DL' });
     const hdr = c('b', { resolution: '4K', hdr: ['HDR10'] });
-    const result = rank([p5, hdr], {});
+    expect(rank([p5, hdr], {}).recommended.id).toBe(p5.id);
+    const result = rank([p5, hdr], { profile: mp4Only });
     expect(result.recommended.id).toBe(hdr.id);
     expect(byId(result, 'a').cautions).toContain('Colours may be wrong');
+    // Asking for HDR10 skips Dolby Vision, so a version without an HDR10 layer is warned about too.
+    expect(byId(rank([p5, hdr], { picture: 'hdr10' }), 'a').cautions).toContain('Colours may be wrong');
   });
 
   it('prefers SDR when asked, over a higher resolution', () => {

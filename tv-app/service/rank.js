@@ -101,7 +101,7 @@ function pictureOn(candidate, profile, preference) {
     return { label: `${baseLabel} (Dolby Vision skipped)`, short: baseLabel, bonus: WEIGHTS.hdr - 1, family: 'HDR', dolbyVision: dvProfile };
   }
   if (dvProfile && !dvShows) {
-    return { label: `${baseLabel} (Dolby Vision version)`, short: baseLabel, bonus: WEIGHTS.hdr + 0.5, dolbyVisionAsHdr: true, family: 'HDR', dolbyVision: dvProfile };
+    return { label: `${baseLabel} (Dolby Vision version)`, short: baseLabel, bonus: WEIGHTS.hdr + 0.5, dolbyVisionAsHdr: true, container, family: 'HDR', dolbyVision: dvProfile };
   }
   if (dvProfile) return { label: hdr.length > 1 ? 'Dolby Vision + HDR' : 'Dolby Vision', short: 'Dolby Vision', bonus: WEIGHTS.dolbyVision, family: 'DV', dolbyVision: dvProfile };
   if (hdr.length) {
@@ -208,7 +208,7 @@ function score(candidate, prefs) {
   value += picture.bonus;
   if (picture.short) notes.push(picture.short);
   if (picture.discDolbyVision) issue(1, 'This TV doesn\'t support disc Dolby Vision; it plays as HDR10');
-  if (picture.dolbyVisionAsHdr) issue(1, `A Dolby Vision version; this TV shows Dolby Vision in an MKV file as HDR10`);
+  if (picture.dolbyVisionAsHdr) issue(1, `A Dolby Vision version; this TV shows Dolby Vision in ${picture.container} files as ${picture.short}`);
   if (picture.dolbyVisionOnly) {
     value -= WEIGHTS.dolbyVisionOnly;
     issue(4, 'Dolby Vision without an HDR10 layer; this TV may show it with wrong colours', 'Colours may be wrong');

@@ -619,7 +619,7 @@ How the app should *behave* (continuity, place, async work, component states) is
 | *(1.2)* Parser: 3D, disc image and sample claims; ambiguous source words read only after the title (P4) | Desktop (unit tests) |
 | *(2.1)* Continuity: a show keeps to its version. Matches are the same pack or group (+25), then the same resolution and picture (+12); dropping below costs −10. Seeders are capped at 6, below one resolution step. Sections: matches, other versions, *May not play well on this TV*. Release group and binge group are parsed (X3.2) | Desktop (unit tests, tour) |
 | *(2.5)* Several indexes behind a provider interface (17.2); episode filter for show-wide indexes; reply 2.5 s after Torrentio at most, late answers join the cache; Settings > Sources | Unit tests; live from a datacenter (Torrentio blocked there) |
-| *(2.5)* Picture preference (best, HDR10, SDR); Dolby Vision in MKV labelled as the HDR10 webOS 24 shows; probable profile 5 warned; sections capped at 120/40 | Unit tests |
+| *(2.5)* Picture preference (best, HDR10, SDR); per-TV Dolby Vision containers (this TV: MKV, MP4, TS, per the owner; 2.5.0's "MP4 only" was wrong and is gone in 2.5.1); sections capped at 120/40 | Unit tests |
 
 **Gaps:**
 - Knaben (title text search, the CocoScrapers approach) is not added yet.

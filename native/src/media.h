@@ -71,12 +71,6 @@ class UmsPlayer {
     bool background = false;
   };
   void set_subtitle_style(const SubtitleStyle &style) { style_ = style; }
-  // A version that claims Dolby Vision: the load also carries the ES-path
-  // DolbyHdrInfo option (what Kodi sends to the same pipeline). Undocumented for
-  // URI loads; if the TV refuses the load, or fails before the first frame, it
-  // is loaded again without it. `profile`: 5 or 8, 0 for none.
-  void set_dolby_vision_hint(int profile) { dv_profile_ = profile; }
-  bool dolby_vision_hint_sent() const { return dv_sent_; }
   // Undocumented uMediaServer call (community-documented): -3 lowest .. 4 highest, 0 default.
   // `done(false)` when the TV refuses it.
   void set_subtitle_position(int position, std::function<void(bool ok)> done);
@@ -102,14 +96,6 @@ class UmsPlayer {
   std::set<std::string> seen_keys_;
   bool lost_ = false;
   SubtitleStyle style_;
-  int dv_profile_ = 0;
-  bool dv_sent_ = false;     // the current load carried the Dolby Vision option
-  bool dv_refused_ = false;  // this TV refused or failed with it: never again this viewing
-  bool playing_seen_ = false;
-  struct LastLoad {
-    std::string uri, app_id, window_id, load_type;
-    long long start_ms = 0;
-  } last_;
   void apply_subtitle_style();
   std::shared_ptr<int> alive_ = std::make_shared<int>(0);  // guards late luna replies
 };

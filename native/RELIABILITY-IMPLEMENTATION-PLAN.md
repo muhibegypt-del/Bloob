@@ -553,7 +553,8 @@ Each sub-increment gets the full field set (scope, state, ownership, data, recov
 
 ## R7: another media route (conditional)
 
-**Not scheduled yet, but the gap is now documented, not hypothetical.**
+**Not scheduled. Correction, 16 October 2026: the owner reports that Dolby Vision in MKV works on this TV.** The "gap" below rested on public reports about other G2 and C2 sets, and it does not hold for this one. Option 1 was shipped in 2.5.0 and reverted in 2.5.1. Options 2 and 3 have no Dolby Vision case on this TV unless a `[qoe] picture` line together with the TV's own badge shows otherwise. The rest of this section is kept as the record of what was believed.
+
 
 - **The gap.** Public user reports agree that LG's built-in player on 2022–2024 software shows Dolby Vision in MKV as its HDR10 base layer, and engages Dolby Vision for profiles 5 and 8 in MP4 or TS. An October 2025 report says webOS 25 on a G4 added DV in MKV ([Jellyfin forum](https://forum.jellyfin.org/t-jellyfin-on-lg-g4-webos25-dolby-vision)); a G2 owner reports DV from MP4 but not MKV ([Plex forum](https://forums.plex.tv/t/issues-with-dolby-vision-on-lg-tv/860541)); remuxing to TS triggers DV on a C2 ([Jellyfin forum](https://forum.jellyfin.org/t-dolby-vision-on-lg-webos)); profile 7 does not engage and is converted to 8.1 in practice. This matches the owner's 2.2.0 report on this G2: "DV titles came up as HDR every time". These are user reports, not LG documentation, so the `[qoe] picture:` line remains the check on this TV, but it is now a confirmation, not a discovery.
 - **What closes it, cheapest first:**
@@ -590,7 +591,7 @@ The first draft listed seven "TV-only" questions. Most are answered by public so
 | A4 | Does `paused` arrive during rebuffering? | Yes in the reference pipeline: underrun → PAUSED → `bufferingStart` and `paused`; recovery → `bufferingEnd` and `playing` | [UriPlayer.cpp](https://github.com/webosose/g-media-pipeline/blob/df8470b/src/player/UriPlayer.cpp) | Reference behaviour | R3 intent rule and test |
 | A5 | How often does `currentTime` arrive; how soon after `seekDone`? | Every 200 ms, skipped only while seeking, so within about 200 ms of `seekDone`. `setUpdateInterval` exists in LG's pipeline interface | [UriPlayer.cpp](https://github.com/webosose/g-media-pipeline/blob/df8470b/src/player/UriPlayer.cpp), [pipeline.hpp](https://github.com/webosbrew/webos-userland/blob/00a5f87/include/player-factory/pipeline.hpp) | Reference behaviour; LG header | R3 1 s confirmation; R5 |
 | A6 | Is there a public signal of visible video? | Yes: the `videoFrame {valid}` subscription event on the URI route; `NDL_ESP_FIRST_FRAME_PRESENTED` on LG's ES route | [uMediaserver.cpp](https://github.com/webosose/umediaserver/blob/af89f8a/src/server/uMediaserver.cpp), [media-common.h](https://github.com/webosbrew/webos-userland/blob/00a5f87/include/ndl-directmedia2/media-common.h) | Documented interface; LG header | R3 `first_frame` |
-| A7 | Does DV engage for MKV? | Not on LG's built-in player before webOS 25 by consistent user reports; MP4 and TS do for profiles 5 and 8 | Jellyfin, Plex and MakeMKV forum threads under R7 | User reports | R7 is now a documented gap |
+| A7 | Does DV engage for MKV? | **Yes on this TV, per the owner (16 October 2026).** Public reports said no for other 2022–2024 sets before webOS 25; they do not apply here | Owner's report; the forum threads under R7 are superseded | User report (owner) | No R7 gap for Dolby Vision |
 
 **Still only knowable from our own app on this TV**, because they are properties of Bloob, not of webOS:
 - whether LG's closed pipeline sends `trackSelected` for text tracks (A3; the existing `[media] <-` log line shows it, and the design no longer depends on it);
