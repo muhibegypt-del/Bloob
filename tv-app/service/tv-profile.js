@@ -22,11 +22,12 @@ const PROFILES = {
     dolbyVisionContainers: ['MKV', 'MP4', 'M4V', 'TS'],
     hdr10plus: false,
     threeD: false,
-    // Wired connection speed; the 2022 OLEDs have a 100 Mbit port.
-    ethernetMbps: 95,
-    // Estimated video bitrate where buffering becomes a risk, and where to warn.
-    comfortableMbps: 40,
-    warnMbps: 60,
+    // The owner's TV is on 5 GHz Wi-Fi with a 2 Gbps line (19 October 2026):
+    // no bitrate limit. A profile for a TV on its 100 Mbit Ethernet port could set
+    // comfortableMbps/warnMbps; null means bitrate never costs a version anything.
+    connection: 'wifi',
+    comfortableMbps: null,
+    warnMbps: null,
   },
 };
 

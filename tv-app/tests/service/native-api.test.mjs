@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import rankModule from '../../service/rank.js';
 import resolveModule from '../../service/resolve.js';
+import profileModule from '../../service/tv-profile.js';
 
 const { rank } = rankModule;
 const { createResolver, pickFile, videoFiles } = resolveModule;
+const { PROFILES } = profileModule;
 
 const candidate = (over) => ({
   id: over.id, provider: 'Test', kind: 'magnet', value: 'a'.repeat(40), release: over.id,
@@ -114,24 +116,31 @@ describe('service ranking', () => {
     expect(byId(result, 'plus').score).toBe(byId(result, 'ten').score);
   });
 
-  it('penalises very high estimated bitrates and warns about the wired connection', () => {
+  // A TV on a 100 Mbit wired port (not the owner's, which is on fast Wi-Fi).
+  const wired = Object.assign({}, PROFILES['lg-2022-oled'], { connection: 'ethernet', comfortableMbps: 40, warnMbps: 60 });
+
+  it('never marks a version down for bitrate on the owner\'s Wi-Fi TV', () => {
     const film = (id, gb) => candidate({ id, claims: { resolution: '1080p' }, sourceType: 'BluRay', seeders: 100, sizeBytes: gb * 1e9 });
     const result = rank([film('huge', 70), film('normal', 12)], { type: 'movie', runtimeMinutes: 120 });
-    expect(result.recommended.id).toBe('normal');
     const huge = byId(result, 'huge');
     expect(huge.bitrateMbps).toBe(78);
-    expect(huge.score).toBeLessThan(result.recommended.score);
-    expect(huge.warnings).toContain('Very high bitrate; may buffer on the TV\'s wired connection (about 95 Mbps)');
-    expect(huge.cautions).toContain('Very high bitrate');
+    expect(huge.score).toBe(byId(result, 'normal').score);
+    expect(huge.cautions).toEqual([]);
     expect(huge.facts).toContain('about 78 Mbit/s');
-    expect(result.recommended.warnings).toEqual([]);
+  });
+
+  it('marks very high bitrates down only on a profile with a network limit', () => {
+    const film = (id, gb) => candidate({ id, claims: { resolution: '1080p' }, sourceType: 'BluRay', seeders: 100, sizeBytes: gb * 1e9 });
+    const result = rank([film('huge', 70), film('normal', 12)], { type: 'movie', runtimeMinutes: 120, profile: wired });
+    expect(result.recommended.id).toBe('normal');
+    const huge = byId(result, 'huge');
+    expect(huge.score).toBeLessThan(result.recommended.score);
+    expect(huge.warnings).toContain('Very high bitrate; may buffer on this TV\'s connection');
+    expect(huge.cautions).toContain('Very high bitrate');
     // Runtime matters: 30 GB is fine for a long film and too much for an episode.
     const thirty = film('thirty', 30);
-    expect(byId(rank([thirty], { type: 'movie', runtimeMinutes: 160 }), 'thirty').cautions).toEqual([]);
-    expect(byId(rank([thirty], { type: 'series' }), 'thirty').cautions).toEqual(['Very high bitrate']);
-    // A REMUX of ordinary size is no longer penalised for being a REMUX.
-    const remux = candidate({ id: 'remux', claims: { resolution: '1080p' }, sourceType: 'REMUX', seeders: 100, sizeBytes: 25e9 });
-    expect(byId(rank([remux], { runtimeMinutes: 120 }), 'remux').cautions).toEqual([]);
+    expect(byId(rank([thirty], { type: 'movie', runtimeMinutes: 160, profile: wired }), 'thirty').cautions).toEqual([]);
+    expect(byId(rank([thirty], { type: 'series', profile: wired }), 'thirty').cautions).toEqual(['Very high bitrate']);
   });
 
   it('lifts releases tagged with the preferred language', () => {
@@ -161,7 +170,7 @@ describe('service ranking', () => {
   });
 
   it('pairs the first caution with the first warning', () => {
-    const view = rank([candidate({ id: 'x', release: 'X.2020.2160p.BluRay.REMUX.DV.TrueHD.Atmos', claims: { resolution: '4K', hdr: ['DV'], audio: ['Atmos', 'TrueHD'] }, sourceType: 'REMUX', seeders: 2, sizeBytes: 80e9 })], { runtimeMinutes: 120 }).recommended;
+    const view = rank([candidate({ id: 'x', release: 'X.2020.2160p.BluRay.REMUX.DV.TrueHD.Atmos', claims: { resolution: '4K', hdr: ['DV'], audio: ['Atmos', 'TrueHD'] }, sourceType: 'REMUX', seeders: 2, sizeBytes: 80e9 })], { runtimeMinutes: 120, profile: wired }).recommended;
     expect(view.cautions[0]).toBe('Very high bitrate');
     expect(view.warnings[0]).toMatch(/^Very high bitrate/);
     expect(view.cautions).toEqual(['Very high bitrate', 'Few sources · slow to prepare']);

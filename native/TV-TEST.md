@@ -205,7 +205,7 @@ Copy the `frames`, `gpu`, `images` and `memory` blocks into `research/` with the
 
 ## 11. New in 2.5: sources, picture, subtitles, versions list
 
-Install `artifacts/com.muhib.bloob_2.5.1_arm.ipk`. Keep `/tmp/bloob-native.log` open; every check below names the line to read.
+Install `artifacts/com.muhib.bloob_2.5.2_arm.ipk`. Keep `/tmp/bloob-native.log` open; every check below names the line to read.
 
 **Subtitles (the size and background are new; the TV draws the text).**
 - [ ] Settings > Subtitle size is *Small* by default (the TV's level 0; the TV's own default is level 2). Turn subtitles on in a film: the log shows `setSubtitleFontSize,"fontSize":0` after `setSubtitleEnable`. Is the text clearly smaller than before?

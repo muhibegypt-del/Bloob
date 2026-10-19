@@ -28,7 +28,6 @@ const WEIGHTS = {
   seedersMax: 6,
   otherLanguage: 12,
   preferredLanguage: 3,
-  pack: 3,
   perMbpsOver: 0.3,
   bitrateMax: 20,
   // Continuity with the viewer's version of this show (UX-PLAN X3).
@@ -252,10 +251,11 @@ function score(candidate, prefs) {
   }
 
   const mbps = bitrateMbps(candidate, runtimeOf(prefs));
-  if (mbps !== undefined && mbps > profile.comfortableMbps) {
+  // Only a profile with a known network limit marks bitrate down (none for the owner's TV).
+  if (mbps !== undefined && profile.comfortableMbps && mbps > profile.comfortableMbps) {
     value -= Math.min(WEIGHTS.bitrateMax, (mbps - profile.comfortableMbps) * WEIGHTS.perMbpsOver);
-    if (mbps > profile.warnMbps) {
-      issue(5, `Very high bitrate; may buffer on the TV's wired connection (about ${profile.ethernetMbps} Mbps)`, 'Very high bitrate');
+    if (profile.warnMbps && mbps > profile.warnMbps) {
+      issue(5, `Very high bitrate; may buffer on this TV's connection`, 'Very high bitrate');
     }
   }
 
@@ -286,7 +286,7 @@ function score(candidate, prefs) {
     issue(3, `Tagged ${candidate.languages.slice(0, 2).join(', ')} audio`, `${candidate.languages.slice(0, 2).join(' + ')} audio`);
   }
   if (candidate.multiAudio) notes.push('Multiple audio languages');
-  if (candidate.pack) { value -= WEIGHTS.pack; notes.push('Part of a season pack'); }
+  if (candidate.pack) notes.push('Part of a season pack');  // a fact, not a penalty
 
   const match = matchOf(candidate, prefs.intent);
   if (match === 'same') value += WEIGHTS.sameEdition;
