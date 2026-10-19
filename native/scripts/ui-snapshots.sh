@@ -22,7 +22,7 @@ STEPS=(
   'media:{"seekDone":{}}' "wait:50" "key:down" "key:right" "key:ok" "wait:300" "snap:05-audio-menu"
   "key:down" "key:ok" "wait:300" "key:right" "key:ok" "wait:300" "key:down" "key:ok" "wait:300" "snap:06-subtitles-on"
   'media:{"trackSelected":{"type":"audio","index":1}}' "key:left" "key:ok" "wait:50" "snap:07-audio-selected"
-  "key:back" "key:pause" 'media:{"paused":{}}' "wait:50" "snap:08-paused"
+  "key:back" "key:pause" 'media:{"paused":{}}' "wait:50" "snap:08-paused" 'media:{"bufferRange":{"beginTime":0,"endTime":812000,"remainingTime":38000,"percent":42}}' "key:info" "wait:1100" "snap:08b-info-panel" "key:info"
   'media:{"error":{"errorCode":304,"errorText":"The TV could not decode this stream."}}' "wait:50" "snap:09-error" "quit"
 )
 SCRIPT=$(IFS='|'; echo "${STEPS[*]}")

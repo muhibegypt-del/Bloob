@@ -177,7 +177,7 @@ class App {
       PlayRequest req;
       req.item.name = launch.title;
       req.video_id = "launch";
-      ops_.push_back({Op::Push, make_player(req, launch.uri, "", launch.load_type)});
+      ops_.push_back({Op::Push, make_player(req, launch.uri, PlaySourceInfo{}, launch.load_type)});
     }
     c.now = now_ms();
     return true;
@@ -951,7 +951,7 @@ class App {
     static const std::pair<const char *, int> codes[] = {
         {"up", SDL_SCANCODE_UP}, {"down", SDL_SCANCODE_DOWN}, {"left", SDL_SCANCODE_LEFT}, {"right", SDL_SCANCODE_RIGHT},
         {"ok", SDL_SCANCODE_RETURN}, {"back", kScancodeWebosBack}, {"play", SDL_SCANCODE_AUDIOPLAY},
-        {"pause", SDL_SCANCODE_PAUSE}, {"red", kScancodeWebosRed}};
+        {"pause", SDL_SCANCODE_PAUSE}, {"red", kScancodeWebosRed}, {"blue", kScancodeWebosBlue}, {"info", SDL_SCANCODE_I}};
     SDL_KeyboardEvent key{};
     key.type = SDL_KEYDOWN;
     for (auto &c : codes) if (name == c.first) key.keysym.scancode = static_cast<SDL_Scancode>(c.second);

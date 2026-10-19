@@ -34,6 +34,9 @@ struct MediaInfo {
   std::string hdr;
   std::vector<MediaTrack> audio;
   std::vector<MediaTrack> text;
+  // uMediaServer's bufferRange report (milliseconds; -1 when not reported).
+  long long buffer_begin_ms = -1, buffer_end_ms = -1, buffer_remaining_ms = -1;
+  int buffer_percent = -1;
 };
 
 struct MediaEvent {
@@ -93,6 +96,7 @@ class UmsPlayer {
   int generation_ = 0;  // bumps on unload so late load replies are discarded
   bool logged_keys_ = false;
   bool logged_track_keys_ = false;
+  bool logged_buffer_ = false;
   std::set<std::string> seen_keys_;
   bool lost_ = false;
   SubtitleStyle style_;

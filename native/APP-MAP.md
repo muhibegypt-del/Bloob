@@ -260,6 +260,8 @@ How the app should *behave* (continuity, place, async work, component states) is
 
 ### 7. Player screen
 
+*(2.5.3)* Playback info panel: ⓘ control, Info/I or blue key; live network (whole TV), file average bitrate, buffer report, playback stats, version, CPU and memory (`stats.*`, unit-tested parsers). Desktop snapshot `08b-info-panel`.
+
 **Job:** stay quiet during viewing. When summoned, show accurate seeking, audio, subtitles and the next episode. Handle the start, the end and errors.
 
 **Lives in:** `src/player.cpp` (view and key handling). The engine is **9**.

@@ -4,6 +4,7 @@
 // the stack) and animates pushes and Back.
 #include <memory>
 #include <string>
+#include <vector>
 
 #include "keys.h"
 #include "model.h"
@@ -57,5 +58,13 @@ enum class PlayOrigin { HomeHero, HomeRow, Details, Episodes, UpNext };
 void start_playback(const PlayRequest &req, PlayOrigin origin, bool replace_top = false, bool autostart = false);
 // Set by the player before it closes to return to the source list instead of leaving it.
 bool &player_wants_another_source();
-std::unique_ptr<Screen> make_player(const PlayRequest &request, const std::string &url, const std::string &source_label,
-                                    const std::string &load_type = "media", int dolby_vision = 0);
+// What the player knows about the version it plays (for the info panel).
+struct PlaySourceInfo {
+  std::string headline;      // "4K · Dolby Vision · Atmos"
+  std::string release, source, group, file_name;
+  std::vector<std::string> found_by;
+  long long file_bytes = 0;  // the file AllDebrid serves, 0 if unknown
+  int dolby_vision = 0;      // guessed profile: 5, 8 or 0
+};
+std::unique_ptr<Screen> make_player(const PlayRequest &request, const std::string &url, const PlaySourceInfo &source = {},
+                                    const std::string &load_type = "media");

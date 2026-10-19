@@ -12,6 +12,7 @@
 #include "frames.h"
 #include "resources.h"
 #include "tasks.h"
+#include "stats.h"
 
 static int failures = 0;
 #define CHECK(cond) do { if (!(cond)) { std::printf("FAIL %s:%d  %s\n", __FILE__, __LINE__, #cond); failures++; } } while (0)
@@ -175,7 +176,48 @@ static void test_tasks_pump_budget() {
   t.stop();
 }
 
+static void test_stats_parsers() {
+  const char *dev =
+      "Inter-|   Receive                                                |  Transmit\n"
+      " face |bytes    packets errs drop fifo frame compressed multicast|bytes    packets\n"
+      "    lo: 5000000     100    0    0    0     0          0         0  5000000     100\n"
+      " wlan0: 9000000000 7000    0    0    0     0          0         0  300000     900\n"
+      "  eth0:     1200      10    0    0    0     0          0         0      0       0\n";
+  std::string busiest;
+  CHECK(stats::parse_net_rx(dev, &busiest) == 9000001200LL);  // loopback excluded
+  CHECK(busiest == "wlan0");
+  CHECK(stats::parse_net_rx("garbage") == -1);
+  long long total = 0, idle = 0;
+  CHECK(stats::parse_cpu_total("cpu  100 0 50 800 50 0 0 0 0 0\ncpu0 1 2 3\n", &total, &idle));
+  CHECK(total == 1000 && idle == 850);
+  CHECK(!stats::parse_cpu_total("intr 1 2", &total, &idle));
+  // The command name may hold spaces and parentheses; utime 7, stime 3.
+  CHECK(stats::parse_self_ticks("42 (bloob (main)) S 1 1 1 0 -1 4194304 10 0 0 0 7 3 0 0 20 0") == 10);
+}
+
+static void test_rate_meter() {
+  stats::RateMeter m;
+  CHECK(m.mbps() < 0);
+  m.add(0, 0);
+  m.add(1000, 12500000);  // 100 Mbit in one second
+  CHECK(near(m.mbps(), 100.0));
+  m.add(2000, 18750000);  // then 50 Mbit
+  CHECK(near(m.mbps(), 75.0));
+  CHECK(near(m.mbps(1000), 50.0));
+  CHECK(near(m.average_mbps(), 75.0));
+  CHECK(m.peak_mbps() >= 100.0 - 1e-6);
+  CHECK(m.bytes() == 18750000);
+  m.add(3000, 100);  // the counter went back (interface restarted): start again
+  CHECK(m.bytes() == 0);
+  CHECK(stats::mbps_text(58.43) == "58.4 Mbps");
+  CHECK(stats::mbps_text(0.85) == "850 kbps");
+  CHECK(stats::mbps_text(-1) == "\xE2\x80\x94");
+  CHECK(stats::bytes_text(74200000000LL) == "74.2 GB");
+}
+
 int run_runtime_tests() {
+  test_stats_parsers();
+  test_rate_meter();
   test_tasks_wake_and_lanes();
   test_tasks_pump_budget();
   test_pacer_idle_start();

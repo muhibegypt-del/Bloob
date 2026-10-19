@@ -14,6 +14,8 @@
 #include "luna.h"
 #include "media.h"
 #include "play.h"
+#include "stats.h"
+#include "inspect.h"
 #include "screens.h"
 #include "session.h"
 #include "speech.h"
@@ -138,13 +140,12 @@ class UmsPort : public PlayerPort {
   UmsPlayer &player_;
 };
 
-enum class Ctl { Toggle, Audio, Subtitles, StartOver, Next };
+enum class Ctl { Toggle, Audio, Subtitles, StartOver, Next, Stats };
 
 class PlayerScreen : public Screen {
  public:
-  PlayerScreen(const PlayRequest &req, const std::string &url, const std::string &source, const std::string &load_type,
-               int dolby_vision)
-      : req_(req), url_(url), source_(source), load_type_(load_type), dolby_vision_(dolby_vision) {
+  PlayerScreen(const PlayRequest &req, const std::string &url, const PlaySourceInfo &info, const std::string &load_type)
+      : req_(req), url_(url), source_(info.headline), load_type_(load_type), dolby_vision_(info.dolby_vision), info_(info) {
     start_at_ = req.resume_ms;
     // One viewing, one session: reports carry it and a rising sequence so the
     // service can drop late ones (UX-PLAN X1). A reopen keeps the session.
@@ -544,6 +545,7 @@ class PlayerScreen : public Screen {
     std::vector<Ctl> list = {Ctl::Toggle, Ctl::Audio, Ctl::Subtitles};
     if (resumed_) list.push_back(Ctl::StartOver);
     if (next_ready()) list.push_back(Ctl::Next);
+    list.push_back(Ctl::Stats);
     return list;
   }
 
@@ -562,6 +564,7 @@ class PlayerScreen : public Screen {
       }
       case Ctl::StartOver: return "Start over";
       case Ctl::Next: return "Next episode";
+      case Ctl::Stats: return stats_ ? "Hide info" : "Info";
       case Ctl::Toggle: return "";
     }
     return "";
@@ -589,6 +592,7 @@ class PlayerScreen : public Screen {
         control_ = 0;
         break;
       case Ctl::Next: play_next(); return;
+      case Ctl::Stats: toggle_stats(); break;
     }
     show_hud();
   }
@@ -645,6 +649,10 @@ class PlayerScreen : public Screen {
       show_hud();
       return true;
     }
+    if (key == Key::Info || key == Key::Blue) {
+      toggle_stats();
+      return true;
+    }
     switch (key) {
       case Key::Play: session_.play(); show_hud(); return true;
       case Key::Pause: session_.pause(); show_hud(); return true;
@@ -655,6 +663,7 @@ class PlayerScreen : public Screen {
       default: break;
     }
     if (key == Key::Back) {
+      if (stats_ && !hud_) { toggle_stats(); return true; }
       if (hud_ && hud_mode_ == HudMode::Reduced && !session_.preview_ms()) { hud_ = false; return true; }
       if (session_.cancel_preview()) { show_hud(hud_mode_); return true; }
       if (hud_ && session_.phase() == Phase::Playing && zone_ == Zone::Timeline) { hud_ = false; return true; }
@@ -727,6 +736,8 @@ class PlayerScreen : public Screen {
       play_next();
       return;
     }
+    if (stats_ && t >= stats_next_) sample_stats(t);
+    if (stats_) c.redraw_at(stats_next_);
     bool show = hud_ || hud_pinned();
     hud_anim_.to(show ? 1.0f : 0.0f);
     panel_anim_.to(panel_ != Panel::None ? 1.0f : 0.0f);
@@ -783,9 +794,145 @@ class PlayerScreen : public Screen {
         c.redraw_at(since + kBufferingDelayMs);
       }
     }
+    if (stats_) draw_stats();
     if (a <= 0.01f) return;
     draw_hud(a, phase);
     if (panel_anim_.value > 0.01f) draw_panel_tracks(panel_anim_.value);
+  }
+
+  // ---------------------------------------------------------------- info panel
+
+  void toggle_stats() {
+    stats_ = !stats_;
+    if (stats_) {
+      net_.reset();
+      cpu_total_ = cpu_idle_ = self_ticks_ = -1;
+      tv_cpu_ = app_cpu_ = -1;
+      sample_stats(ctx().now);
+    }
+    logf("player", "info panel %s", stats_ ? "shown" : "hidden");
+    ctx().invalidate();
+  }
+
+  void sample_stats(long long t) {
+    stats_next_ = t + 500;
+    net_.add(t, stats::read_net_rx(&net_iface_));
+    long long total = 0, idle = 0, self = stats::read_self_ticks();
+    if (stats::read_cpu_total(&total, &idle)) {
+      if (cpu_total_ >= 0 && total > cpu_total_) {
+        double dt = static_cast<double>(total - cpu_total_);
+        tv_cpu_ = 100.0 * (1.0 - static_cast<double>(idle - cpu_idle_) / dt);
+        if (self >= 0 && self_ticks_ >= 0) app_cpu_ = 100.0 * static_cast<double>(self - self_ticks_) / dt;
+      }
+      cpu_total_ = total;
+      cpu_idle_ = idle;
+    }
+    self_ticks_ = self;
+    ctx().invalidate();
+  }
+
+  // Everything the TV and Bloob know about this playback, like a desktop
+  // player's statistics: the stream, the file's bitrate, the network, the
+  // buffer, how playback has gone, and the device.
+  void draw_stats() {
+    Ctx &c = ctx();
+    const MediaInfo &m = ums_.info();
+    long long t = c.now;
+    std::vector<std::pair<std::string, std::string>> rows;
+    char buf[160];
+
+    std::string video = m.video_codec.empty() ? "\xE2\x80\x94" : m.video_codec;
+    if (m.width > 0) {
+      std::snprintf(buf, sizeof buf, " \xC2\xB7 %d\xC3\x97%d", m.width, m.height);
+      video += buf;
+    }
+    if (m.frame_rate > 0) {
+      std::snprintf(buf, sizeof buf, " \xC2\xB7 %.3f fps", m.frame_rate);
+      video += buf;
+    }
+    video += " \xC2\xB7 picture: " + (m.hdr.empty() ? std::string("not reported") : m.hdr);
+    rows.push_back({"Video", video});
+    std::string audio = "\xE2\x80\x94";
+    for (size_t i = 0; i < m.audio.size(); i++)
+      if (m.audio[i].selected) {
+        audio = audio_label(m.audio[i]) + "  (" + std::to_string(i + 1) + " of " + std::to_string(m.audio.size()) + ")";
+        if (!m.audio[i].codec.empty()) audio += " \xC2\xB7 " + m.audio[i].codec;
+      }
+    rows.push_back({"Audio", audio});
+    int sub = session_.subtitle_index();
+    rows.push_back({"Subtitles", sub >= 0 && sub < static_cast<int>(m.text.size())
+                                     ? subtitle_label(m.text[static_cast<size_t>(sub)]) + "  (" + std::to_string(sub + 1) + " of " +
+                                           std::to_string(m.text.size()) + ")"
+                                     : "Off (" + std::to_string(m.text.size()) + " available)"});
+    long long duration = session_.duration_ms();
+    rows.push_back({"Container", join({m.container.empty() ? std::string("\xE2\x80\x94") : m.container,
+                                       duration > 0 ? clock_text(duration) : std::string()})});
+
+    // The file's average bitrate: its size over its running time.
+    std::string file;
+    if (info_.file_bytes > 0) {
+      file = stats::bytes_text(info_.file_bytes);
+      if (duration > 0)
+        file += " \xC2\xB7 average " +
+                stats::mbps_text(static_cast<double>(info_.file_bytes) * 8.0 / (static_cast<double>(duration) / 1000.0) / 1e6);
+    } else {
+      file = "size not known";
+    }
+    rows.push_back({"File bitrate", file});
+
+    // The TV's own network counters: during playback almost all of it is the stream.
+    std::string net = "now " + stats::mbps_text(net_.mbps()) + " \xC2\xB7 average " + stats::mbps_text(net_.average_mbps()) +
+                      " \xC2\xB7 peak " + stats::mbps_text(net_.peak_mbps()) + " \xC2\xB7 " + stats::bytes_text(net_.bytes()) +
+                      " since opened";
+    rows.push_back({"Network", net + (net_iface_.empty() ? "" : "  (" + net_iface_ + ", whole TV)")});
+
+    long long pos = session_.position_ms(t);
+    std::string buffer;
+    if (m.buffer_remaining_ms >= 0) buffer = std::to_string(m.buffer_remaining_ms / 1000) + " s ahead";
+    else if (m.buffer_end_ms > pos) buffer = std::to_string((m.buffer_end_ms - pos) / 1000) + " s ahead";
+    if (m.buffer_percent >= 0) buffer = join({buffer, std::to_string(m.buffer_percent) + "%"});
+    rows.push_back({"Buffer", buffer.empty() ? "not reported by the TV" : buffer});
+
+    SessionStats q = total_;
+    q += session_.stats();
+    const char *state = session_.phase() == Phase::Playing ? "Playing" : session_.phase() == Phase::Paused ? "Paused"
+                        : session_.phase() == Phase::Buffering ? "Buffering" : session_.phase() == Phase::Seeking ? "Seeking" : "Starting";
+    std::snprintf(buf, sizeof buf, "%s \xC2\xB7 stalls %d (%.1f s) \xC2\xB7 first frame %.1f s \xC2\xB7 seeks %d, %d landed \xC2\xB7 reloads %d",
+                  state, q.stalls, static_cast<double>(q.stall_ms) / 1000.0,
+                  q.first_frame_ms >= 0 ? static_cast<double>(q.first_frame_ms) / 1000.0 : 0.0, q.seeks, q.seeks_landed, total_reloads_);
+    rows.push_back({"Playback", clock_text(pos) + " / " + (duration > 0 ? clock_text(duration) : std::string("\xE2\x80\x94")) + " \xC2\xB7 " + buf});
+
+    std::string version = join({info_.headline, info_.source == "REMUX" ? std::string("Remux") : info_.source, info_.group});
+    if (!info_.found_by.empty()) version += " \xC2\xB7 found by " + join(info_.found_by, ", ");
+    rows.push_back({"Version", version.empty() ? "\xE2\x80\x94" : version});
+    if (!info_.release.empty()) rows.push_back({"Release", info_.release});
+    if (!info_.file_name.empty() && info_.file_name != info_.release) rows.push_back({"File", info_.file_name});
+
+    ProcMemory mem = read_proc_memory();
+    std::string device = "Bloob CPU " + (app_cpu_ >= 0 ? std::to_string(static_cast<int>(app_cpu_ + 0.5)) + "%" : std::string("\xE2\x80\x94")) +
+                         " \xC2\xB7 TV CPU " + (tv_cpu_ >= 0 ? std::to_string(static_cast<int>(tv_cpu_ + 0.5)) + "%" : std::string("\xE2\x80\x94"));
+    if (mem.rss_kb > 0) device += " \xC2\xB7 memory " + std::to_string(mem.rss_kb / 1024) + " MB";
+    rows.push_back({"Device", device});
+    if (!c.perf_line.empty()) rows.push_back({"Rendering", c.perf_line});
+
+    int x = theme::safe_x, y = 48, w = 1180, lh = 40, pad = 32;
+    int h = pad * 2 + 44 + static_cast<int>(rows.size()) * lh;
+    GlassSpec g;
+    g.x = x;
+    g.y = y;
+    g.w = w;
+    g.h = h;
+    g.kind = GlassKind::Smoke;
+    g.shadow = false;
+    draw_glass(g);
+    text(Text::Caption1Semi, "Playback info", x + pad, y + pad - 4, label(Label::Primary));
+    text_right(Text::Caption2, "Info or Back to close", x + w - pad, y + pad, label(Label::Tertiary));
+    int ry = y + pad + 44;
+    for (auto &r : rows) {
+      text(Text::Caption2, r.first, x + pad, ry, label(Label::Secondary));
+      text(Text::Caption2, r.second, x + pad + 190, ry, label(Label::Primary), w - pad * 2 - 190);
+      ry += lh;
+    }
   }
 
   std::vector<std::string> badges() const {
@@ -904,6 +1051,7 @@ class PlayerScreen : public Screen {
       case Ctl::Subtitles: b.icon = static_cast<int>(Icon::Subtitles); b.label = control_label(ctl); break;
       case Ctl::StartOver: b.icon = static_cast<int>(Icon::Restart); b.label = control_label(ctl); break;
       case Ctl::Next: b.icon = static_cast<int>(Icon::Next); b.label = control_label(ctl); break;
+      case Ctl::Stats: b.icon = static_cast<int>(Icon::Info); break;
     }
     return b;
   }
@@ -1101,6 +1249,14 @@ class PlayerScreen : public Screen {
   PlayRequest req_;
   std::string url_, source_, load_type_;
   int dolby_vision_ = 0;  // the version's guessed Dolby Vision profile (5 or 8), 0 for none
+  PlaySourceInfo info_;
+  // The info panel (Info, I or the blue key): sampled twice a second while open.
+  bool stats_ = false;
+  long long stats_next_ = 0;
+  stats::RateMeter net_;
+  std::string net_iface_;
+  long long cpu_total_ = -1, cpu_idle_ = -1, self_ticks_ = -1;
+  double tv_cpu_ = -1, app_cpu_ = -1;
   UmsPlayer ums_;
   UmsPort port_{ums_};
   Session session_;
@@ -1148,7 +1304,7 @@ class PlayerScreen : public Screen {
 
 }  // namespace
 
-std::unique_ptr<Screen> make_player(const PlayRequest &request, const std::string &url, const std::string &source_label,
-                                    const std::string &load_type, int dolby_vision) {
-  return std::make_unique<PlayerScreen>(request, url, source_label, load_type, dolby_vision);
+std::unique_ptr<Screen> make_player(const PlayRequest &request, const std::string &url, const PlaySourceInfo &source,
+                                    const std::string &load_type) {
+  return std::make_unique<PlayerScreen>(request, url, source, load_type);
 }

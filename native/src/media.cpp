@@ -208,6 +208,19 @@ void UmsPlayer::on_event(const std::string &payload) {
     long long t = value.is_object() ? value["currentTime"].as_int() : value.as_int();
     listener_({MediaEvent::Time, t});
   }
+  if (json.has("bufferRange")) {
+    // Fields as webOS documents them; logged once (numbers only) so a TV run
+    // shows what this firmware really sends.
+    const Json &b = json["bufferRange"];
+    info_.buffer_begin_ms = b["beginTime"].as_int(-1);
+    info_.buffer_end_ms = b["endTime"].as_int(-1);
+    info_.buffer_remaining_ms = b["remainingTime"].as_int(-1);
+    info_.buffer_percent = static_cast<int>(b["percent"].as_int(-1));
+    if (!logged_buffer_) {
+      logged_buffer_ = true;
+      logf("media", "bufferRange: %s", Json::stringify(b).substr(0, 200).c_str());
+    }
+  }
   if (json.has("sourceInfo")) {
     const Json &s = json["sourceInfo"];
     const Json &program = s["programInfo"][0];

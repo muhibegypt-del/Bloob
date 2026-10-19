@@ -387,7 +387,16 @@ class SourcesScreen : public Screen {
       choose_another() = false;
       PlayRequest played = req_;
       played.candidate = chosen_.id;  // the edition, for progress and the show's next episode
-      ctx().push(make_player(played, url, chosen_.headline, "media", chosen_.dolby_vision));
+      PlaySourceInfo info;
+      info.headline = chosen_.headline;
+      info.release = chosen_.release;
+      info.source = chosen_.source;
+      info.group = chosen_.group;
+      info.found_by = chosen_.sources;
+      info.file_name = file;
+      info.file_bytes = j["size"].as_int(0);
+      info.dolby_vision = chosen_.dolby_vision;
+      ctx().push(make_player(played, url, info));
     } else if (state == "error") {
       fail(j["error"].as_string("Could not get this source."));
     } else if (state == "choose-file") {

@@ -205,7 +205,7 @@ Copy the `frames`, `gpu`, `images` and `memory` blocks into `research/` with the
 
 ## 11. New in 2.5: sources, picture, subtitles, versions list
 
-Install `artifacts/com.muhib.bloob_2.5.2_arm.ipk`. Keep `/tmp/bloob-native.log` open; every check below names the line to read.
+Install `artifacts/com.muhib.bloob_2.5.3_arm.ipk`. Keep `/tmp/bloob-native.log` open; every check below names the line to read.
 
 **Subtitles (the size and background are new; the TV draws the text).**
 - [ ] Settings > Subtitle size is *Small* by default (the TV's level 0; the TV's own default is level 2). Turn subtitles on in a film: the log shows `setSubtitleFontSize,"fontSize":0` after `setSubtitleEnable`. Is the text clearly smaller than before?
@@ -228,3 +228,8 @@ Install `artifacts/com.muhib.bloob_2.5.2_arm.ipk`. Keep `/tmp/bloob-native.log` 
 - [ ] Down from the best version reaches the filter pills (*All · 4K · 1080p · 720p and below · May not play well*, with counts); Left and Right filter; Down enters the list.
 - [ ] Sections by kind of release: *Remux*, *Blu-ray encodes*, *Web downloads*, *Web rips*… Each row's second line says source, size and release group.
 - [ ] Is this easier to choose from than 2.4? Note what still isn't.
+
+**Playback info panel (2.5.3).**
+- [ ] During playback press the ⓘ control (or the blue key from the remote's colour buttons): the panel opens top left and updates twice a second. Back or ⓘ closes it.
+- [ ] Network shows a sensible rate for a remux (tens of Mbps) on `wlan0`. Record what *Buffer* says, and the log line `[media] bufferRange: …` (it shows which fields this TV sends).
+- [ ] *File bitrate* shows the size and average bitrate once the running time is known.

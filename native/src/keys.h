@@ -6,7 +6,7 @@
 
 #include <string>
 
-enum class Key { None, Up, Down, Left, Right, Ok, Back, Exit, Play, Pause, PlayPause, Stop, Forward, Rewind, Red, Green, Yellow, Blue };
+enum class Key { None, Up, Down, Left, Right, Ok, Back, Exit, Play, Pause, PlayPause, Stop, Forward, Rewind, Red, Green, Yellow, Blue, Info };
 
 constexpr int kScancodeWebosBack = 482;
 constexpr int kScancodeWebosExit = 505;
@@ -43,6 +43,8 @@ inline Key key_from_event(const SDL_KeyboardEvent &event) {
     case kScancodeWebosGreen: return Key::Green;
     case kScancodeWebosYellow: return Key::Yellow;
     case kScancodeWebosBlue: return Key::Blue;
+    case SDL_SCANCODE_I:  // a keyboard's I, as in desktop players
+    case SDL_SCANCODE_F1: return Key::Info;
     default: return Key::None;
   }
 }
@@ -66,6 +68,7 @@ inline const char *key_name(Key key) {
     case Key::Green: return "Green";
     case Key::Yellow: return "Yellow";
     case Key::Blue: return "Blue";
+    case Key::Info: return "Info";
     default: return "Unmapped";
   }
 }
