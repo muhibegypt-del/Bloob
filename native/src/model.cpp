@@ -23,6 +23,7 @@ Item parse_item(const Json &j) {
   it.rating = j["rating"].as_string();
   it.description = j["description"].as_string();
   it.genres = strings(j["genres"]);
+  it.scores = strings(j["scores"]);
   it.tile = j["tile"].as_string();
   it.backdrop = j["backdrop"].as_string();
   it.logo = j["logo"].as_string();

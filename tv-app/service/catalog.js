@@ -96,7 +96,10 @@ function viaTmdb(load, fallback) {
 }
 
 function home() {
-  return viaTmdb(tmdb.home, cinemetaHome);
+  return viaTmdb(tmdb.home, cinemetaHome).then(result => {
+    setTimeout(tmdb.warm, 5000);
+    return result;
+  });
 }
 
 function cinemetaHome() {

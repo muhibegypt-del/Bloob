@@ -405,7 +405,11 @@ class DetailsScreen : public Screen {
       y += kTitleToMeta;
       std::string facts = meta_line(it);
       int mw = text(Text::Caption1, facts, X0, y, label(Label::Primary, top_only), 1100);
-      if (!it.rating.empty()) draw_glass_badge(X0 + mw + 18, y - 2, "IMDb " + it.rating, top_only);
+      // Scores (MDBList: RT, Metacritic, IMDb, Letterboxd); without them, Cinemeta's IMDb rating.
+      int bx = X0 + mw + 18;
+      if (!it.scores.empty())
+        for (auto &sc : it.scores) bx += draw_glass_badge(bx, y - 2, sc, top_only) + 10;
+      else if (!it.rating.empty()) draw_glass_badge(bx, y - 2, "IMDb " + it.rating, top_only);
       y += line + kMetaToBody;
       paragraph(Text::Caption1, it.description, X0, y, label(Label::Secondary, top_only), kBodyW, kBodyLines);
       draw_buttons(by, top_only);
@@ -580,7 +584,8 @@ class DetailsScreen : public Screen {
       int ay = H - safe_y - 96;
       c.gfx.fill_rect(X0, ay - 26, W - 2 * X0, 1, fade(frost_hairline, a));
       std::vector<std::string> about = {meta_line(meta_.item)};
-      if (!meta_.item.rating.empty()) about.push_back("IMDb " + meta_.item.rating);
+      if (!meta_.item.scores.empty()) about.insert(about.end(), meta_.item.scores.begin(), meta_.item.scores.end());
+      else if (!meta_.item.rating.empty()) about.push_back("IMDb " + meta_.item.rating);
       text(Text::Caption1, "About", X0, ay, label(Label::Secondary, a));
       text(Text::Callout, join(about), X0, ay + 38, label(Label::Primary, a), 760);
       if (!meta_.cast.empty()) {

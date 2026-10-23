@@ -9,6 +9,7 @@
 
 struct Item {
   std::string id, type, name, year, runtime, rating, description;
+  std::vector<std::string> scores;  // "RT 97%", "Metacritic 87", …: title details only (MDBList)
   std::vector<std::string> genres;
   std::string tile, backdrop, logo, poster;
   bool series() const { return type == "series"; }

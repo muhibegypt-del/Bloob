@@ -9,6 +9,7 @@ const config = require('./config');
 const accountStore = require('./account-store');
 const { parseStreams } = require('./release');
 const catalog = require('./catalog');
+const ratings = require('./ratings');
 const images = require('./images');
 const progress = require('./progress');
 const next = require('./next');
@@ -256,6 +257,9 @@ async function handleApi(req, res, url) {
     if (pathname === '/api/search') return reply(res, 200, await catalog.search(query.get('q')));
     if (pathname === '/api/meta') {
       const meta = await catalog.meta(query.get('type'), query.get('id'));
+      // Scores (MDBList): never hold the page up for more than 2.5 s.
+      meta.scores = await Promise.race([ratings.forTitle(meta.type, meta.id).catch(() => []),
+        new Promise(resolve => setTimeout(() => resolve([]), 2500))]);
       const watched = await progress.forTitle(meta.id).catch(() => ({}));
       const intent = meta.type === 'series' ? await progress.intentFor(meta.id).catch(() => null) : null;
       return reply(res, 200, {

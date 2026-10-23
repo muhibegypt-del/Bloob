@@ -10,6 +10,7 @@
 // Keep this file compatible with the TV's older Node runtime (no `?.` / `??`).
 const { getJson } = require('./net');
 const accountStore = require('./account-store');
+const keys = require('./keys');
 
 const API = 'https://api.themoviedb.org/3';
 const IMG = 'https://image.tmdb.org/t/p';
@@ -38,14 +39,7 @@ const pick = (list, offset) => list[(day() + (offset || 0)) % list.length];
 
 // ---- key
 
-const keyStore = accountStore.createFileStore('keys.json', accountStore.defaultLocations);
-let keyRead = { at: 0, value: '' };
-async function apiKey() {
-  if (Date.now() - keyRead.at < 60000) return keyRead.value;
-  const saved = await keyStore.read().catch(() => null);
-  keyRead = { at: Date.now(), value: saved && typeof saved.tmdb === 'string' ? saved.tmdb.trim() : '' };
-  return keyRead.value;
-}
+const apiKey = () => keys.get('tmdb');
 
 // ---- requests
 
@@ -73,7 +67,7 @@ const waiting = [];
 function limited(work) {
   return new Promise((resolve, reject) => {
     const run = () => { active++; work().then(resolve, reject).then(() => { active--; if (waiting.length) waiting.shift()(); }); };
-    if (active < 8) run(); else waiting.push(run);
+    if (active < 16) run(); else waiting.push(run);
   });
 }
 
@@ -195,4 +189,13 @@ function browse(type) {
   return Promise.all(specs).then(rows => rows.filter(r => r.items.length));
 }
 
-module.exports = { enabled, home, browse, item, COLLECTIONS };
+// Films and Series need hundreds of IMDb lookups the first time; do them in the
+// background after Home, so the tabs open from cache.
+let warmed = 0;
+function warm() {
+  if (Date.now() - warmed < TTL / 2) return;
+  warmed = Date.now();
+  browse('movie').then(() => browse('series')).catch(() => {});
+}
+
+module.exports = { enabled, home, browse, warm, item, COLLECTIONS };
