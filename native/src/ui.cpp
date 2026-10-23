@@ -26,6 +26,7 @@ void Ctx::save_settings() {
                                 ",\"subtitleSize\":" + std::to_string(subtitle_size) +
                                 ",\"subtitleBackground\":" + (subtitle_background ? "true" : "false") +
                                 ",\"picture\":" + Json::quote(picture) + ",\"sources\":" + Json::quote(sources) +
+                                ",\"cut\":" + Json::quote(preferred_cut) +
                                 ",\"autoplayNext\":" + (autoplay_next ? "true" : "false") +
                                 ",\"reduceMotion\":" + (reduce_motion ? "true" : "false") +
                                 ",\"reduceTransparency\":" + (reduce_transparency ? "true" : "false") +

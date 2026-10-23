@@ -2,6 +2,7 @@
 // Data shown by the screens, parsed from the local service's JSON.
 #include <map>
 #include <optional>
+#include <utility>
 #include <string>
 #include <vector>
 
@@ -99,6 +100,16 @@ struct SourceOption {
   int dolby_vision = 0;     // guessed Dolby Vision profile for the player's hint: 5, 8 or 0
   std::vector<std::string> sources;  // the indexes that listed it
   int seeders = -1;         // from the availability text; -1 unknown
+  // 2.8, the cinephile list (service cinephile.js): cut ("" = theatrical), tier,
+  // the one-line summary, how it compares with the best of its cut, and more.
+  std::string cut, tier, tier_label, line, compare, picture_name;
+  std::vector<std::string> tags;
+  bool respected = false;   // a release group known for careful work
+  bool collapsed = false;   // folded behind "more" until asked for
+  int dupes = 0;            // the same release found again elsewhere
+  int ready = -1;           // ready now on the owner's AllDebrid: 1, 0, or -1 unknown
+  double score = 0;
+  int bitrate_mbps = -1;    // the file's average, from size and running time; -1 unknown
 };
 
 struct SourceGroup {
@@ -113,6 +124,7 @@ struct Ranking {
   std::string why, provider;
   std::vector<SourceGroup> groups;
   int total = 0;
+  std::vector<std::pair<std::string, int>> cuts;  // the edition row: name and count, "Theatrical" first
 };
 
 // What the viewer asked to watch.

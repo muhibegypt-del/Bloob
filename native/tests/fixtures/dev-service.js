@@ -31,6 +31,11 @@ async function streams(type, id) {
     stream('Film.2024.1080p.WEBRip.x265.AAC5.1-RARBG', '3', '2.3 GB', 2100, { name: 'Torrentio\n1080p' }),
     stream('Film.2024.720p.WEB-DL.AAC2.0', '1', '1.1 GB', 300, { name: 'Torrentio\n720p' }),
     stream('Film.2024.HDCAM.x264', '2', '1.4 GB', 900, { name: 'Torrentio\nCAM' }),
+    // 2.8: another cut, so the edition row shows.
+    stream('Film.2024.Extended.Cut.2160p.UHD.BluRay.REMUX.DV.HDR10.HEVC.TrueHD.7.1.Atmos-FraMeSToR', 'ab', '82 GB', 18),
+    stream('Film.2024.Extended.Cut.1080p.WEB-DL.DDP5.1.H264-FLUX', 'ac', '6.1 GB', 140, { name: 'Torrentio\n1080p' }),
+    // The same 4K web release seen again under another hash (folds into one row).
+    stream('Film.2024.2160p.MA.WEB-DL.DDP5.1.Atmos.HDR10.H265-FLUX', 'ad', '16 GB', 90),
   ];
 }
 

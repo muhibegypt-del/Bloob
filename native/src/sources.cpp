@@ -7,9 +7,18 @@
 // lines: what you get, then source, size and release group. Full release
 // details stay on Right. After OK: pairing if needed, then a short, cancellable
 // progress panel, and any question (which file, which quality) as a list.
+//
+// 2.8, the cinephile list: when a film comes in several cuts, an edition row
+// (Theatrical, Extended, Director's Cut…) replaces the resolution pills and the
+// best card follows the chosen cut, which is remembered. Sections are tiers of
+// source (UHD Blu-ray Remux first); each row is one release on one line, then
+// how it compares with the best of its cut; repetition folds behind "+N more";
+// versions already on the owner's AllDebrid say "Ready now".
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
+#include <map>
+#include <set>
 
 #include "common.h"
 #include "log.h"
@@ -29,25 +38,14 @@ constexpr int LIST_TOP = 530;
 constexpr int LIST_H = 4 * (ROW + ROW_GAP);  // the list's window
 constexpr int HEADER_H = 58;                  // a section title in the list
 
-// Kinds of release, best first, in the words a viewer uses.
-struct ReleaseKind {
-  const char *source;  // the service's sourceType, "" for the rest
-  const char *title;
-};
-const ReleaseKind kKinds[] = {
-    {"REMUX", "Remux \xC2\xB7 the disc\xE2\x80\x99s own picture and sound"},
-    {"BluRay", "Blu-ray encodes"},
-    {"WEB-DL", "Web downloads \xC2\xB7 as streamed"},
-    {"WEBRip", "Web rips"},
-    {"HDTV", "TV recordings"},
-    {"DVD", "DVD"},
-    {"", "Other releases"},
-};
-int kind_of(const SourceOption &o) {
-  for (int k = 0; k < 6; k++)
-    if (o.source == kKinds[k].source) return k;
-  return 6;
+// Source tiers, best first (the service's cinephile.js names them).
+const char *const kTiers[] = {"uhd-remux", "bd-remux", "uhd-encode", "web-4k", "bd-encode", "web-hd", "other"};
+int tier_index(const std::string &tier) {
+  for (int k = 0; k < 7; k++)
+    if (tier == kTiers[k]) return k;
+  return 7;  // a service without tiers
 }
+bool is_more(const SourceOption &o) { return o.id.compare(0, 5, "more:") == 0; }
 
 std::string source_words(const std::string &s) {
   if (s == "REMUX") return "Remux";
@@ -94,6 +92,7 @@ struct Availability {
 
 Availability availability(const SourceOption &o) {
   if (!o.cautions.empty()) return {o.cautions[0], caution};
+  if (o.ready == 1) return {"Ready now", good};
   if (o.availability == "Direct link") return {"Direct link", good};
   int seeders = std::atoi(o.availability.c_str());
   if (seeders >= 20) return {"Readily available", good};
@@ -194,20 +193,12 @@ class SourcesScreen : public Screen {
         return;
       }
       ranking_ = parse_ranking(r.json);
-      options_.clear();
-      section_of_.clear();
-      if (ranking_.recommended) {
-        options_.push_back(*ranking_.recommended);
-        section_of_.push_back("best");
-      }
-      for (auto &g : ranking_.groups)
-        for (auto &o : g.items) {
-          options_.push_back(o);
-          section_of_.push_back(g.kind);
-        }
-      build_pills();
+      all_ = ranking_;
+      expanded_.clear();
+      cut_ = initial_cut();
       filter_ = Filter::All;
-      build_rows();
+      pills_focused_ = false;
+      arrange();
       state_ = options_.empty() ? State::Empty : State::Ready;
       focus_index_ = 0;
       lift_.snap(0);
@@ -232,31 +223,107 @@ class SourcesScreen : public Screen {
 
   bool problem(size_t i) const { return section_of_[i] == "problems"; }
 
-  // One pill per resolution that has versions, with its count.
+  // The cut the list opens on: the one last chosen, else Theatrical, else the first.
+  std::string initial_cut() const {
+    if (all_.cuts.size() < 2) return "";
+    for (auto &c : all_.cuts)
+      if (c.first == ctx().preferred_cut) return c.first;
+    for (auto &c : all_.cuts)
+      if (c.first == "Theatrical") return c.first;
+    return all_.cuts[0].first;
+  }
+  bool in_cut(const SourceOption &o) const {
+    return all_.cuts.size() < 2 || (o.cut.empty() ? std::string("Theatrical") : o.cut) == cut_;
+  }
+
+  // The list for the chosen cut: its best version first (the recommended one
+  // if it is of this cut, else the highest-scored playable one), then the rest
+  // in the service's order, then a "+N more" row for each tier with folded versions.
+  void arrange() {
+    ranking_ = all_;
+    std::vector<std::pair<SourceOption, std::string>> pool;
+    if (all_.recommended) pool.push_back({*all_.recommended, "best"});
+    for (auto &g : all_.groups)
+      for (auto &o : g.items) pool.push_back({o, g.kind});
+    int best = -1;
+    for (size_t i = 0; i < pool.size() && best < 0; i++)
+      if (pool[i].second == "best" && in_cut(pool[i].first)) best = static_cast<int>(i);
+    if (best < 0)
+      for (size_t i = 0; i < pool.size(); i++) {
+        const SourceOption &o = pool[i].first;
+        if (in_cut(o) && !o.excluded && pool[i].second != "problems" && (best < 0 || o.score > pool[static_cast<size_t>(best)].first.score))
+          best = static_cast<int>(i);
+      }
+    ranking_.recommended.reset();
+    if (best >= 0) {
+      ranking_.recommended = pool[static_cast<size_t>(best)].first;
+      if (pool[static_cast<size_t>(best)].second != "best") ranking_.why = "The best " + cut_ + " version on offer.";
+    }
+    options_.clear();
+    section_of_.clear();
+    if (ranking_.recommended) {
+      options_.push_back(*ranking_.recommended);
+      section_of_.push_back("best");
+    }
+    std::map<std::string, int> folded;
+    for (size_t i = 0; i < pool.size(); i++) {
+      if (static_cast<int>(i) == best || !in_cut(pool[i].first) || pool[i].second == "best") continue;
+      options_.push_back(pool[i].first);
+      section_of_.push_back(pool[i].second);
+      if (folds(options_.size() - 1)) folded[pool[i].first.tier]++;
+    }
+    for (auto &f : folded) {
+      SourceOption more;
+      more.id = "more:" + f.first;
+      more.tier = f.first;
+      bool one = f.second == 1;
+      more.headline = "+" + std::to_string(f.second) + (f.first == "other" ? (one ? " lower-quality version" : " lower-quality versions") : (one ? " more like this" : " more like these"));
+      options_.push_back(more);
+      section_of_.push_back("more");
+    }
+    build_pills();
+    build_rows();
+  }
+
+  // Folded behind "+N more" until that row is opened.
+  bool folds(size_t i) const {
+    return options_[i].collapsed && section_of_[i] == "others" && !expanded_.count(options_[i].tier);
+  }
+
+  // The edition row when there are several cuts, else one pill per resolution
+  // that has versions, with its count. Focus stays where it was.
   void build_pills() {
     pills_.clear();
-    pill_ = 0;
-    pills_focused_ = false;
+    if (all_.cuts.size() > 1) {
+      for (auto &c : all_.cuts) pills_.push_back({Filter::All, c.second, c.first});
+      pill_ = 0;
+      for (size_t i = 0; i < pills_.size(); i++)
+        if (pills_[i].cut == cut_) pill_ = static_cast<int>(i);
+      return;
+    }
     size_t first = ranking_.recommended ? 1 : 0;
     for (Filter f : {Filter::All, Filter::UHD, Filter::FullHD, Filter::Lower, Filter::Problems}) {
       int count = 0;
-      for (size_t i = first; i < options_.size(); i++) count += passes(f, options_[i], problem(i)) ? 1 : 0;
-      if (count || f == Filter::All) pills_.push_back({f, count});
+      for (size_t i = first; i < options_.size(); i++) count += section_of_[i] != "more" && passes(f, options_[i], problem(i)) ? 1 : 0;
+      if (count || f == Filter::All) pills_.push_back({f, count, ""});
     }
     // Nothing to choose between: no strip.
     if (pills_.size() <= 2 && (pills_.size() < 2 || pills_[1].count == pills_[0].count)) pills_.clear();
+    pill_ = 0;
+    for (size_t i = 0; i < pills_.size(); i++)
+      if (pills_[i].filter == filter_) pill_ = static_cast<int>(i);
   }
 
   // The list for the current filter: versions that continue the show's last
-  // episode first, then a section per kind of release, then those likely to
-  // fail. Within a section the service's order (best resolution first) holds.
+  // episode first, then a section per source tier (each ending with its
+  // "+N more" row), then those likely to fail. The service's order holds within.
   void build_rows() {
     rows_.clear();
     int y = 0;
     size_t first = ranking_.recommended ? 1 : 0;
-    auto section = [&](const std::string &title, const std::string &kind, const std::vector<int> &items) {
+    auto section = [&](const std::string &title, const std::string &kind, const std::vector<int> &items, int count) {
       if (items.empty()) return;
-      rows_.push_back({-1, title + " \xC2\xB7 " + std::to_string(items.size()), kind, y});
+      rows_.push_back({-1, title + " \xC2\xB7 " + std::to_string(count), kind, y});
       y += HEADER_H;
       for (int i : items) {
         rows_.push_back({i, "", kind, y});
@@ -264,17 +331,34 @@ class SourcesScreen : public Screen {
       }
     };
     std::vector<int> continuing, problems;
-    std::vector<std::vector<int>> kinds(7);
+    std::vector<std::vector<int>> tiers(8);
+    std::vector<int> counts(8, 0);
+    std::vector<std::string> titles(8, "Other versions");
+    std::map<std::string, int> more_row;
     for (size_t i = first; i < options_.size(); i++) {
+      if (section_of_[i] == "more") {
+        more_row[options_[i].tier] = static_cast<int>(i);
+        continue;
+      }
       if (!passes(filter_, options_[i], problem(i))) continue;
       if (section_of_[i] == "continue") continuing.push_back(static_cast<int>(i));
       else if (problem(i)) problems.push_back(static_cast<int>(i));
-      else kinds[static_cast<size_t>(kind_of(options_[i]))].push_back(static_cast<int>(i));
+      else {
+        int t = tier_index(options_[i].tier);
+        counts[static_cast<size_t>(t)]++;
+        if (!options_[i].tier_label.empty()) titles[static_cast<size_t>(t)] = options_[i].tier_label;
+        if (!folds(i)) tiers[static_cast<size_t>(t)].push_back(static_cast<int>(i));
+      }
     }
     for (auto &g : ranking_.groups)
-      if (g.kind == "continue") section(g.label, "continue", continuing);
-    for (int k = 0; k < 7; k++) section(kKinds[k].title, "others", kinds[static_cast<size_t>(k)]);
-    section("May not play well on this TV", "problems", problems);
+      if (g.kind == "continue") section(g.label, "continue", continuing, static_cast<int>(continuing.size()));
+    for (int t = 0; t < 8; t++) {
+      auto &items = tiers[static_cast<size_t>(t)];
+      auto more = more_row.find(t < 7 ? kTiers[t] : "");
+      if (more != more_row.end()) items.push_back(more->second);
+      section(titles[static_cast<size_t>(t)], "others", items, counts[static_cast<size_t>(t)]);
+    }
+    section("May not play well on this TV", "problems", problems, static_cast<int>(problems.size()));
     list_h_ = y;
     scroll_.snap(0);
   }
@@ -291,8 +375,14 @@ class SourcesScreen : public Screen {
   void set_filter(int index) {
     if (pills_.empty()) return;
     pill_ = std::max(0, std::min(static_cast<int>(pills_.size()) - 1, index));
-    filter_ = pills_[static_cast<size_t>(pill_)].filter;
-    build_rows();
+    if (!pills_[static_cast<size_t>(pill_)].cut.empty()) {
+      cut_ = pills_[static_cast<size_t>(pill_)].cut;
+      arrange();  // the best card and the list follow the cut
+      focus_index_ = 0;
+    } else {
+      filter_ = pills_[static_cast<size_t>(pill_)].filter;
+      build_rows();
+    }
     lift_.snap(0);
     lift_.to(1);
   }
@@ -319,7 +409,23 @@ class SourcesScreen : public Screen {
 
   void choose(int index) {
     if (index < 0 || index >= static_cast<int>(options_.size())) return;
+    if (is_more(options_[static_cast<size_t>(index)])) {  // "+N more": unfold that tier, focus its first new row
+      std::string tier = options_[static_cast<size_t>(index)].tier;
+      expanded_.insert(tier);
+      arrange();
+      for (auto &r : rows_)
+        if (r.option >= 0 && options_[static_cast<size_t>(r.option)].tier == tier && options_[static_cast<size_t>(r.option)].collapsed) {
+          move_to(r.option);
+          break;
+        }
+      return;
+    }
     chosen_ = options_[static_cast<size_t>(index)];
+    // The cut chosen here is where the next film's list opens.
+    if (all_.cuts.size() > 1 && cut_ != ctx().preferred_cut) {
+      ctx().preferred_cut = cut_;
+      ctx().save_settings();
+    }
     // Picking another version of a show by hand: its next episodes keep to it.
     if (!direct_ && req_.item.series() && !(index == 0 && has_recommended()))
       ctx().api.post("/api/intent", "{\"id\":" + Json::quote(req_.item.id) + ",\"candidate\":" + Json::quote(chosen_.id) + "}");
@@ -690,7 +796,7 @@ class SourcesScreen : public Screen {
     // What the keys do here, and where the versions came from.
     int hx = RX;
     if (pills_focused_) {
-      hx += draw_hint(hx, H - 82, "\xE2\x86\x90 \xE2\x86\x92", "Filter") + 32;
+      hx += draw_hint(hx, H - 82, "\xE2\x86\x90 \xE2\x86\x92", all_.cuts.size() > 1 ? "Edition" : "Filter") + 32;
       hx += draw_hint(hx, H - 82, "\xE2\x86\x93", "Versions") + 32;
     } else {
       hx += draw_hint(hx, H - 82, "OK", "Play") + 32;
@@ -708,7 +814,7 @@ class SourcesScreen : public Screen {
     for (size_t i = 0; i < pills_.size(); i++) {
       bool selected = static_cast<int>(i) == pill_;
       GlassButton b;
-      b.label = std::string(filter_name(pills_[i].filter)) + " \xC2\xB7 " + std::to_string(pills_[i].count);
+      b.label = (pills_[i].cut.empty() ? std::string(filter_name(pills_[i].filter)) : pills_[i].cut) + " \xC2\xB7 " + std::to_string(pills_[i].count);
       b.pill = true;
       b.focused = pills_focused_ && selected;
       b.candidate = selected && !b.focused;
@@ -733,10 +839,12 @@ class SourcesScreen : public Screen {
     }
     Color fg = focused ? rgba(0x000000) : label(Label::Primary);
     Color fg2 = focused ? rgba(0x000000, 166) : label(Label::Secondary);
-    const char *kind = o.match == "same" ? "Same as your last episode" : o.match == "like" ? "Like your last episode" : "Best version";
+    std::string kind = o.match == "same" ? "Same as your last episode" : o.match == "like" ? "Like your last episode"
+                       : all_.cuts.size() > 1 ? "Best " + cut_ + " version" : "Best version";
+    if (o.ready == 1) kind += " \xC2\xB7 Ready now";
     text(Text::Caption1, kind, x + 40, y + 36, fg2);
     text(Text::Title2, o.headline, x + 40, y + 72, fg, w - 260);
-    text(Text::Body, picture_words(o) + " \xC2\xB7 " + o.audio, x + 40, y + 146, fg2, w - 260);
+    text(Text::Body, o.line.empty() ? picture_words(o) + " \xC2\xB7 " + o.audio : o.line, x + 40, y + 146, fg2, w - 260);
     paragraph(Text::Caption1, ranking_.why, x + 40, y + 190, fg2, w - 260, 2);
     // Play affordance.
     int r = 52, cx = x + w - 40 - r, cy = y + h / 2;
@@ -755,10 +863,14 @@ class SourcesScreen : public Screen {
       c.gfx.shadow(x, y, w, ROW, 20, 18, 8, 120);
       c.gfx.fill_round(x, y, w, ROW, 20, rgba(0xffffff));
     } else {
-      c.gfx.fill_round(x, y, w, ROW, 20, rgba(0xffffff, 26));
+      c.gfx.fill_round(x, y, w, ROW, 20, rgba(0xffffff, is_more(o) ? 13 : 26));
     }
     Color fg = focused ? rgba(0x000000) : label(o.excluded ? Label::Disabled : Label::Primary);
     Color fg2 = focused ? rgba(0x000000, 166) : label(o.excluded ? Label::Disabled : Label::Secondary);
+    if (is_more(o)) {  // "+N more": one quiet line
+      text(Text::BodySemi, o.headline, x + 28, y + (ROW - line_for(Text::BodySemi)) / 2, focused ? fg : label(Label::Secondary), w - 56);
+      return;
+    }
     Availability a = availability(o);
     int aw = measure(Text::Caption1, a.words);
     int ax = x + w - 28 - aw;
@@ -768,8 +880,13 @@ class SourcesScreen : public Screen {
     // Line one: what you will see and hear. Line two: where it comes from.
     int block = line_for(Text::BodySemi) + 4 + line_for(Text::Caption1);
     int ty = y + (ROW - block) / 2;
-    text(Text::BodySemi, o.headline + " \xC2\xB7 " + o.audio, x + 28, ty, fg, right - x - 28);
-    std::string from = join({source_words(o.source), o.size, o.group});
+    // 2.8: line one is the release itself (picture · audio · size · group · cut);
+    // line two how it compares with the best of its cut.
+    std::string first = o.line.empty() ? o.headline + " \xC2\xB7 " + o.audio : o.line;
+    if (!o.line.empty()) first = o.resolution + " \xC2\xB7 " + first;
+    text(Text::BodySemi, first, x + 28, ty, fg, right - x - 28);
+    std::string from = o.compare.empty() ? join({source_words(o.source), o.size, o.group}) : o.compare;
+    if (o.respected) from = join({"Trusted group", from});
     if (req_.item.series()) from = join({from, o.pack ? "Season pack" : "Single episode"});
     text(Text::Caption1, from, x + 28, ty + line_for(Text::BodySemi) + 4, fg2, right - x - 28);
   }
@@ -803,12 +920,19 @@ class SourcesScreen : public Screen {
       py += 30;
       py = paragraph(Text::Callout, value, px, py, label(Label::Primary, a), pw, lines) + 18;
     };
-    row("Picture", picture_words(o));
+    if (is_more(o)) return;
+    std::string edition = o.cut.empty() ? "Theatrical (or not stated)" : o.cut;
+    for (auto &t : o.tags) edition += " \xC2\xB7 " + t;
+    row("Edition", edition);
+    row("Picture", o.picture_name.empty() ? picture_words(o) : o.picture_name);
     row("Sound", o.audio);
-    row("File", join({source_words(o.source), o.size, o.availability}));
-    row("Found by", join(o.sources, ", "));
-    row("Details", o.facts, 2);
-    row("Release name", o.release, 3);
+    row("Source", join({o.tier_label, o.size, o.bitrate_mbps > 0 ? "about " + std::to_string(o.bitrate_mbps) + " Mbit/s" : "",
+                        o.group.empty() ? "" : o.group + (o.respected ? " (trusted group)" : "")}), 2);
+    row("Compared with the best", o.compare, 2);
+    row("On AllDebrid", o.ready == 1 ? "Ready now: plays straight away" : o.ready == 0 ? "Not downloaded yet: AllDebrid fetches it first" : "");
+    row("Found by", join({join(o.sources, ", ") + (o.dupes > 0 ? " (listed " + std::to_string(o.dupes + 1) + " times)" : ""),
+                          o.seeders >= 0 ? std::to_string(o.seeders) + " seeders" : ""}));
+    row("Release name", o.release, 2);
     for (auto &warning : o.warnings) {
       c.icons.draw(Icon::Warning, px, py, 26, fade(caution, a));
       py = paragraph(Text::Caption1, warning, px + 38, py, fade(caution, a), pw - 38, 2) + 8;
@@ -946,7 +1070,11 @@ class SourcesScreen : public Screen {
   struct Pill {
     Filter filter;
     int count;
+    std::string cut;  // an edition pill (2.8), else ""
   };
+  Ranking all_;  // the service's whole answer; ranking_ is the chosen cut's view of it
+  std::string cut_;
+  std::set<std::string> expanded_;  // tiers whose folded versions are shown
   std::vector<Pill> pills_;
   int pill_ = 0;
   bool pills_focused_ = false;

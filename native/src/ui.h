@@ -80,6 +80,7 @@ struct Ctx {
   std::string subtitle_language = "Off";        // subtitles to switch on at start ("Off" = none)
   int subtitle_size = 0;                        // the TV's subtitle size level, 0 smallest .. 4 (TV default 2)
   bool subtitle_background = false;             // a dark box behind subtitles
+  std::string preferred_cut = "Theatrical";     // the edition the versions list opens on (2.8): the last one chosen
   std::string picture = "best";                 // picture preference: "best", "hdr10" or "sdr"
   std::string sources = "all";                  // source indexes: "all" or "torrentio"
   bool autoplay_next = true;                    // Up next starts the next episode by itself

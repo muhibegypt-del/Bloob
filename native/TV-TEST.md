@@ -247,3 +247,12 @@ Install `artifacts/com.muhib.bloob_2.5.3_arm.ipk`. Keep `/tmp/bloob-native.log` 
 - [ ] Back on Bloob's Home does nothing (no "Press Back again" toast).
 - [ ] One film plays start to finish as before.
 - [ ] `/tmp/bloob-home.log` shows the takeovers; record Bloob's memory while hidden (`tv-inspect.sh`).
+
+## 13. New in 2.8: the cinephile versions list
+
+- [ ] A film with several cuts (e.g. The Lord of the Rings) opens on an edition row: Theatrical first unless you chose another cut before. Left/Right switches cut; the best card and list follow.
+- [ ] Choose an Extended version; the next film with several cuts opens on Extended.
+- [ ] Sections run UHD Blu-ray Remux, Blu-ray Remux, 4K disc encodes, 4K web, Blu-ray encodes, HD web; each row is one line plus a comparison ("Same disc, no Atmos, 40% smaller").
+- [ ] Repeated releases appear once ("listed 3 times" in details); "+N more" rows unfold.
+- [ ] With AllDebrid paired, some rows say "Ready now", and those start without a download wait. Check AllDebrid's magnet list afterwards: nothing new left behind except what you played.
+- [ ] Dolby Vision P7 remuxes read "HDR10 (Dolby Vision P7 disc)".

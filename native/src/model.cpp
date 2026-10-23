@@ -156,6 +156,19 @@ static SourceOption parse_option(const Json &j) {
   // "120 seeders" leads with the number; anything else is unknown.
   const std::string &a = o.availability;
   if (!a.empty() && a[0] >= '0' && a[0] <= '9') o.seeders = std::atoi(a.c_str());
+  o.cut = j["cut"].as_string();
+  o.tier = j["tier"].as_string();
+  o.tier_label = j["tierLabel"].as_string();
+  o.line = j["line"].as_string();
+  o.compare = j["compare"].as_string();
+  o.picture_name = j["pictureName"].as_string();
+  o.tags = strings(j["tags"]);
+  o.respected = j["respected"].as_bool();
+  o.collapsed = j["collapsed"].as_bool();
+  o.dupes = static_cast<int>(j["dupes"].as_int(0));
+  o.ready = j["ready"].is_null() ? -1 : j["ready"].as_bool() ? 1 : 0;
+  o.score = j["score"].as_number(0);
+  o.bitrate_mbps = j["bitrateMbps"].is_null() ? -1 : static_cast<int>(j["bitrateMbps"].as_int(-1));
   return o;
 }
 
@@ -174,6 +187,8 @@ Ranking parse_ranking(const Json &j) {
     g.more = static_cast<int>(groups[i]["more"].as_int(0));
     r.groups.push_back(g);
   }
+  for (size_t i = 0; i < j["cuts"].size(); i++)
+    r.cuts.push_back({j["cuts"][i]["name"].as_string(), static_cast<int>(j["cuts"][i]["count"].as_int(0))});
   return r;
 }
 

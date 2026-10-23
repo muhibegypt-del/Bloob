@@ -3,6 +3,7 @@
 // play comes from a profile in tv-profile.js; nothing here names a model.
 // Keep this file compatible with the TV's older Node runtime (no `?.` / `??`).
 const { profileFor } = require('./tv-profile');
+const cine = require('./cinephile');
 
 const RESOLUTION_SCORE = { '4K': 40, '1080p': 30, '720p': 15, '480p': 5, SD: 5 };
 const LOW_QUALITY = new Set(['CAM', 'TS', 'SCR']);
@@ -12,6 +13,7 @@ const DTS = ['DTS', 'DTS-HD MA', 'DTS:X'];
 const TYPICAL_MINUTES = { movie: 120, series: 45 };
 
 const WEIGHTS = {
+  ready: 3,  // ready now on the owner's AllDebrid: a tie-breaker at equal quality (2.8)
   dolbyVision: 6,
   hdr: 5,
   atmos: 4,
@@ -356,7 +358,7 @@ function bitrateText(mbps) {
 
 function view(ranked, prefs) {
   const c = ranked.candidate;
-  return {
+  return cinephileView(ranked, {
     id: c.id,
     headline: headline(c, prefs),
     resolution: (c.claims || {}).resolution || (c.sourceType && LOW_QUALITY.has(c.sourceType) ? c.sourceType : '—'),
@@ -382,7 +384,32 @@ function view(ranked, prefs) {
     dolbyVision: ranked.picture.dolbyVision === 'p7' ? '' : ranked.picture.dolbyVision,
     container: (c.claims || {}).container || '',
     sources: (c.providers || [c.provider]).filter(Boolean),
-  };
+  });
+}
+
+// 2.8: the cinephile's facts about a version (cinephile.js).
+function cinephileView(ranked, base) {
+  const c = ranked.candidate;
+  const cut = cine.cutOf(c);
+  const tags = cine.tagsOf(c);
+  const pictureName = cine.pictureName(c, dolbyVisionProfile(c));
+  const size = c.sizeBytes ? sizeText(c.sizeBytes) : c.packBytes ? `${sizeText(c.packBytes)} pack` : '';
+  const tier = cine.tierOf(c);
+  return Object.assign(base, {
+    cut,
+    tags,
+    tier,
+    tierLabel: cine.tierLabel(tier),
+    pictureName,
+    lossless: cine.lossless(c),
+    respected: cine.respected(c),
+    bytes: c.sizeBytes || 0,
+    line: cine.line(c, { picture: pictureName, audio: audioText(c), size, cut, tags }),
+    ready: c.ready === true ? true : c.ready === false ? false : null,
+    dupes: ranked.dupes || 0,
+    collapsed: false,
+    compare: '',
+  });
 }
 
 function explain(best, all, intent, preference) {
@@ -414,7 +441,21 @@ function explain(best, all, intent, preference) {
  */
 function rank(candidates, prefs) {
   prefs = prefs || {};
-  const ranked = candidates.map(c => score(c, prefs)).sort((a, b) => b.score - a.score);
+  const scored = candidates.map(c => {
+    const r = score(c, prefs);
+    // Ready now on the owner's AllDebrid: a tie-breaker at equal quality, never more.
+    if (c.ready === true && !r.excluded) { r.score += WEIGHTS.ready; r.notes.push('Ready now on AllDebrid'); }
+    return r;
+  }).sort((a, b) => b.score - a.score);
+  // One row per release: the same release found by several indexes or hashes merges.
+  const ranked = [];
+  scored.forEach(r => {
+    const same = ranked.find(k => cine.sameRelease(k, r));
+    if (!same) { ranked.push(r); return; }
+    same.dupes = (same.dupes || 0) + 1;
+    const providers = (same.candidate.providers || [same.candidate.provider]).concat(r.candidate.providers || [r.candidate.provider]);
+    same.candidate = Object.assign({}, same.candidate, { providers: providers.filter((p, i) => p && providers.indexOf(p) === i) });
+  });
   const playable = ranked.filter(r => !r.excluded);
   // Never recommend a version this TV plays silently while one with sound exists.
   const recommended = playable.find(r => !r.silent) || playable[0] || null;
@@ -447,11 +488,27 @@ function rank(candidates, prefs) {
     groups.push({ label: 'Other versions', kind: 'others', items: kept.map(r => view(r, prefs)), more: others.length - kept.length });
   }
   if (problems.length) section(PROBLEM_SECTION, 'problems', problems);
+  const best = recommended ? view(recommended, prefs) : null;
+  // Fold away repetition: after two versions with the same resolution, picture,
+  // audio and cut in a tier, the rest wait behind "more"; "Everything else" folds whole.
+  const seen = {};
+  groups.forEach(g => g.items.forEach(v => {
+    if (g.kind !== 'others') return;
+    const sig = [v.tier, v.resolution, v.pictureName, v.audio, v.cut].join('|');
+    seen[sig] = (seen[sig] || 0) + 1;
+    v.collapsed = v.tier === 'other' || seen[sig] > 2;
+  }));
+  const all = (best ? [best] : []).concat(...groups.map(g => g.items));
+  // Each version is compared with the best of its own cut (the edition row filters by cut).
+  const bestOf = {};
+  all.forEach(v => { if (!bestOf[v.cut] && !v.excluded) bestOf[v.cut] = v; });
+  all.forEach(v => { v.compare = cine.compare(v, bestOf[v.cut] || best); });
   return {
-    recommended: recommended ? view(recommended, prefs) : null,
+    recommended: best,
     why: recommended ? explain(recommended, ranked, prefs.intent, picturePreference(prefs.picture)) : '',
     groups,
     total: candidates.length,
+    cuts: cine.cutsOf(all),
   };
 }
 

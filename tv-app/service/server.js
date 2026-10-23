@@ -15,6 +15,7 @@ const progress = require('./progress');
 const next = require('./next');
 const { rank, editionOf, hashOf } = require('./rank');
 const { createResolver } = require('./resolve');
+const { createReadyCheck } = require('./ready');
 const sources = require('./sources');
 
 const PORT = config.port;
@@ -121,6 +122,7 @@ if (devFixtures) {
 }
 
 const resolver = createResolver((endpoint, fields) => alldebrid(endpoint, fields));
+const readyCheck = createReadyCheck((endpoint, fields) => alldebrid(endpoint, fields));
 
 // Candidates from recent searches, so the app can ask to resolve one by ID
 // without sending the magnet or link back.
@@ -303,13 +305,20 @@ async function handleApi(req, res, url) {
     const intent = type === 'series' ? await progress.intentFor(id.split(':')[0]).catch(() => null) : null;
     const prefs = { language: input.language || 'English', type, runtimeMinutes: runtimeMinutes || undefined, intent: intent || undefined, picture: settings.picture };
     const answered = found.report.filter(r => !r.error && r.count > 0).map(r => r.label);
+    // Ready now (2.8): ask the owner's AllDebrid about the top versions, for at most 3 s.
+    let ranked = rank(candidates, prefs);
+    if (apiKey && !devFixtures) {
+      const top = [ranked.recommended].concat(...ranked.groups.filter(g => g.kind !== 'problems').map(g => g.items))
+        .filter(Boolean).map(v => hashOf(v.id)).filter(Boolean).slice(0, 8);
+      ranked = rank(await readyCheck.annotate(candidates, top, 3000), prefs);
+    }
     return reply(res, 200, Object.assign({
       provider: answered.length ? answered.join(', ') : PROVIDER,
       providers: found.report,
       picturePreference: settings.picture || 'best',
       runtimeMinutes: runtimeMinutes || null,
       runtimeFrom: sent > 0 && sent < 1000 ? 'app' : runtimeMinutes ? 'catalogue' : 'typical',
-    }, rank(candidates, prefs)));
+    }, ranked));
   }
   if (pathname === '/api/resolve/start' && req.method === 'POST') {
     let source = null;
