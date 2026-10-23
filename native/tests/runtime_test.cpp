@@ -13,6 +13,7 @@
 #include "resources.h"
 #include "tasks.h"
 #include "stats.h"
+#include "apps.h"
 
 static int failures = 0;
 #define CHECK(cond) do { if (!(cond)) { std::printf("FAIL %s:%d  %s\n", __FILE__, __LINE__, #cond); failures++; } } while (0)
@@ -215,7 +216,25 @@ static void test_rate_meter() {
   CHECK(stats::bytes_text(74200000000LL) == "74.2 GB");
 }
 
+static void test_launch_points() {
+  std::string reply = R"({"returnValue":true,"launchPoints":[
+    {"id":"com.webos.app.hdmi1","title":"HDMI 1","icon":"/usr/palm/applications/com.webos.app.hdmi1/icon.png"},
+    {"id":"netflix","title":"Netflix","icon":"/a/n.png","largeIcon":"/a/n-large.png"},
+    {"id":"com.muhib.bloob","title":"Bloob Native"},
+    {"id":"youtube.leanback.v4","title":"YouTube"},
+    {"id":"com.webos.app.home","title":"Home"},
+    {"id":"","title":"Broken"}]})";
+  auto apps = parse_launch_points(reply, "com.muhib.bloob");
+  CHECK(apps.size() == 3);
+  CHECK(apps[0].id == "youtube.leanback.v4");
+  CHECK(apps[1].id == "netflix" && apps[1].icon == "/a/n-large.png" && !apps[1].input);
+  CHECK(apps[2].id == "com.webos.app.hdmi1" && apps[2].input);
+  CHECK(parse_launch_points("not json", "x").empty());
+  CHECK(launch_payload("a\"b") == "{\"id\":\"a\\\"b\"}");
+}
+
 int run_runtime_tests() {
+  test_launch_points();
   test_stats_parsers();
   test_rate_meter();
   test_tasks_wake_and_lanes();

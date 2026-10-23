@@ -500,6 +500,8 @@ class App {
         case Key::Back:
           if (root_ != kHomeTab) {
             select_root(kHomeTab);
+          } else if (launcher_) {
+            // Bloob is the TV's home screen: there is nothing behind it to go back to.
           } else if (exit_armed_at_ && c.now - exit_armed_at_ < kExitConfirmMs) {
             running_ = false;
           } else {
@@ -1172,6 +1174,8 @@ class App {
   bool tabs_wanted_ = true;
   bool in_background_ = false;
   long long exit_armed_at_ = 0;
+  // The launcher hook is installed (native/launcher): Bloob is the home screen.
+  bool launcher_ = access("/var/lib/webosbrew/init.d/60-bloob-home", F_OK) == 0;
   Anim entering_{theme::fade_rate, 1};
   Anim leaving_fade_{theme::fade_rate, 0};
   Anim page_fade_{theme::fade_rate, 1};

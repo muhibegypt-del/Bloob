@@ -233,3 +233,17 @@ Install `artifacts/com.muhib.bloob_2.5.3_arm.ipk`. Keep `/tmp/bloob-native.log` 
 - [ ] During playback press the ⓘ control (or the blue key from the remote's colour buttons): the panel opens top left and updates twice a second. Back or ⓘ closes it.
 - [ ] Network shows a sensible rate for a remux (tens of Mbps) on `wlan0`. Record what *Buffer* says, and the log line `[media] bufferRange: …` (it shows which fields this TV sends).
 - [ ] *File bitrate* shows the size and average bitrate once the running time is known.
+
+## 12. New in 2.6: Bloob as the home screen
+
+**Apps row (app only, before the launcher hook).**
+- [ ] Home shows *Apps* under the hero: YouTube first (if installed), then other apps with their own icons, a divider, then HDMI inputs. If the row is missing, record the `[apps]` line in `/tmp/bloob-native.log` (the TV may refuse `listLaunchPoints`; the Homebrew Channel route should then answer).
+- [ ] Down from the hero buttons reaches the row; Up from the first shelf comes back to it; OK opens the app; returning to Bloob keeps focus on that tile.
+- [ ] Pages without artwork are pure black.
+
+**Launcher hook (`native/launcher/README.md`, only once the above passes).**
+- [ ] Power off and on: Bloob appears instead of LG's Home (within a few seconds). Wake from standby: the same.
+- [ ] The Home button from YouTube or an HDMI input lands on Bloob.
+- [ ] Back on Bloob's Home does nothing (no "Press Back again" toast).
+- [ ] One film plays start to finish as before.
+- [ ] `/tmp/bloob-home.log` shows the takeovers; record Bloob's memory while hidden (`tv-inspect.sh`).

@@ -91,7 +91,19 @@ function typeFor(body, fallback) {
   return fallback;
 }
 
+// App icons for Home's Apps row (2.6): PNG files inside the TV's app folders, read as they are.
+const APP_ICON = /^\/(?:media\/cryptofs\/apps\/|media\/developer\/apps\/)?usr\/palm\/applications\/[A-Za-z0-9._-]+\/[A-Za-z0-9._\/-]+\.png$/;
+
+function isAppIcon(file) {
+  return APP_ICON.test(file) && file.indexOf('..') < 0;
+}
+
 async function fetchImage(url) {
+  if (url[0] === '/') {
+    if (!isAppIcon(url)) throw Object.assign(new Error('Image path not allowed'), { status: 403 });
+    const body = await fs.promises.readFile(url).catch(() => { throw Object.assign(new Error('No such icon'), { status: 404 }); });
+    return { body, type: 'image/png' };
+  }
   let target;
   try { target = new URL(url); } catch (_) { throw Object.assign(new Error('Invalid image URL'), { status: 400 }); }
   if (target.protocol !== 'https:' || !HOSTS.test(target.hostname)) throw Object.assign(new Error('Image host not allowed'), { status: 403 });
@@ -128,4 +140,4 @@ async function fetchImage(url) {
 
 setTimeout(() => { if (diskDir === null) diskDir = pickDiskDir() || ''; prune(); }, 5000).unref();
 
-module.exports = { fetchImage, HOSTS, setMemoryPolicy, cacheBytes };
+module.exports = { isAppIcon, fetchImage, HOSTS, setMemoryPolicy, cacheBytes };

@@ -1,0 +1,13 @@
+#!/bin/sh
+# webosbrew boot hook: start Bloob's home watcher (/var/lib/bloob-home/watch.sh). Never blocks boot.
+# Adapted from Lumen's tools/tv/60-homehook (MIT, see LICENSE-lumen).
+# Its presence also tells Bloob it is the home screen (Back on Home no longer closes it).
+export PATH="/bin:/sbin:/usr/bin:/usr/sbin:$PATH"
+W=/var/lib/bloob-home/watch.sh
+[ -x "$W" ] || exit 0
+# already running? Checked in /proc: plain ps on webOS lists only the current terminal's processes.
+for p in /proc/[0-9]*; do
+  case "$({ tr "\0" " " < $p/cmdline; } 2>/dev/null)" in "/bin/sh $W"*|"sh $W"*) exit 0 ;; esac
+done
+setsid nohup "$W" </dev/null >/dev/null 2>&1 &
+exit 0

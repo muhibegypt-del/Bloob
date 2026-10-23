@@ -6,8 +6,11 @@
 #include <algorithm>
 #include <cmath>
 
+#include "apps.h"
 #include "common.h"
+#include "json.h"
 #include "log.h"
+#include "luna.h"
 #include "pairing.h"
 #include "speech.h"
 #include "play.h"
@@ -31,6 +34,10 @@ constexpr int kTitleToMeta = 13, kMetaToBody = 18, kBodyToButtons = 32, kBodyW =
 constexpr int X0 = safe_x;
 constexpr long long kAutoAdvanceMs = 9000;
 constexpr int kFeatured = 6;
+// Apps row (2.6, launcher): the TV's apps and inputs between the hero and the
+// first shelf; the hero moves up by its height. Tiles 200 × 112, +50 on focus.
+constexpr int kAppsBlock = 182, kAppW = 200, kAppH = 112, kAppGrow = 50, kAppGap = 16, kAppIcon = 56;
+const char *kHbExec = "luna://org.webosbrew.hbchannel.service/exec";
 
 float lerp(float a, float b, float t) { return a + (b - a) * t; }
 
@@ -43,6 +50,10 @@ class BrowseScreen : public Screen {
   void shell_glass(const GlassSpec &g) const override {
     if (state_ == State::Ready) backdrop_.glass(g);
     else Screen::shell_glass(g);
+  }
+  // Back from an app opened from the Apps row: the TV may have added or removed apps.
+  void foreground() override {
+    if (kind_ == Browse::Home) load_apps();
   }
   void set_tabs_focus(bool tabs) override {
     tabs_ = tabs;
@@ -65,6 +76,7 @@ class BrowseScreen : public Screen {
       return;
     }
     waiting_for_service_ = false;
+    if (kind_ == Browse::Home) load_apps();
     std::string path = kind_ == Browse::Home ? "/api/home" : kind_ == Browse::Movies ? "/api/browse?type=movie" : "/api/browse?type=series";
     ctx().api.get(path, [this](const ApiResult &r) {
       if (!r.ok()) {
@@ -212,6 +224,8 @@ class BrowseScreen : public Screen {
     if (welcome_) return std::string("Welcome to Bloob. ") + (welcome_button_ == 0 ? "Connect now" : "Later") + ", button, " +
                          position(welcome_button_, 2);
     if (state_ != State::Ready) return state_ == State::Loading ? "Loading" : error_;
+    if (hero_ && apps_focus_ && !apps_.empty())
+      return "Apps. " + apps_[static_cast<size_t>(app_)].title + ", " + position(app_, static_cast<int>(apps_.size()));
     if (hero_) {
       auto list = hero_buttons();
       if (list.empty()) return "";
@@ -380,6 +394,7 @@ class BrowseScreen : public Screen {
   }
 
   bool hero_key(Key key, bool repeat) {
+    if (apps_focus_) return apps_key(key, repeat);
     int count = static_cast<int>(hero_buttons().size());
     int pages = static_cast<int>(featured_.size());
     switch (key) {
@@ -392,7 +407,8 @@ class BrowseScreen : public Screen {
         else if (pages > 1) page_feature(1);
         break;
       case Key::Down:
-        enter_rows();
+        if (!apps_.empty()) apps_focus_ = true;
+        else enter_rows();
         return true;
       case Key::Ok:
         if (!repeat) hero_action(button_);
@@ -427,6 +443,7 @@ class BrowseScreen : public Screen {
       case Key::Up:
         if (row_ == 0) {
           go_top();
+          apps_focus_ = !apps_.empty();
           return true;
         }
         row_--;
@@ -449,6 +466,7 @@ class BrowseScreen : public Screen {
 
   void go_top() {
     hero_ = true;
+    apps_focus_ = false;
     button_ = 0;
     row_ = 0;
     mode_.to(0);
@@ -458,6 +476,7 @@ class BrowseScreen : public Screen {
 
   void enter_rows() {
     hero_ = false;
+    apps_focus_ = false;
     row_ = 0;
     mode_.to(1);
     moved(-1, -1);
@@ -574,7 +593,7 @@ class BrowseScreen : public Screen {
     // Hero positions, laid out from the bottom so the block always ends in the same place.
     int lines = std::max(1, static_cast<int>(wrap(font_for(Text::Caption1), s.item.description, size_for(Text::Caption1), kBodyW, kBodyLines).size()));
     int line = line_for(Text::Caption1);
-    int hero_by = kFirstShelf - kBodyToButtons - theme::button_h;
+    int hero_by = kFirstShelf - apps_block() - kBodyToButtons - theme::button_h;
     int hero_box_top = hero_by - kBodyToButtons - lines * line - kMetaToBody - line - kTitleToMeta - kLogoH;
     int box_top = static_cast<int>(lerp(static_cast<float>(hero_box_top), 140, m));
     int box_h = static_cast<int>(lerp(kLogoH, kLogoSmallH, m));
@@ -605,7 +624,7 @@ class BrowseScreen : public Screen {
         GlassButton b;
         b.label = buttons[i].label;
         b.icon = buttons[i].icon;
-        b.focused = hero_ && !tabs_ && static_cast<int>(i) == button_;
+        b.focused = hero_ && !tabs_ && !apps_focus_ && static_cast<int>(i) == button_;
         b.lift = button_lift_.value;
         b.alpha = hero_only;
         b.min_w = theme::title_button_min_w;
@@ -629,6 +648,98 @@ class BrowseScreen : public Screen {
         c.gfx.fill_round(dx, by + 36, w, 8, 4, fade(on ? rgba(0xffffff) : with_alpha(rgba(0xffffff), 102), hero_only));
         dx += w + 10;
       }
+      draw_apps(hero_only);
+    }
+  }
+
+  // ---------------------------------------------------------------- apps (2.6)
+
+  int apps_block() const { return apps_.empty() ? 0 : kAppsBlock; }
+
+  void load_apps() {
+    std::string self = ctx().app_id;
+    auto alive = std::weak_ptr<int>(alive_);
+    auto take = [this, alive, self](const std::string &reply) {
+      if (alive.expired()) return false;
+      auto list = parse_launch_points(reply, self);
+      if (list.empty()) return false;
+      apps_ = list;
+      app_ = std::min(app_, static_cast<int>(apps_.size()) - 1);
+      ctx().redraw_at(ctx().now);
+      return true;
+    };
+    // A native app may be refused this call without a permission it cannot
+    // declare yet; the Homebrew Channel's root service then asks for it.
+    Luna::instance().call("luna://com.webos.applicationManager/listLaunchPoints", "{}", [take](const std::string &reply) {
+      if (take(reply)) return;
+      Luna::instance().call(kHbExec, "{\"command\":\"luna-send -n 1 luna://com.webos.applicationManager/listLaunchPoints '{}'\"}",
+                            [take](const std::string &r) {
+                              bool ok = false;
+                              Json j = Json::parse(r, &ok);
+                              if (!ok || !take(j["stdoutString"].as_string())) logf("apps", "no launch points: %s", r.c_str());
+                            });
+    });
+  }
+
+  void launch_app(const App &a) {
+    logf("apps", "launch %s", a.id.c_str());
+    std::string payload = launch_payload(a.id);
+    Luna::instance().call("luna://com.webos.applicationManager/launch", payload, [payload](const std::string &reply) {
+      bool ok = false;
+      Json j = Json::parse(reply, &ok);
+      if (ok && j["returnValue"].as_bool()) return;
+      Luna::instance().call(kHbExec, "{\"command\":" + Json::quote("luna-send -n 1 luna://com.webos.applicationManager/launch '" + payload + "'") + "}", nullptr);
+    });
+  }
+
+  bool apps_key(Key key, bool repeat) {
+    int count = static_cast<int>(apps_.size());
+    switch (key) {
+      case Key::Left:
+        if (app_ > 0) app_--;
+        break;
+      case Key::Right:
+        if (app_ + 1 < count) app_++;
+        break;
+      case Key::Up:
+      case Key::Back:
+        apps_focus_ = false;
+        break;
+      case Key::Down:
+        if (!rows_.empty()) enter_rows();
+        break;
+      case Key::Ok:
+        if (!repeat) launch_app(apps_[static_cast<size_t>(app_)]);
+        break;
+      default:
+        return false;
+    }
+    button_lift_.snap(0);
+    button_lift_.to(1);
+    return true;
+  }
+
+  void draw_apps(float alpha) {
+    if (apps_.empty()) return;
+    Ctx &c = ctx();
+    int top = kFirstShelf - kAppsBlock;
+    text(Text::CalloutBold, "Apps", X0, top + kHeaderTop - 24, label(Label::Secondary, alpha));
+    int y = top + 46, x = X0;
+    int first = std::max(0, app_ - 5);  // keep the focused tile on screen
+    for (int i = first; i < static_cast<int>(apps_.size()) && x < W; i++) {
+      const App &a = apps_[static_cast<size_t>(i)];
+      if (a.input && (i == 0 || !apps_[static_cast<size_t>(i - 1)].input)) {  // divider before the inputs
+        c.gfx.fill_round(x, y, 2, kAppH, 1, fade(with_alpha(rgba(0xffffff), 38), alpha));
+        x += 2 + kAppGap;
+      }
+      bool focused = apps_focus_ && !tabs_ && i == app_;
+      int w = kAppW + (focused ? static_cast<int>(kAppGrow * button_lift_.value) : 0);
+      // Focus as on Glass buttons: the tile turns White90 and its name dark [EoA B5].
+      c.gfx.fill_round(x, y, w, kAppH, card_radius, fade(focused ? button_focus : with_alpha(rgba(0xffffff), a.input ? 13 : 26), alpha));
+      ImageRef icon = a.icon.empty() ? ImageRef{} : c.images.get(a.icon, kAppIcon, kAppIcon, 12, Fit::Contain);
+      if (icon.texture) c.gfx.texture(icon.texture, x + 16, y + 12, icon.w, icon.h, static_cast<Uint8>(icon.alpha * alpha));
+      text(Text::Caption2Bold, a.title, x + 16, y + kAppH - 38, focused ? fade(rgba(0x000000), alpha) : label(Label::Secondary, alpha), w - 32);
+      x += w + kAppGap;
     }
   }
 
@@ -743,6 +854,9 @@ class BrowseScreen : public Screen {
   Pairing pairing_;
   bool welcome_ = false, welcome_checked_ = false;
   int welcome_button_ = 0;
+  std::vector<App> apps_;
+  bool apps_focus_ = false;
+  int app_ = 0;
 };
 
 }  // namespace

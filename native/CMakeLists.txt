@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(bloob_native VERSION 2.5.3 LANGUAGES C CXX)
+project(bloob_native VERSION 2.6.0 LANGUAGES C CXX)
 
 # Cross-compile for the TV with the webOS NDK (openlgtv buildroot-nc4):
 #   cmake -B build -DCMAKE_TOOLCHAIN_FILE=/opt/arm-webos-linux-gnueabi_sdk-buildroot/share/buildroot/toolchainfile.cmake
@@ -19,7 +19,7 @@ if (CMAKE_CROSSCOMPILING)
 endif ()
 
 # Platform-free core, shared by the app and the tests.
-add_library(buna_core STATIC src/session.cpp src/json.cpp src/log.cpp src/model.cpp src/play.cpp src/resources.cpp src/tasks.cpp src/stats.cpp)
+add_library(buna_core STATIC src/session.cpp src/json.cpp src/log.cpp src/model.cpp src/play.cpp src/resources.cpp src/tasks.cpp src/stats.cpp src/apps.cpp)
 find_package(Threads REQUIRED)
 target_link_libraries(buna_core PUBLIC Threads::Threads)
 target_include_directories(buna_core PUBLIC src)
