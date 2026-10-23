@@ -107,9 +107,9 @@ The owner chose native. `native/` is a C++ webOS app (`com.muhib.bloob`, "Bloob 
   - **Playback info panel (2.5.3).** Info (I on a keyboard), the blue key or the ⓘ control in the player toggles a live panel: video, audio and subtitle tracks, container and length, the file's average bitrate (size over running time), the TV's network throughput now/average/peak (from `/proc/net/dev`, the whole TV, because uMediaServer downloads the stream itself), uMediaServer's buffer report, playback stats, the version and release, and Bloob/TV CPU and memory. It samples twice a second only while open (`native/src/stats.*`). The live video bitrate is not reported by the TV's pipeline.
   - **Subtitles.** Settings > Subtitle size (TV levels 0–4, default the smallest) and Subtitle background, sent with `setSubtitleFontSize` and friends after every enable.
   - **Versions list.** Filter pills by resolution with counts, sections by kind of release (Remux, Blu-ray, Web download…), two-line rows with source, size and group, and *Found by* in release details.
-  - **TV pass:** `native/TV-TEST.md` §11; the IPK is `native/artifacts/com.muhib.bloob_2.6.1_arm.ipk`.
+  - **TV pass:** `native/TV-TEST.md` §11; the IPK is `native/artifacts/com.muhib.bloob_2.6.2_arm.ipk`.
 - **2.6.0 home screen (23 October 2026, built, not yet on the TV).** Bloob becomes the TV's launcher, kept small at the owner's request (adopt, don't write).
-  - **YouTube on Home** (2.6.1, owner: only YouTube, no apps row): one Glass button under the hero's buttons (`native/src/apps.*`, `browse.cpp`), found with `listLaunchPoints` (Homebrew Channel `exec` as fallback), opening `youtube.leanback.v4` (the ad-free fork). The service can still serve app icons from the TV's app folders (`/api/image`), now unused.
+  - **YouTube tab** (2.6.2, owner: YouTube belongs in the tab bar, nothing else on Home): Search · Home · Films · Series · YouTube · Settings. The tab has no page; OK opens `youtube.leanback.v4` (the ad-free fork). It shows only when `listLaunchPoints` lists the app (Homebrew Channel `exec` as fallback; `native/src/apps.*`, `main.cpp`). Home is as in 2.5. The service can still serve app icons (`/api/image`), unused.
   - **Power-on:** the watcher also replaces a resumed HDMI input or Live TV with Bloob for 20 s after boot or wake (the TV resumed HDMI 4).
   - **OLED black**: `theme::plain` is `#000000` (owner override of EoA C5).
   - **Takeover** (`native/launcher/`): Lumen's boot hook and watcher (MIT), trimmed to the Home takeover, with a safety net that leaves LG Home alone after three failed launches. The owner installs it once from a computer with `native/launcher/setup-tv.sh <TV>` (as other rooted-LG launchers do; the app never installs it on itself); it adds files only. With the hook present, Back on Home no longer closes Bloob.
@@ -130,7 +130,7 @@ The owner chose native. `native/` is a C++ webOS app (`com.muhib.bloob`, "Bloob 
   - watch progress and settings.
   If the bus will not start the service, the app runs it directly with the TV's Node and stops it on exit.
 - **Build and test scripts:**
-  - `native/scripts/build.sh`: tests, cross-build, ABI guards (no GLIBCXX, and since 2.4 no glibc symbol newer than GLIBC_2.4), service staging, IPK with fixed modes (`native/artifacts/com.muhib.bloob_2.6.1_arm.ipk`).
+  - `native/scripts/build.sh`: tests, cross-build, ABI guards (no GLIBCXX, and since 2.4 no glibc symbol newer than GLIBC_2.4), service staging, IPK with fixed modes (`native/artifacts/com.muhib.bloob_2.6.2_arm.ipk`).
   - `native/scripts/tv-inspect.sh`: reads the runtime inspector snapshot `/tmp/bloob-state.json` from the TV, read-only.
   - `native/scripts/ui-tour.sh`: drives the whole app on the desktop through the acceptance task, plus quick-menu, Home and pipeline-lost events, against the real service with fixture sources.
   - `native/scripts/ui-snapshots.sh`: covers player states.

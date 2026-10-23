@@ -1,6 +1,6 @@
 {
   "id": "com.muhib.bloob",
-  "version": "2.6.1",
+  "version": "2.6.2",
   "vendor": "Muhib",
   "type": "native",
   "main": "bin/bloob",

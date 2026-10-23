@@ -22,6 +22,7 @@
 #include "frames.h"
 #include "http.h"
 #include "inspect.h"
+#include "apps.h"
 #include "json.h"
 #include "keys.h"
 #include "log.h"
@@ -61,10 +62,15 @@ struct Tab {
   const char *label;
   int icon;  // Icon value or -1 for a text tab
 };
+// YouTube (2.6.1, the owner's only other app) is a tab that opens the ad-free
+// YouTube app on OK; it has no page and is shown only when the app is installed.
 const Tab kTabs[] = {{"Search", static_cast<int>(Icon::Search)}, {"Home", -1}, {"Films", -1}, {"Series", -1},
-                     {"Settings", static_cast<int>(Icon::Settings)}};
-constexpr int kTabCount = 5;
+                     {"YouTube", -1}, {"Settings", static_cast<int>(Icon::Settings)}};
+constexpr int kTabCount = 6;
 constexpr int kHomeTab = 1;
+constexpr int kYouTubeTab = 4;
+const char *kYouTubeId = "youtube.leanback.v4";
+const char *kHbExec = "luna://org.webosbrew.hbchannel.service/exec";
 constexpr long long kExitConfirmMs = 2500;
 
 class App {
@@ -138,6 +144,7 @@ class App {
     inspector_.init();
     Luna::instance().start(wake_for(kWakeLuna));
     speech().start();
+    find_youtube();
 
     c.push = [this](std::unique_ptr<Screen> s) { ops_.push_back({Op::Push, std::move(s)}); };
     c.pop = [this] { ops_.push_back({Op::Pop, nullptr}); };
@@ -377,7 +384,7 @@ class App {
       case 1: roots_[1] = make_browse(Browse::Home); break;
       case 2: roots_[2] = make_browse(Browse::Movies); break;
       case 3: roots_[3] = make_browse(Browse::Series); break;
-      case 4: roots_[4] = make_settings(); break;
+      case 5: roots_[5] = make_settings(); break;
     }
   }
 
@@ -488,17 +495,29 @@ class App {
     if (tabs_focus_) {
       switch (key) {
         case Key::Left:
-          if (root_ > 0) select_root(root_ - 1);
+        case Key::Right: {
+          int t = focused_tab() + (key == Key::Left ? -1 : 1);
+          if (t == kYouTubeTab && !youtube_) t += key == Key::Left ? -1 : 1;
+          if (t < 0 || t >= kTabCount) break;
+          youtube_focus_ = t == kYouTubeTab;
+          if (!youtube_focus_) select_root(t);
           break;
-        case Key::Right:
-          if (root_ + 1 < kTabCount) select_root(root_ + 1);
+        }
+        case Key::Ok:
+          if (youtube_focus_) {
+            launch_youtube();
+            break;
+          }
+          set_tabs_focus(false);
           break;
         case Key::Down:
-        case Key::Ok:
+          youtube_focus_ = false;
           set_tabs_focus(false);
           break;
         case Key::Back:
-          if (root_ != kHomeTab) {
+          if (youtube_focus_) {
+            youtube_focus_ = false;
+          } else if (root_ != kHomeTab) {
             select_root(kHomeTab);
           } else if (launcher_) {
             // Bloob is the TV's home screen: there is nothing behind it to go back to.
@@ -544,7 +563,7 @@ class App {
 
   // What Audio Guidance should say for the current focus (G7).
   std::string spoken_focus() {
-    if (stack_.empty() && tabs_focus_) return std::string(kTabs[root_].label) + ", tab, " + position(root_, kTabCount);
+    if (stack_.empty() && tabs_focus_) return std::string(kTabs[focused_tab()].label) + ", tab, " + position(focused_tab(), kTabCount);
     return top()->spoken();
   }
 
@@ -587,6 +606,7 @@ class App {
   void foreground() {
     bool was = in_background_;
     in_background_ = false;
+    if (!youtube_) find_youtube();  // installed while Bloob was away
     top()->foreground();
     if (was) apply_memory_policy();
   }
@@ -608,12 +628,13 @@ class App {
       t.label = kTabs[i].icon >= 0 ? "" : kTabs[i].label;
       t.icon = kTabs[i].icon;
       t.candidate = i == root_;
-      t.focused = tabs_focus_ && i == root_;
+      t.focused = tabs_focus_ && i == focused_tab();
       t.alpha = a;
       return t;
     };
     int total = 0;
-    for (int i = 0; i < kTabCount; i++) total += glass_button_width(pill(i)) + (i ? kTabGap : 0);
+    for (int i = 0; i < kTabCount; i++)
+      if (i != kYouTubeTab || youtube_) total += glass_button_width(pill(i)) + (i ? kTabGap : 0);
     int pad = 9, h = theme::pill_h;  // segment platter: padding 9, buttons 8 apart [EoA N2]
     int bw = total + pad * 2, bh = h + pad * 2, bx = (W - bw) / 2, by = theme::safe_y + dy;
     GlassSpec bar;
@@ -625,7 +646,8 @@ class App {
     bar.alpha = a;
     top()->shell_glass(bar);
     int x = bx + pad;
-    for (int i = 0; i < kTabCount; i++) x += draw_glass_button(x, by + pad, pill(i)) + kTabGap;
+    for (int i = 0; i < kTabCount; i++)
+      if (i != kYouTubeTab || youtube_) x += draw_glass_button(x, by + pad, pill(i)) + kTabGap;
   }
 
   void draw_screen(Screen *s, bool layer, float alpha, int dy) {
@@ -1174,6 +1196,33 @@ class App {
   bool tabs_wanted_ = true;
   bool in_background_ = false;
   long long exit_armed_at_ = 0;
+  bool youtube_ = false, youtube_focus_ = false;
+  int focused_tab() const { return youtube_focus_ ? kYouTubeTab : root_; }
+
+  // The YouTube tab appears once the TV lists the app. A native app may be refused
+  // this call; the Homebrew Channel's root service then asks for it.
+  void find_youtube() {
+    auto take = [this](const std::string &reply) {
+      for (auto &a : parse_launch_points(reply, ctx().app_id))
+        if (a.id == kYouTubeId) youtube_ = true;
+      if (youtube_) ctx().redraw_at(ctx().now);
+      return youtube_;
+    };
+    Luna::instance().call("luna://com.webos.applicationManager/listLaunchPoints", "{}", [take](const std::string &reply) {
+      if (take(reply)) return;
+      Luna::instance().call(kHbExec, "{\"command\":\"luna-send -n 1 luna://com.webos.applicationManager/listLaunchPoints '{}'\"}",
+                            [take](const std::string &r) { take(Json::parse(r)["stdoutString"].as_string()); });
+    });
+  }
+
+  void launch_youtube() {
+    std::string payload = launch_payload(kYouTubeId);
+    logf("apps", "launch %s", kYouTubeId);
+    Luna::instance().call("luna://com.webos.applicationManager/launch", payload, [payload](const std::string &reply) {
+      if (Json::parse(reply)["returnValue"].as_bool()) return;
+      Luna::instance().call(kHbExec, "{\"command\":" + Json::quote("luna-send -n 1 luna://com.webos.applicationManager/launch '" + payload + "'") + "}", nullptr);
+    });
+  }
   // The launcher hook is installed (native/launcher): Bloob is the home screen.
   bool launcher_ = access("/var/lib/webosbrew/init.d/60-bloob-home", F_OK) == 0;
   Anim entering_{theme::fade_rate, 1};

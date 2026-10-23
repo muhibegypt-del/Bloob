@@ -7,15 +7,15 @@ static bool is_input(const std::string &id) {
          id == "com.webos.app.externalinput.component";
 }
 
-std::vector<App> parse_launch_points(const std::string &reply, const std::string &self_id) {
+std::vector<LaunchPoint> parse_launch_points(const std::string &reply, const std::string &self_id) {
   bool ok = false;
   Json j = Json::parse(reply, &ok);
-  std::vector<App> apps, inputs;
+  std::vector<LaunchPoint> apps, inputs;
   if (!ok) return apps;
   const Json &list = j["launchPoints"];
   for (size_t i = 0; i < list.size(); i++) {
     const Json &p = list[i];
-    App a;
+    LaunchPoint a;
     a.id = p["id"].as_string();
     a.title = p["title"].as_string();
     a.icon = p["largeIcon"].as_string(p["icon"].as_string());
