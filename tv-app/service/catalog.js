@@ -3,6 +3,7 @@
 // at sizes the TV decodes cheaply (480×270 tiles, 1080p backdrops, PNG logos).
 // Keep this file compatible with the TV's older Node runtime (no `?.` / `??`).
 const { getJson } = require('./net');
+const tmdb = require('./tmdb');
 
 const CINEMETA = 'https://v3-cinemeta.strem.io';
 const ART = 'https://images.metahub.space';
@@ -88,7 +89,17 @@ async function rows(specs) {
     .filter(row => row.items.length);
 }
 
+// With the owner's TMDB key, Home, Films and Series come from TMDB (tmdb.js);
+// Cinemeta stays the fallback and the source of title details.
+function viaTmdb(load, fallback) {
+  return tmdb.enabled().then(on => (on ? load() : []), () => []).catch(() => []).then(result => (result.length ? { rows: result } : fallback()));
+}
+
 function home() {
+  return viaTmdb(tmdb.home, cinemetaHome);
+}
+
+function cinemetaHome() {
   return rows(HOME).then(result => {
     if (!result.length) throw new Error('The catalogue is unreachable. Check the TV\'s internet connection.');
     return { rows: result };
@@ -97,6 +108,10 @@ function home() {
 
 function browse(type) {
   if (type !== 'movie' && type !== 'series') return Promise.reject(new Error('Unknown type'));
+  return viaTmdb(() => tmdb.browse(type), () => cinemetaBrowse(type));
+}
+
+function cinemetaBrowse(type) {
   const noun = type === 'movie' ? 'films' : 'series';
   const specs = [[`${type}-popular`, `Popular ${noun}`, type, 'top'], [`${type}-rated`, `Highest rated ${noun}`, type, 'imdbRating']]
     .concat(GENRES[type].map(g => [`${type}-${g.toLowerCase()}`, g === 'Sci-Fi' ? 'Science fiction' : g.replace('-TV', ' TV'), type, 'top', `genre=${g}`]));
