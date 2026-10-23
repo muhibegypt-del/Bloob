@@ -112,6 +112,13 @@ std::vector<std::string> distinct_labels(const std::vector<MediaTrack> &tracks, 
   return out;
 }
 
+// DTS: this TV has no decoder for it (LG left DTS out of its 2020-2022 TVs), so
+// a DTS track plays silently or brings up "audio not supported" (2.8.1).
+bool dts(const MediaTrack &t) {
+  std::string c = upper(t.codec);
+  return c.find("DTS") != std::string::npos || c.find("DCA") != std::string::npos;
+}
+
 // A preference such as "English" matches a track whose code names that language.
 bool speaks(const MediaTrack &t, const std::string &language) {
   return !language.empty() && language != "Off" && language_name(t.language) == language;
@@ -335,14 +342,33 @@ class PlayerScreen : public Screen {
     Ctx &c = ctx();
     if (!preferences_applied_) {
       preferences_applied_ = true;
-      bool current_fits = false;
-      for (auto &a : info.audio) current_fits = current_fits || (a.selected && speaks(a, c.language));
+      bool current_fits = false, current_dts = false;
+      for (auto &a : info.audio) {
+        current_fits = current_fits || (a.selected && speaks(a, c.language) && !dts(a));
+        current_dts = current_dts || (a.selected && dts(a));
+      }
+      // Remuxes often start on a DTS track with a Dolby or AAC one beside it:
+      // the viewer's language first, then any main track this TV can play.
       if (chosen_audio_ < 0 && !current_fits)
-        for (size_t i = 0; i < info.audio.size(); i++)
-          if (speaks(info.audio[i], c.language) && track_role(info.audio[i], true).empty()) {
+        for (int pass = 0; pass < 2 && chosen_audio_ < 0; pass++)
+          for (size_t i = 0; i < info.audio.size(); i++) {
+            const MediaTrack &a = info.audio[i];
+            if (dts(a) || !track_role(a, true).empty() || (pass == 0 && !speaks(a, c.language))) continue;
+            if (pass == 1 && !current_dts) break;  // a playable track is on: only DTS makes a stranger worth it
             chosen_audio_ = static_cast<int>(i);
             break;
           }
+      bool any_playable = false;
+      for (auto &a : info.audio) any_playable = any_playable || !dts(a);
+      if (!info.audio.empty() && !any_playable) {
+        logf("player", "every audio track is DTS (%zu tracks)", info.audio.size());
+        failure_ = "This version\xE2\x80\x99s sound is DTS only, which this TV can\xE2\x80\x99t play. Choose another version: "
+                   "Bloob shows the ones with Dolby or AAC sound first.";
+        error_focus_ = 1;  // Choose another version
+        session_.pause();
+      } else if (chosen_audio_ >= 0 && current_dts) {
+        logf("player", "skipping a DTS track for %s", audio_label(info.audio[static_cast<size_t>(chosen_audio_)]).c_str());
+      }
       if (!chosen_text_ && c.subtitle_language != "Off") {
         int any = -1;
         for (size_t i = 0; i < info.text.size(); i++) {

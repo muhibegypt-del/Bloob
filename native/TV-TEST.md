@@ -256,3 +256,7 @@ Install `artifacts/com.muhib.bloob_2.5.3_arm.ipk`. Keep `/tmp/bloob-native.log` 
 - [ ] Repeated releases appear once ("listed 3 times" in details); "+N more" rows unfold.
 - [ ] With AllDebrid paired, some rows say "Ready now", and those start without a download wait. Check AllDebrid's magnet list afterwards: nothing new left behind except what you played.
 - [ ] Dolby Vision P7 remuxes read "HDR10 (Dolby Vision P7 disc)".
+
+**DTS (2.8.1).**
+- [ ] A remux that starts on DTS with a Dolby/AAC track beside it switches by itself (log: `skipping a DTS track for …`); the audio panel shows the playing track.
+- [ ] A DTS-only version pauses with "This version's sound is DTS only…" and *Choose another version* returns to the list.
