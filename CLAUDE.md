@@ -36,7 +36,7 @@ The owner chose native. `native/` is a C++ webOS app (`com.muhib.bloob`, "Bloob 
 - **2.0.0 Glass (14 October 2026, built, not yet on the TV):** the owner chose **Glass** from the concept canvas (artifact "Bloob UI concepts: Lantern and Glass") and asked for a full overhaul with a proper plan. `native/GLASS-PLAN.md` is that plan, phases G0–G8 with a status table and commits.
   - **Visual system.** It follows Apple's public tvOS type scale (floor 23 px), safe area (80/60) and 5-column grid. Text uses label roles, with *Increase contrast*.
   - **Glass materials.** Frosted glass is baked per panel from the blurred backdrop on image workers, with a soft knee so white text stays readable on bright art. Glass over video is smoked, because the video plane cannot be read. A solid fallback covers Lite, *Reduce transparency* and baking. Scrims adapt to the artwork's brightness.
-  - **Direct Play.** Play from Home, the title page, an episode or Up next goes straight to the best version, showing only a progress sheet; Cancel returns to where Play was pressed. Films show a frosted *How to watch* panel on the title page. The old chooser is now *All versions*.
+  - **Direct Play.** Play from Home, the title page, an episode or Up next goes straight to the best version, showing only a progress sheet; Cancel returns to where Play was pressed. **Owner override (2.7.3): Play opens the versions list with the best version focused; only Up next continues by itself (with the show's version).** Films show a frosted *How to watch* panel on the title page. The old chooser is now *All versions*.
   - **Player.** A smoked bar with 5/8 s timers, 300 ms fades and a 400 ms seek commit.
   - **Spoken focus (G7).** With LG Audio Guidance on, focus is spoken as label, role and position, via `native/src/speech.*`. It uses the documented `audioGuidance` setting and `com.webos.service.tts/speak`, unverified on this TV, and the app declares `accessibility.supportsAudioGuidance`.
   - **Clean-up.** The 1.x type names, components and tokens are gone; `native/DESIGN.md` is rewritten for Glass. `native/TV-TEST.md` §8 is the 2.0 TV pass.
@@ -107,7 +107,7 @@ The owner chose native. `native/` is a C++ webOS app (`com.muhib.bloob`, "Bloob 
   - **Playback info panel (2.5.3).** Info (I on a keyboard), the blue key or the ⓘ control in the player toggles a live panel: video, audio and subtitle tracks, container and length, the file's average bitrate (size over running time), the TV's network throughput now/average/peak (from `/proc/net/dev`, the whole TV, because uMediaServer downloads the stream itself), uMediaServer's buffer report, playback stats, the version and release, and Bloob/TV CPU and memory. It samples twice a second only while open (`native/src/stats.*`). The live video bitrate is not reported by the TV's pipeline.
   - **Subtitles.** Settings > Subtitle size (TV levels 0–4, default the smallest) and Subtitle background, sent with `setSubtitleFontSize` and friends after every enable.
   - **Versions list.** Filter pills by resolution with counts, sections by kind of release (Remux, Blu-ray, Web download…), two-line rows with source, size and group, and *Found by* in release details.
-  - **TV pass:** `native/TV-TEST.md` §11; the IPK is `native/artifacts/com.muhib.bloob_2.7.2_arm.ipk`.
+  - **TV pass:** `native/TV-TEST.md` §11; the IPK is `native/artifacts/com.muhib.bloob_2.7.3_arm.ipk`.
 - **2.6.0 home screen (23 October 2026, built, not yet on the TV).** Bloob becomes the TV's launcher, kept small at the owner's request (adopt, don't write).
   - **YouTube tab** (2.6.2, owner: YouTube belongs in the tab bar, nothing else on Home): Search · Home · Films · Series · YouTube · Settings. The tab has no page; OK opens `youtube.leanback.v4` (the ad-free fork). It shows only when `listLaunchPoints` lists the app (Homebrew Channel `exec` as fallback; `native/src/apps.*`, `main.cpp`). Home is as in 2.5. The service can still serve app icons (`/api/image`), unused.
   - **Power-on:** the watcher also replaces a resumed HDMI input or Live TV with Bloob for 20 s after boot or wake (the TV resumed HDMI 4).
@@ -131,7 +131,7 @@ The owner chose native. `native/` is a C++ webOS app (`com.muhib.bloob`, "Bloob 
   - watch progress and settings.
   If the bus will not start the service, the app runs it directly with the TV's Node and stops it on exit.
 - **Build and test scripts:**
-  - `native/scripts/build.sh`: tests, cross-build, ABI guards (no GLIBCXX, and since 2.4 no glibc symbol newer than GLIBC_2.4), service staging, IPK with fixed modes (`native/artifacts/com.muhib.bloob_2.7.2_arm.ipk`).
+  - `native/scripts/build.sh`: tests, cross-build, ABI guards (no GLIBCXX, and since 2.4 no glibc symbol newer than GLIBC_2.4), service staging, IPK with fixed modes (`native/artifacts/com.muhib.bloob_2.7.3_arm.ipk`).
   - `native/scripts/tv-inspect.sh`: reads the runtime inspector snapshot `/tmp/bloob-state.json` from the TV, read-only.
   - `native/scripts/ui-tour.sh`: drives the whole app on the desktop through the acceptance task, plus quick-menu, Home and pipeline-lost events, against the real service with fixture sources.
   - `native/scripts/ui-snapshots.sh`: covers player states.

@@ -986,7 +986,9 @@ void start_playback(const PlayRequest &req, PlayOrigin origin, bool replace_top,
   static const char *names[] = {"home-hero", "home-row", "details", "episodes", "up-next"};
   logf("play", "intent from %s: %s resume=%lld", names[static_cast<int>(origin)], req.label().c_str(), req.resume_ms);
   // Gates belong here and nowhere else (pairing, TV format profile, household limits).
-  auto screen = make_sources(req, autostart);
+  // The owner chooses the version (2.7.3): Play opens the versions list with the
+  // best one focused. Only Up next continues by itself, with the show's version.
+  auto screen = make_sources(req, autostart && origin == PlayOrigin::UpNext);
   if (replace_top) ctx().replace(std::move(screen));
   else ctx().push(std::move(screen));
 }

@@ -364,7 +364,7 @@ class DetailsScreen : public Screen {
       return;
     }
     if (what == "Start over") req.resume_ms = 0;
-    start_playback(req, PlayOrigin::Details, false, true);  // straight to the best version
+    start_playback(req, PlayOrigin::Details, false, true);  // the versions list (start_playback decides)
   }
 
   void play_episode(const Episode &e) { start_playback(play::episode(meta_, e, progress_, false), PlayOrigin::Episodes, false, true); }
@@ -498,7 +498,7 @@ class DetailsScreen : public Screen {
     if (versions_state_ == Versions::Loading) status = "Finding versions\xE2\x80\xA6";
     else if (versions_state_ == Versions::Empty) status = "No versions found right now. Try again later.";
     else if (versions_state_ == Versions::Failed) status = versions_error_;
-    else status = ctx().paired ? "Play starts the best version" : "Play connects AllDebrid first, then starts the best version";
+    else status = ctx().paired ? "Play shows every version, the best first" : "Play connects AllDebrid first, then shows the versions";
     text_right(Text::Caption1, status, g.x + g.w - 36, py + 8, label(Label::Secondary, alpha));
     if (versions_state_ != Versions::Ready) {
       if (versions_state_ == Versions::Loading) draw_spinner(px + 24, py + 110, 34, label(Label::Secondary), opened_at_);
