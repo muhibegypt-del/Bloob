@@ -9,7 +9,9 @@ const path = require('path');
 const { get } = require('./net');
 const config = require('./config');
 
-const HOSTS = /(^|\.)metahub\.space$|^image\.tmdb\.org$|^m\.media-amazon\.com$/;
+const HOSTS = /(^|\.)metahub\.space$|^image\.tmdb\.org$|^m\.media-amazon\.com$|^mdblist\.com$/;
+// From MDBList only its rating-site logos (SVG), for the scores on title pages.
+const LOGOS = /^\/static\/ratings\/[a-z-]+\.svg$/;
 // The in-memory byte cache follows the app's memory policy (R5b): full while
 // browsing, small during playback and in the background. The disk cache stays.
 const MEMORY_BUDGETS = { normal: 40 * 1024 * 1024, playback: 12 * 1024 * 1024, background: 4 * 1024 * 1024 };
@@ -88,6 +90,8 @@ function prune() {
 function typeFor(body, fallback) {
   if (body[0] === 0xff && body[1] === 0xd8) return 'image/jpeg';
   if (body[0] === 0x89 && body[1] === 0x50) return 'image/png';
+  const head = body.slice(0, 256).toString('utf8');
+  if (/^\s*(<\?xml[^>]*>\s*)?<svg[\s>]/.test(head)) return 'image/svg+xml';
   return fallback;
 }
 
@@ -106,6 +110,7 @@ async function fetchImage(url) {
   }
   let target;
   try { target = new URL(url); } catch (_) { throw Object.assign(new Error('Invalid image URL'), { status: 400 }); }
+  if (target.hostname === 'mdblist.com' && !LOGOS.test(target.pathname)) throw Object.assign(new Error('Image path not allowed'), { status: 403 });
   if (target.protocol !== 'https:' || !HOSTS.test(target.hostname)) throw Object.assign(new Error('Image host not allowed'), { status: 403 });
   const key = crypto.createHash('sha1').update(target.toString()).digest('hex');
   const hit = memory.get(key);
@@ -124,9 +129,10 @@ async function fetchImage(url) {
         return value;
       } catch (_) { /* not cached */ }
     }
-    const result = await get(target.toString(), { timeout: 15000, maxBytes: 4 * 1024 * 1024, accept: 'image/jpeg,image/png', allow: host => HOSTS.test(host) });
+    const result = await get(target.toString(), { timeout: 15000, maxBytes: 4 * 1024 * 1024, accept: 'image/jpeg,image/png,image/svg+xml', allow: host => HOSTS.test(host) });
     const value = { body: result.body, type: typeFor(result.body, result.type) };
-    if (value.type !== 'image/jpeg' && value.type !== 'image/png') throw Object.assign(new Error('Unsupported image format'), { status: 415 });
+    const svgOk = value.type === 'image/svg+xml' && target.hostname === 'mdblist.com';
+    if (value.type !== 'image/jpeg' && value.type !== 'image/png' && !svgOk) throw Object.assign(new Error('Unsupported image format'), { status: 415 });
     remember(key, value);
     if (file) {
       fs.writeFile(file, value.body, () => {});

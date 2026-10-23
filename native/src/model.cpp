@@ -23,7 +23,10 @@ Item parse_item(const Json &j) {
   it.rating = j["rating"].as_string();
   it.description = j["description"].as_string();
   it.genres = strings(j["genres"]);
-  it.scores = strings(j["scores"]);
+  for (size_t i = 0; i < j["scores"].size(); i++) {
+    const Json &sc = j["scores"][i];
+    it.scores.push_back({sc["text"].as_string(), sc["label"].as_string(), sc["logo"].as_string()});
+  }
   it.tile = j["tile"].as_string();
   it.backdrop = j["backdrop"].as_string();
   it.logo = j["logo"].as_string();

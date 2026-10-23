@@ -405,11 +405,9 @@ class DetailsScreen : public Screen {
       y += kTitleToMeta;
       std::string facts = meta_line(it);
       int mw = text(Text::Caption1, facts, X0, y, label(Label::Primary, top_only), 1100);
-      // Scores (MDBList: RT, Metacritic, IMDb, Letterboxd); without them, Cinemeta's IMDb rating.
-      int bx = X0 + mw + 18;
-      if (!it.scores.empty())
-        for (auto &sc : it.scores) bx += draw_glass_badge(bx, y - 2, sc, top_only) + 10;
-      else if (!it.rating.empty()) draw_glass_badge(bx, y - 2, "IMDb " + it.rating, top_only);
+      // Scores (MDBList): each site's logo and its score; without them, Cinemeta's IMDb rating.
+      if (!it.scores.empty()) draw_scores(it.scores, X0 + mw + 32, y + line / 2, top_only);
+      else if (!it.rating.empty()) draw_glass_badge(X0 + mw + 18, y - 2, "IMDb " + it.rating, top_only);
       y += line + kMetaToBody;
       paragraph(Text::Caption1, it.description, X0, y, label(Label::Secondary, top_only), kBodyW, kBodyLines);
       draw_buttons(by, top_only);
@@ -417,6 +415,25 @@ class DetailsScreen : public Screen {
       if (has_versions_panel()) draw_versions(top_only);
     }
     if (has_episodes()) draw_episodes(p);
+  }
+
+  // Logo, then score, for each site, centred on `cy`: a 30 px logo slot (they
+  // are square) so nothing shifts when a logo arrives; its label if it cannot load.
+  void draw_scores(const std::vector<Score> &scores, int x, int cy, float alpha) {
+    Ctx &c = ctx();
+    const int kLogo = 30, kLogoGap = 10, kScoreGap = 30;
+    for (auto &sc : scores) {
+      ImageRef logo = sc.logo.empty() ? ImageRef{} : c.images.get(sc.logo, kLogo, kLogo, 0, Fit::Contain);
+      std::string value = sc.text;
+      if (logo.failed || sc.logo.empty()) {
+        value = sc.label;
+      } else {
+        if (logo.texture)
+          c.gfx.texture(logo.texture, x + (kLogo - logo.w) / 2, cy - logo.h / 2, logo.w, logo.h, static_cast<Uint8>(logo.alpha * alpha));
+        x += kLogo + kLogoGap;
+      }
+      x += text(Text::Caption1Semi, value, x, text_y_centered(Text::Caption1Semi, cy), label(Label::Primary, alpha)) + kScoreGap;
+    }
   }
 
   void draw_buttons(int by, float alpha) {
@@ -584,8 +601,8 @@ class DetailsScreen : public Screen {
       int ay = H - safe_y - 96;
       c.gfx.fill_rect(X0, ay - 26, W - 2 * X0, 1, fade(frost_hairline, a));
       std::vector<std::string> about = {meta_line(meta_.item)};
-      if (!meta_.item.scores.empty()) about.insert(about.end(), meta_.item.scores.begin(), meta_.item.scores.end());
-      else if (!meta_.item.rating.empty()) about.push_back("IMDb " + meta_.item.rating);
+      for (auto &sc : meta_.item.scores) about.push_back(sc.label);
+      if (meta_.item.scores.empty() && !meta_.item.rating.empty()) about.push_back("IMDb " + meta_.item.rating);
       text(Text::Caption1, "About", X0, ay, label(Label::Secondary, a));
       text(Text::Callout, join(about), X0, ay + 38, label(Label::Primary, a), 760);
       if (!meta_.cast.empty()) {

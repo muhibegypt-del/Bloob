@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <vector>
 
 #include "api.h"
@@ -21,7 +22,45 @@
 #define STBI_NO_LINEAR
 #define STBI_NO_HDR
 #include "../third_party/stb/stb_image.h"
+#define NANOSVG_IMPLEMENTATION
+#define NANOSVGRAST_IMPLEMENTATION
+#include "../third_party/nanosvg/nanosvg.h"
+#include "../third_party/nanosvg/nanosvgrast.h"
 #pragma GCC diagnostic pop
+
+namespace {
+
+// SVG pictures (the rating sites' logos) are rasterised once, 128 px on the
+// longer side, then scaled like any other source. The pixels are malloc'd, so
+// stbi_image_free (free) releases them too.
+bool looks_like_svg(const std::string &b) {
+  size_t i = b.find('<');
+  return i != std::string::npos && i < 16 && (b.compare(i, 4, "<svg") == 0 || (b.compare(i, 5, "<?xml") == 0 && b.find("<svg") != std::string::npos));
+}
+
+unsigned char *rasterize_svg(const std::string &bytes, int *w, int *h) {
+  std::string text = bytes;  // nsvgParse writes into its input
+  NSVGimage *image = nsvgParse(&text[0], "px", 96.0f);
+  if (!image) return nullptr;
+  unsigned char *rgba = nullptr;
+  if (image->width > 0 && image->height > 0) {
+    float scale = 128.0f / std::max(image->width, image->height);
+    *w = std::max(1, static_cast<int>(std::lround(image->width * scale)));
+    *h = std::max(1, static_cast<int>(std::lround(image->height * scale)));
+    NSVGrasterizer *raster = nsvgCreateRasterizer();
+    rgba = static_cast<unsigned char *>(std::malloc(static_cast<size_t>(*w) * *h * 4));
+    if (raster && rgba) nsvgRasterize(raster, image, 0, 0, scale, rgba, *w, *h, *w * 4);
+    else if (rgba) {
+      std::free(rgba);
+      rgba = nullptr;
+    }
+    if (raster) nsvgDeleteRasterizer(raster);
+  }
+  nsvgDelete(image);
+  return rgba;
+}
+
+}  // namespace
 
 namespace {
 
@@ -510,8 +549,9 @@ void Images::decode(const std::string &url, std::shared_ptr<std::string> bytes) 
         if (frame->load() - wanted->load() > kRetireFrames) return [this, url] { source_failed(url, true); };
         auto decoded = std::make_shared<Decoded>();
         int channels = 0;
-        decoded->rgba = stbi_load_from_memory(reinterpret_cast<const unsigned char *>(bytes->data()),
-                                              static_cast<int>(bytes->size()), &decoded->w, &decoded->h, &channels, 4);
+        if (looks_like_svg(*bytes)) decoded->rgba = rasterize_svg(*bytes, &decoded->w, &decoded->h);
+        else decoded->rgba = stbi_load_from_memory(reinterpret_cast<const unsigned char *>(bytes->data()),
+                                                   static_cast<int>(bytes->size()), &decoded->w, &decoded->h, &channels, 4);
         if (!decoded->rgba) {
           decoded->w = decoded->h = 0;
           logf_limited("images-decode", 10000, "images", "image decode failed");

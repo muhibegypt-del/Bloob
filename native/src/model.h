@@ -7,9 +7,15 @@
 
 #include "json.h"
 
+// A score on a title page: the site's logo (SVG via /api/image), "97%", and
+// "Rotten Tomatoes 97%" for speech and when the logo cannot load.
+struct Score {
+  std::string text, label, logo;
+};
+
 struct Item {
   std::string id, type, name, year, runtime, rating, description;
-  std::vector<std::string> scores;  // "RT 97%", "Metacritic 87", …: title details only (MDBList)
+  std::vector<Score> scores;  // title details only (MDBList): RT, Metacritic, IMDb, Letterboxd
   std::vector<std::string> genres;
   std::string tile, backdrop, logo, poster;
   bool series() const { return type == "series"; }
