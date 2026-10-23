@@ -34,9 +34,10 @@ constexpr int kTitleToMeta = 13, kMetaToBody = 18, kBodyToButtons = 32, kBodyW =
 constexpr int X0 = safe_x;
 constexpr long long kAutoAdvanceMs = 9000;
 constexpr int kFeatured = 6;
-// Apps row (2.6, launcher): the TV's apps and inputs between the hero and the
-// first shelf; the hero moves up by its height. Tiles 200 × 112, +50 on focus.
-constexpr int kAppsBlock = 182, kAppW = 200, kAppH = 112, kAppGrow = 50, kAppGap = 16, kAppIcon = 56;
+// YouTube (2.6, launcher; the owner wants only this app on Home): one Glass
+// button on its own line under the hero's buttons; the hero moves up by a line.
+constexpr int kAppsBlock = theme::button_h + 16;
+const char *kYouTube = "youtube.leanback.v4";
 const char *kHbExec = "luna://org.webosbrew.hbchannel.service/exec";
 
 float lerp(float a, float b, float t) { return a + (b - a) * t; }
@@ -225,7 +226,7 @@ class BrowseScreen : public Screen {
                          position(welcome_button_, 2);
     if (state_ != State::Ready) return state_ == State::Loading ? "Loading" : error_;
     if (hero_ && apps_focus_ && !apps_.empty())
-      return "Apps. " + apps_[static_cast<size_t>(app_)].title + ", " + position(app_, static_cast<int>(apps_.size()));
+      return apps_[0].title + ", button";
     if (hero_) {
       auto list = hero_buttons();
       if (list.empty()) return "";
@@ -663,8 +664,10 @@ class BrowseScreen : public Screen {
       if (alive.expired()) return false;
       auto list = parse_launch_points(reply, self);
       if (list.empty()) return false;
-      apps_ = list;
-      app_ = std::min(app_, static_cast<int>(apps_.size()) - 1);
+      apps_.clear();
+      for (auto &a : list)
+        if (a.id == kYouTube) apps_.push_back(a);
+      app_ = 0;
       ctx().redraw_at(ctx().now);
       return true;
     };
@@ -721,26 +724,15 @@ class BrowseScreen : public Screen {
 
   void draw_apps(float alpha) {
     if (apps_.empty()) return;
-    Ctx &c = ctx();
-    int top = kFirstShelf - kAppsBlock;
-    text(Text::CalloutBold, "Apps", X0, top + kHeaderTop - 24, label(Label::Secondary, alpha));
-    int y = top + 46, x = X0;
-    int first = std::max(0, app_ - 5);  // keep the focused tile on screen
-    for (int i = first; i < static_cast<int>(apps_.size()) && x < W; i++) {
-      const App &a = apps_[static_cast<size_t>(i)];
-      if (a.input && (i == 0 || !apps_[static_cast<size_t>(i - 1)].input)) {  // divider before the inputs
-        c.gfx.fill_round(x, y, 2, kAppH, 1, fade(with_alpha(rgba(0xffffff), 38), alpha));
-        x += 2 + kAppGap;
-      }
-      bool focused = apps_focus_ && !tabs_ && i == app_;
-      int w = kAppW + (focused ? static_cast<int>(kAppGrow * button_lift_.value) : 0);
-      // Focus as on Glass buttons: the tile turns White90 and its name dark [EoA B5].
-      c.gfx.fill_round(x, y, w, kAppH, card_radius, fade(focused ? button_focus : with_alpha(rgba(0xffffff), a.input ? 13 : 26), alpha));
-      ImageRef icon = a.icon.empty() ? ImageRef{} : c.images.get(a.icon, kAppIcon, kAppIcon, 12, Fit::Contain);
-      if (icon.texture) c.gfx.texture(icon.texture, x + 16, y + 12, icon.w, icon.h, static_cast<Uint8>(icon.alpha * alpha));
-      text(Text::Caption2Bold, a.title, x + 16, y + kAppH - 38, focused ? fade(rgba(0x000000), alpha) : label(Label::Secondary, alpha), w - 32);
-      x += w + kAppGap;
-    }
+    GlassButton b;
+    b.label = apps_[0].title;
+    b.icon = kPlayIcon;
+    b.focused = apps_focus_ && !tabs_;
+    b.lift = button_lift_.value;
+    b.alpha = alpha;
+    b.min_w = theme::title_button_min_w;
+    b.max_w = theme::title_button_max_w;
+    draw_glass_button(X0, kFirstShelf - kBodyToButtons - theme::button_h, b);
   }
 
   void draw_rows(float m) {
