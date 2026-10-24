@@ -10,7 +10,9 @@ const PROFILES = {
     id: 'lg-2022-oled',
     name: 'LG OLED 2022 (G2)',
     // 'none': no decoder and no passthrough; 'passthrough' or 'decode' otherwise.
-    dts: 'none',
+    // 'bridge' (3.0): no decoder, but Bloob's audio bridge (bridge.js) turns a
+    // DTS-only file's sound into Dolby Digital Plus 5.1 on the TV.
+    dts: 'bridge',
     // TrueHD (and TrueHD Atmos) to a receiver over eARC: 'yes', 'no' or 'unverified'.
     truehdPassthrough: 'unverified',
     // Disc Dolby Vision (profile 7, dual layer): 'yes' or 'no'. 'no' plays the HDR10 base layer.

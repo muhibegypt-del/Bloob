@@ -407,6 +407,36 @@ class SourcesScreen : public Screen {
 
   // ---------------------------------------------------------------- resolving
 
+  // What the audio bridge said for the resolved file (3.0); empty: play the file itself.
+  struct Bridge {
+    std::string url, note;
+    long long duration_ms = 0;
+  };
+
+  // The resolved version, into the player.
+  void launch(const Json &j, const Bridge &bridge) {
+    std::string url = j["url"].as_string();
+    modal_ = Modal::None;
+    logf("sources", "resolved (%s)", redact_uri(url).c_str());
+    leave_after_play_ = true;
+    choose_another() = false;
+    PlayRequest played = req_;
+    played.candidate = chosen_.id;  // the edition, for progress and the show's next episode
+    PlaySourceInfo info;
+    info.headline = chosen_.headline;
+    info.release = chosen_.release;
+    info.source = chosen_.source;
+    info.group = chosen_.group;
+    info.found_by = chosen_.sources;
+    info.file_name = j["fileName"].as_string();
+    info.file_bytes = j["size"].as_int(0);
+    info.dolby_vision = chosen_.dolby_vision;
+    info.bridge_url = bridge.url;
+    info.bridge_note = bridge.note;
+    info.bridge_duration_ms = bridge.duration_ms;
+    ctx().push(make_player(played, url, info));
+  }
+
   void choose(int index) {
     if (index < 0 || index >= static_cast<int>(options_.size())) return;
     if (is_more(options_[static_cast<size_t>(index)])) {  // "+N more": unfold that tier, focus its first new row
@@ -439,6 +469,7 @@ class SourcesScreen : public Screen {
   }
 
   void start_job() {
+    bridge_asked_ = false;
     modal_ = Modal::Resolving;
     sheet_focus_ = 0;
     modal_since_ = ctx().now;
@@ -487,22 +518,27 @@ class SourcesScreen : public Screen {
     if (state == "ready") {
       std::string url = j["url"].as_string();
       std::string file = j["fileName"].as_string();
-      modal_ = Modal::None;
-      logf("sources", "resolved (%s)", redact_uri(url).c_str());
-      leave_after_play_ = true;
-      choose_another() = false;
-      PlayRequest played = req_;
-      played.candidate = chosen_.id;  // the edition, for progress and the show's next episode
-      PlaySourceInfo info;
-      info.headline = chosen_.headline;
-      info.release = chosen_.release;
-      info.source = chosen_.source;
-      info.group = chosen_.group;
-      info.found_by = chosen_.sources;
-      info.file_name = file;
-      info.file_bytes = j["size"].as_int(0);
-      info.dolby_vision = chosen_.dolby_vision;
-      ctx().push(make_player(played, url, info));
+      // 3.0: a version whose name says DTS may need the audio bridge. The service
+      // reads the file's tracks and says; the starting sheet stays up meanwhile.
+      if (!bridge_asked_ && (chosen_.audio.find("DTS") != std::string::npos || chosen_.line.find("DTS") != std::string::npos ||
+                            chosen_.audio.find("TrueHD") != std::string::npos || chosen_.line.find("TrueHD") != std::string::npos)) {
+        bridge_asked_ = true;
+        job_id_.clear();  // no more polling: the job is done
+        step_label_ = "Checking the sound for this TV\xE2\x80\xA6";
+        ctx().api.post("/api/bridge/open", "{\"url\":" + Json::quote(url) + ",\"language\":" + Json::quote(ctx().language) + "}",
+                       [this, j](const ApiResult &b) {
+                         Bridge bridge;
+                         if (b.ok() && b.json["bridge"].as_bool()) {
+                           bridge.url = b.json["play"].as_string();
+                           bridge.duration_ms = b.json["durationMs"].as_int(0);
+                           bridge.note = b.json["note"].as_string();
+                         }
+                         logf("sources", "audio bridge: %s", bridge.url.empty() ? "not needed" : bridge.note.c_str());
+                         launch(j, bridge);
+                       }, alive_);
+        return;
+      }
+      launch(j, Bridge{});
     } else if (state == "error") {
       fail(j["error"].as_string("Could not get this source."));
     } else if (state == "choose-file") {
@@ -1075,6 +1111,7 @@ class SourcesScreen : public Screen {
   Ranking all_;  // the service's whole answer; ranking_ is the chosen cut's view of it
   std::string cut_;
   std::set<std::string> expanded_;  // tiers whose folded versions are shown
+  bool bridge_asked_ = false;  // the audio bridge was asked about this resolve
   std::vector<Pill> pills_;
   int pill_ = 0;
   bool pills_focused_ = false;

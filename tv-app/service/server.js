@@ -16,6 +16,7 @@ const next = require('./next');
 const { rank, editionOf, hashOf } = require('./rank');
 const { createResolver } = require('./resolve');
 const { createReadyCheck } = require('./ready');
+const bridge = require('./bridge');
 const sources = require('./sources');
 
 const PORT = config.port;
@@ -290,6 +291,12 @@ async function handleApi(req, res, url) {
     return budget ? reply(res, 200, { policy: String(input.policy), imageCacheBudget: budget, imageCacheBytes: images.cacheBytes() })
       : reply(res, 400, { error: 'Unknown memory policy' });
   }
+  if (pathname === '/api/bridge/open' && req.method === 'POST') {
+    // After resolving a version whose sound may be DTS only: does it need the bridge?
+    if (!isHttpUrl(input.url)) return reply(res, 400, { error: 'Expected the resolved link' });
+    return reply(res, 200, await bridge.open(PORT, String(input.url), String(input.language || 'English')));
+  }
+  if (pathname === '/api/bridge/status' && req.method === 'GET') return reply(res, 200, bridge.status(String(query.get('token') || '')) || {});
   if (pathname === '/api/sources/ranked' && req.method === 'POST') {
     const type = input.type;
     const id = String(input.videoId || '');
@@ -499,6 +506,11 @@ const server = http.createServer((req, res) => {
   const pathname = url.pathname;
   if (pathname.startsWith('/api/')) {
     if (!trustedRequest(req)) return reply(res, 403, { error: 'Forbidden' });
+    // The audio bridge's streams (3.0): ffmpeg reads the file here, the player the converted stream.
+    const src = /^\/api\/bridge\/src\/([a-f0-9]{24})$/.exec(pathname);
+    if (src && (req.method === 'GET' || req.method === 'HEAD')) return bridge.serveSource(src[1], req, res);
+    const play = /^\/api\/bridge\/play\/([a-f0-9]{24})\.mkv$/.exec(pathname);
+    if (play && req.method === 'GET') return bridge.servePlay(PORT, play[1], url.searchParams, req, res);
     handleApi(req, res, url).catch(error => reply(res, error.status || 502, { error: error.message || 'Service error' }));
   } else if (req.method === 'GET' || req.method === 'HEAD') {
     serveUi(req, res, pathname);

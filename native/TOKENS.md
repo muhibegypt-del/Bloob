@@ -50,7 +50,7 @@
 | C2 | Increase contrast: 100 / 85 / 75 / 55% | `label()` | Same |
 | C3 | Hairline: white 8% | `hairline` | **Copied** (2.2) |
 | C4 | Hairline with Increase contrast: 32% | `hairline_high`, on buttons | **Copied** (2.2) |
-| C5 | Background `#2C2C2E` | `plain`, `solid` | **Owner override (2.6):** `plain` is OLED black `#000000`; `solid` keeps `#2C2C2E` |
+| C5 | Background `#2C2C2E` | `plain`, `solid` | **Copied** (3.0: back from the 2.6 OLED-black override, which the owner dropped); black only behind video |
 | C6 | Black blend 0.55 if luminosity > 0.5, else 0.2 (L927). **Correction (2.3):** this is the hero background rule, not a card rule; the 0.5 threshold is recorded. | Title-on-art cards (`images.cpp`), as a borrowed rule; the hero itself now uses H16 | Copied, provenance corrected |
 | C7 | Settings-button platter: white 10% | `settings_platter` | **Copied** (2.2; was 8%) |
 | C8 | Accessory: white 50% | — | N/A |

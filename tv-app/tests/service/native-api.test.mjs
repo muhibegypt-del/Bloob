@@ -50,11 +50,12 @@ describe('service ranking', () => {
     for (const view of all(result)) for (const caution of view.cautions) expect(caution).not.toMatch(/\d/);
   });
 
-  it('never prefers DTS sound, which this TV cannot play, over Dolby at the same resolution', () => {
+  it('without the bridge, never prefers DTS sound, which the TV cannot play, over Dolby at the same resolution', () => {
+    const profile = Object.assign({}, PROFILES['lg-2022-oled'], { dts: 'none' });
     const dts = candidate({ id: 'dts', claims: { resolution: '4K', hdr: ['DV'], audio: ['DTS-HD MA'], channels: '7.1' }, sourceType: 'WEB-DL', seeders: 2000, sizeBytes: 20e9 });
     const ddp = candidate({ id: 'ddp', claims: { resolution: '4K', audio: ['Dolby Digital Plus'], channels: '5.1' }, sourceType: 'WEB-DL', seeders: 6, sizeBytes: 15e9 });
     for (const variant of ['DTS', 'DTS-HD MA', 'DTS:X']) {
-      const result = rank([Object.assign({}, dts, { claims: Object.assign({}, dts.claims, { audio: [variant] }) }), ddp], {});
+      const result = rank([Object.assign({}, dts, { claims: Object.assign({}, dts.claims, { audio: [variant] }) }), ddp], { profile });
       expect(result.recommended.id).toBe('ddp');
       const silent = byId(result, 'dts');
       expect(silent.score).toBeLessThan(result.recommended.score);
@@ -62,9 +63,20 @@ describe('service ranking', () => {
       expect(silent.cautions[0]).toBe('No sound on this TV');
     }
     // Sound at a lower resolution beats silence at a higher one.
-    expect(best([dts, candidate({ id: 'aac', claims: { resolution: '1080p', audio: ['AAC'] }, seeders: 40 })]).id).toBe('aac');
+    expect(rank([dts, candidate({ id: 'aac', claims: { resolution: '1080p', audio: ['AAC'] }, seeders: 40 })], { profile }).recommended.id).toBe('aac');
     // With nothing else on offer it is still offered, with its warning.
-    expect(best([dts]).id).toBe('dts');
+    expect(rank([dts], { profile }).recommended.id).toBe('dts');
+  });
+
+  it('with the bridge (3.0), plays DTS and TrueHD as converted Dolby Digital Plus, preferring native sound between equals', () => {
+    const dtsDv = candidate({ id: 'dts', claims: { resolution: '4K', hdr: ['DV'], audio: ['DTS-HD MA'], channels: '7.1' }, sourceType: 'WEB-DL', seeders: 50, sizeBytes: 20e9 });
+    const view = byId(rank([dtsDv], {}), 'dts');
+    expect(view.warnings[0]).toMatch(/converts the sound to Dolby Digital Plus 5\.1/);
+    expect(view.cautions).not.toContain('No sound on this TV');
+    const same = c => candidate(Object.assign({ sourceType: 'WEB-DL', seeders: 50, sizeBytes: 20e9 }, c));
+    const truehd = same({ id: 'thd', claims: { resolution: '4K', audio: ['TrueHD'], channels: '7.1' } });
+    const ddp = same({ id: 'ddp', claims: { resolution: '4K', audio: ['Dolby Digital Plus'], channels: '5.1' } });
+    expect(rank([truehd, ddp], {}).recommended.id).toBe('ddp');
   });
 
   it('gives TrueHD Atmos no Atmos or lossless bonus until passthrough is verified', () => {

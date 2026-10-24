@@ -85,6 +85,17 @@ class UmsPlayer {
   const std::string &media_id() const { return media_id_; }
   const MediaInfo &info() const { return info_; }
 
+  // The audio bridge (3.0): for a DTS-only file, play the service's converted
+  // stream instead. `url` takes &t=<seconds>; loads start there and clock
+  // reports are offset by it, the duration is the file's, and a seek reloads
+  // the stream at the new time without the rest of the player noticing.
+  struct Bridge {
+    std::string url;
+    long long duration_ms = 0;
+  };
+  void set_bridge(const Bridge &bridge) { bridge_ = bridge; }
+  bool bridged() const { return !bridge_.url.empty(); }
+
  private:
   void command(const char *method, const std::string &extra = "", std::function<void(bool ok)> done = nullptr);
   void on_event(const std::string &payload);
@@ -100,6 +111,12 @@ class UmsPlayer {
   std::set<std::string> seen_keys_;
   bool lost_ = false;
   SubtitleStyle style_;
+  Bridge bridge_;
+  long long offset_ = 0;  // bridge: where the current stream starts in the film
+  bool reseeking_ = false, resume_play_ = false, playing_ = false, subs_on_ = false;
+  int text_index_ = -1;
+  std::string app_id_, window_id_, load_type_;
+  void reseek(long long position_ms);
   void apply_subtitle_style();
   std::shared_ptr<int> alive_ = std::make_shared<int>(0);  // guards late luna replies
 };

@@ -23,7 +23,7 @@ namespace theme {
 
 // ---- ground and status colours. Text colours come from label() by role (ui.h).
 const Color black = rgba(0x000000);                // ground behind full-bleed artwork and video
-const Color plain = rgba(0x000000);                // ground of pages without artwork: OLED black (owner, 2.6; EoA C5 was #2C2C2E)
+const Color plain = rgba(0x2c2c2e);                // ground of pages without artwork [EoA C5]; 3.0: Glass graphite again (the 2.6 black was dropped by the owner)
 const Color candidate = rgba(0xffffff, 26);        // 10%: chosen but not focused [EoA P5]
 const Color hairline = rgba(0xffffff, 20);         // 8% [EoA C3]
 const Color hairline_high = rgba(0xffffff, 82);    // 32%, Increase contrast [EoA C4]

@@ -65,6 +65,9 @@ struct PlaySourceInfo {
   std::vector<std::string> found_by;
   long long file_bytes = 0;  // the file AllDebrid serves, 0 if unknown
   int dolby_vision = 0;      // guessed profile: 5, 8 or 0
+  // The audio bridge (3.0): the service's converted stream for a DTS-only file.
+  std::string bridge_url, bridge_note;  // "DTS-HD MA 7.1 -> Dolby Digital Plus 5.1 (Bloob)"
+  long long bridge_duration_ms = 0;
 };
 std::unique_ptr<Screen> make_player(const PlayRequest &request, const std::string &url, const PlaySourceInfo &source = {},
                                     const std::string &load_type = "media");

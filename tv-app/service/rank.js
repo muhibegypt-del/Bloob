@@ -115,21 +115,26 @@ function pictureOn(candidate, profile, preference) {
 /** What the sound will be on this TV, from the claims. */
 function soundOn(candidate, profile) {
   const audio = (candidate.claims || {}).audio || [];
-  const dts = audio.filter(a => DTS.indexOf(a) >= 0);
-  const others = audio.filter(a => DTS.indexOf(a) < 0 && a !== 'Atmos');
-  const dtsBlocked = profile.dts === 'none' && dts.length > 0;
-  const silent = dtsBlocked && others.length === 0;
-  const truehd = others.indexOf('TrueHD') >= 0;
+  // With the bridge, TrueHD is converted like DTS: TV apps can't decode or pass it through (3.0).
+  const convert = profile.dts === 'bridge' && profile.truehdPassthrough !== 'yes' ? DTS.concat(['TrueHD']) : DTS;
+  const dts = audio.filter(a => convert.indexOf(a) >= 0);
+  const others = audio.filter(a => convert.indexOf(a) < 0 && a !== 'Atmos');
+  const dtsBlocked = (profile.dts === 'none' || profile.dts === 'bridge') && dts.length > 0;
+  const bridged = profile.dts === 'bridge' && dtsBlocked && others.length === 0;
+  const silent = dtsBlocked && others.length === 0 && !bridged;
+  const truehd = audio.indexOf('TrueHD') >= 0;
   const truehdOk = profile.truehdPassthrough === 'yes';
   // Atmos rides on DD+ or TrueHD; with no carrier named, streaming releases use DD+.
   const onTrueHd = truehd && others.indexOf('Dolby Digital Plus') < 0;
   const claimsAtmos = audio.indexOf('Atmos') >= 0 && !silent;
   return {
     silent,
-    mixedDts: dtsBlocked && !silent,
+    bridged,
+    // With the bridge, a file with DTS and another track plays the other (player, 2.8.1).
+    mixedDts: dtsBlocked && !silent && !bridged && profile.dts !== 'bridge',
     atmos: claimsAtmos && (!onTrueHd || truehdOk),
     atmosDowngrade: claimsAtmos && onTrueHd && !truehdOk,
-    lossless: !silent && ((truehd && truehdOk) || (profile.dts !== 'none' && dts.some(a => a !== 'DTS'))),
+    lossless: !silent && ((truehd && truehdOk) || (profile.dts !== 'none' && profile.dts !== 'bridge' && dts.some(a => a !== 'DTS'))),
   };
 }
 
@@ -225,7 +230,11 @@ function score(candidate, prefs) {
       value -= WEIGHTS.dtsMixed;
       issue(6, 'Includes DTS sound, which this TV can\'t play; you may hear nothing', 'Sound may not play');
     }
-    if (sound.atmos) { value += WEIGHTS.atmos; notes.push('Dolby Atmos'); }
+    if (sound.bridged) {
+      // No bonus: sound the TV plays as it is wins between otherwise equal versions.
+      notes.push('Sound converted to Dolby Digital Plus 5.1');
+      issue(1, 'This TV can\'t decode DTS or TrueHD; Bloob converts the sound to Dolby Digital Plus 5.1 while it plays');
+    } else if (sound.atmos) { value += WEIGHTS.atmos; notes.push('Dolby Atmos'); }
     else if (sound.lossless) { value += WEIGHTS.lossless; notes.push('Lossless audio'); }
     else if (claims.channels === '7.1' || claims.channels === '5.1') { value += WEIGHTS.surround; notes.push(`${claims.channels} surround`); }
     if (sound.atmosDowngrade) issue(1, 'TrueHD Atmos may play as standard sound on this TV');

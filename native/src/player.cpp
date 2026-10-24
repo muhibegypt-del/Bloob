@@ -112,11 +112,14 @@ std::vector<std::string> distinct_labels(const std::vector<MediaTrack> &tracks, 
   return out;
 }
 
-// DTS: this TV has no decoder for it (LG left DTS out of its 2020-2022 TVs), so
-// a DTS track plays silently or brings up "audio not supported" (2.8.1).
+// Sound this TV's player can't decode, which brings up "audio codec not supported":
+// DTS (LG left it out of its 2020-2022 TVs, 2.8.1) and TrueHD (remuxes' usual
+// first track; TV apps can't decode or pass it through, 3.0). The player picks
+// the Dolby or AAC track beside it; a file with nothing else goes through the bridge.
 bool dts(const MediaTrack &t) {
   std::string c = upper(t.codec);
-  return c.find("DTS") != std::string::npos || c.find("DCA") != std::string::npos;
+  return c.find("DTS") != std::string::npos || c.find("DCA") != std::string::npos ||
+         c.find("TRUEHD") != std::string::npos || c.find("MLP") != std::string::npos;
 }
 
 // A preference such as "English" matches a track whose code names that language.
@@ -154,6 +157,7 @@ class PlayerScreen : public Screen {
   PlayerScreen(const PlayRequest &req, const std::string &url, const PlaySourceInfo &info, const std::string &load_type)
       : req_(req), url_(url), source_(info.headline), load_type_(load_type), dolby_vision_(info.dolby_vision), info_(info) {
     start_at_ = req.resume_ms;
+    if (!info.bridge_url.empty()) ums_.set_bridge({info.bridge_url, info.bridge_duration_ms});
     // One viewing, one session: reports carry it and a rising sequence so the
     // service can drop late ones (UX-PLAN X1). A reopen keeps the session.
     char id[40];
@@ -361,13 +365,13 @@ class PlayerScreen : public Screen {
       bool any_playable = false;
       for (auto &a : info.audio) any_playable = any_playable || !dts(a);
       if (!info.audio.empty() && !any_playable) {
-        logf("player", "every audio track is DTS (%zu tracks)", info.audio.size());
-        failure_ = "This version\xE2\x80\x99s sound is DTS only, which this TV can\xE2\x80\x99t play. Choose another version: "
+        logf("player", "every audio track is DTS or TrueHD (%zu tracks)", info.audio.size());
+        failure_ = "This version\xE2\x80\x99s sound is DTS or TrueHD only, which this TV can\xE2\x80\x99t play. Choose another version: "
                    "Bloob shows the ones with Dolby or AAC sound first.";
         error_focus_ = 1;  // Choose another version
         session_.pause();
       } else if (chosen_audio_ >= 0 && current_dts) {
-        logf("player", "skipping a DTS track for %s", audio_label(info.audio[static_cast<size_t>(chosen_audio_)]).c_str());
+        logf("player", "skipping a DTS/TrueHD track for %s", audio_label(info.audio[static_cast<size_t>(chosen_audio_)]).c_str());
       }
       if (!chosen_text_ && c.subtitle_language != "Off") {
         int any = -1;
@@ -884,6 +888,7 @@ class PlayerScreen : public Screen {
         audio = audio_label(m.audio[i]) + "  (" + std::to_string(i + 1) + " of " + std::to_string(m.audio.size()) + ")";
         if (!m.audio[i].codec.empty()) audio += " \xC2\xB7 " + m.audio[i].codec;
       }
+    if (!info_.bridge_note.empty()) audio = info_.bridge_note;
     rows.push_back({"Audio", audio});
     int sub = session_.subtitle_index();
     rows.push_back({"Subtitles", sub >= 0 && sub < static_cast<int>(m.text.size())

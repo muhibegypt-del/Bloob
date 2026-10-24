@@ -32,6 +32,13 @@ echo "glibc: newest symbol version GLIBC_$NEWEST (limit $MAX_GLIBC)"
 # The app's own copy of the Bloob service (catalogue, sources, AllDebrid, artwork).
 VERSION=$(node -p "require('./package/appinfo.json').version")
 node scripts/stage-service.mjs build-webos/service "$VERSION"
+# The audio bridge's ffmpeg and ffprobe (3.0; scripts/build-ffmpeg.sh makes them).
+if [ -x third_party/ffmpeg/bin/ffmpeg ] && [ -x third_party/ffmpeg/bin/ffprobe ]; then
+  mkdir -p build-webos/service/bin
+  install -m 755 third_party/ffmpeg/bin/ffmpeg third_party/ffmpeg/bin/ffprobe build-webos/service/bin/
+else
+  echo "warning: no ffmpeg in third_party/ffmpeg/bin; DTS-only versions will not play (run scripts/build-ffmpeg.sh)" >&2
+fi
 
 ARES=${ARES_PACKAGE:-../tv-app/node_modules/.bin/ares-package}
 mkdir -p artifacts

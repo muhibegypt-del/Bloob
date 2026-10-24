@@ -1,5 +1,6 @@
 #include "media.h"
 
+#include <algorithm>
 #include <cctype>
 
 #include "json.h"
@@ -12,13 +13,22 @@ bool UmsPlayer::load(const std::string &uri, const std::string &app_id, const st
                      const std::string &load_type, Listener listener, long long start_ms) {
   listener_ = std::move(listener);
   info_ = MediaInfo{};
+  app_id_ = app_id;
+  window_id_ = window_id;
+  load_type_ = load_type;
+  std::string source = uri;
+  if (bridged()) {  // the converted stream begins where playback should
+    offset_ = std::max(0LL, start_ms);
+    source = bridge_.url + "&t=" + std::to_string(offset_ / 1000) + "." + std::to_string((offset_ % 1000) / 100);
+    start_ms = 0;
+  }
   std::string option = "{\"appId\":" + Json::quote(app_id);
   if (!window_id.empty()) option += ",\"windowId\":" + Json::quote(window_id);
   if (start_ms > 0) option += ",\"transmission\":{\"playTime\":{\"start\":" + std::to_string(start_ms) + "}}";
   option += "}";
-  std::string payload = "{\"uri\":" + Json::quote(uri) + ",\"type\":" + Json::quote(load_type) +
+  std::string payload = "{\"uri\":" + Json::quote(source) + ",\"type\":" + Json::quote(load_type) +
                         ",\"payload\":{\"option\":" + option + "}}";
-  logf("media", "load %s type=%s window=%s start=%lld", redact_uri(uri).c_str(), load_type.c_str(), window_id.c_str(), start_ms);
+  logf("media", "load %s type=%s window=%s start=%lld", redact_uri(source).c_str(), load_type.c_str(), window_id.c_str(), start_ms);
 
   int generation = ++generation_;
   std::weak_ptr<int> alive = alive_;
@@ -54,6 +64,16 @@ bool UmsPlayer::load(const std::string &uri, const std::string &app_id, const st
     subscription_ = Luna::instance().call(std::string(kService) + "subscribe",
                                           "{\"mediaId\":" + Json::quote(media_id_) + "}",
                                           [this](const std::string &event) { on_event(event); }, true);
+    if (reseeking_) {  // a bridge seek: carry on as before, and report the seek done
+      reseeking_ = false;
+      if (resume_play_) play();
+      if (subs_on_) {
+        if (text_index_ >= 0) select_track("text", text_index_);
+        set_subtitles(true);
+      }
+      if (listener_) listener_({MediaEvent::SeekDone});
+      return;
+    }
     if (listener_) listener_({MediaEvent::Loaded});
   });
   if (!id && listener_) listener_({MediaEvent::Error, 0, "Could not reach the TV media service.", -2});
@@ -97,13 +117,32 @@ void UmsPlayer::notify_background() { command("notifyBackground"); }
 
 void UmsPlayer::play() { command("play"); }
 void UmsPlayer::pause() { command("pause"); }
-void UmsPlayer::seek(long long position_ms) { command("seek", ",\"position\":" + std::to_string(position_ms)); }
+void UmsPlayer::seek(long long position_ms) {
+  if (bridged()) return reseek(position_ms);
+  command("seek", ",\"position\":" + std::to_string(position_ms));
+}
+
+// A seek on the bridge: release this stream (its subscription first, so the TV's
+// release is not reported as lost) and load one that starts at the new time.
+void UmsPlayer::reseek(long long position_ms) {
+  logf("media", "bridge seek to %lld ms", position_ms);
+  resume_play_ = playing_;
+  if (subscription_) Luna::instance().cancel(subscription_);
+  subscription_ = 0;
+  if (!media_id_.empty()) Luna::instance().call(std::string(kService) + "unload", "{\"mediaId\":" + Json::quote(media_id_) + "}", nullptr);
+  media_id_.clear();
+  reseeking_ = true;
+  Listener listener = listener_;
+  load("", app_id_, window_id_, load_type_, listener, position_ms);
+}
 
 void UmsPlayer::select_track(const std::string &type, int index) {
+  if (type == "text") text_index_ = index;
   command("selectTrack", ",\"type\":" + Json::quote(type) + ",\"index\":" + std::to_string(index));
 }
 
 void UmsPlayer::set_subtitles(bool enabled) {
+  subs_on_ = enabled;
   std::weak_ptr<int> alive = alive_;
   command("setSubtitleEnable", std::string(",\"enable\":") + (enabled ? "true" : "false"), [this, alive, enabled](bool ok) {
     if (enabled && ok && !alive.expired()) apply_subtitle_style();
@@ -206,7 +245,7 @@ void UmsPlayer::on_event(const std::string &payload) {
   if (json.has("currentTime")) {
     const Json &value = json["currentTime"];
     long long t = value.is_object() ? value["currentTime"].as_int() : value.as_int();
-    listener_({MediaEvent::Time, t});
+    listener_({MediaEvent::Time, t + (bridged() ? offset_ : 0)});
   }
   if (json.has("bufferRange")) {
     // Fields as webOS documents them; logged once (numbers only) so a TV run
@@ -214,6 +253,8 @@ void UmsPlayer::on_event(const std::string &payload) {
     const Json &b = json["bufferRange"];
     info_.buffer_begin_ms = b["beginTime"].as_int(-1);
     info_.buffer_end_ms = b["endTime"].as_int(-1);
+    if (bridged() && info_.buffer_begin_ms >= 0) info_.buffer_begin_ms += offset_;
+    if (bridged() && info_.buffer_end_ms >= 0) info_.buffer_end_ms += offset_;
     info_.buffer_remaining_ms = b["remainingTime"].as_int(-1);
     info_.buffer_percent = static_cast<int>(b["percent"].as_int(-1));
     if (!logged_buffer_) {
@@ -227,6 +268,10 @@ void UmsPlayer::on_event(const std::string &payload) {
     info_.container = s["container"].as_string();
     info_.seekable = s["seekable"].as_bool(true);
     info_.duration_ms = program["duration"].as_int();
+    if (bridged()) {  // a live stream: its own duration says nothing; the file's does
+      if (bridge_.duration_ms > 0) info_.duration_ms = bridge_.duration_ms;
+      info_.seekable = true;
+    }
     info_.audio = parse_tracks(program["audioTrackInfo"], true);
     info_.text = parse_tracks(program["subtitleTrackInfo"], false);
     const Json &video = program["videoTrackInfo"][0];
@@ -269,8 +314,14 @@ void UmsPlayer::on_event(const std::string &payload) {
     listener_({MediaEvent::TrackSelected, 0, type, index});
   }
   if (json.has("loadCompleted")) listener_({MediaEvent::Loaded});
-  if (json.has("playing")) listener_({MediaEvent::Playing});
-  if (json.has("paused")) listener_({MediaEvent::Paused});
+  if (json.has("playing")) {
+    playing_ = true;
+    listener_({MediaEvent::Playing});
+  }
+  if (json.has("paused")) {
+    playing_ = false;
+    listener_({MediaEvent::Paused});
+  }
   if (json.has("bufferingStart")) listener_({MediaEvent::BufferingStart});
   if (json.has("bufferingEnd")) listener_({MediaEvent::BufferingEnd});
   if (json.has("seekDone")) listener_({MediaEvent::SeekDone});
