@@ -11,13 +11,19 @@
 //               rich in 4K remux, Dolby Vision and Atmos releases
 //   apibay      The Pirate Bay's JSON API, searched by IMDb ID
 //   eztv        EZTV's JSON API (series only)
+//   knaben      Knaben's database (3.1): many trackers, Nyaa among them, searched by title
+//   Anime only (3.1, anime.js maps the episode to its anime entry):
+//   seadex      SeaDex (releases.moe): the community's best release per anime, Nyaa copies only
+//   kitsu       Torrentio by Kitsu ID, in the anime entry's own numbering
+//   nyaa        Nyaa's RSS, searched by the entry's romaji and English titles
 //
 // Every provider has its own timeout. The answer goes back once Torrentio (the
 // fast one) and the others have answered, or a short grace after Torrentio,
 // whichever is first; slower answers still join the cached list for the next
 // look. Every field is still a claim parsed from a release name.
 // Keep this file compatible with the TV's older Node runtime (no `?.` / `??`).
-const { getJson } = require('./net');
+const { getJson, postJson } = require('./net');
+const anime = require('./anime');
 const { parseStream, parseStreams } = require('./release');
 
 const USER_TIMEOUT_MS = 6000;     // a provider slower than this is skipped for this search
@@ -128,8 +134,159 @@ async function eztv(type, id) {
   };
 }
 
+// ---- anime and title searches (3.1)
+
+const pad2 = n => (n < 10 ? `0${n}` : String(n));
+
+/** Text queries for an anime episode: the entry's own title, then the show's, with the number. */
+function animeQueries(type, ctx) {
+  const own = (ctx.titles || [])[0];
+  const show = (ctx.showTitles || []).find(t => anime.norm(t) !== anime.norm(own || ''));
+  if (type === 'movie') return [own || show].filter(Boolean);
+  const out = [];
+  if (own) out.push(`${own} ${pad2(ctx.episode)}`);
+  if (show) out.push(`${show} ${pad2(ctx.episode)}`);
+  if (ctx.absolute > ctx.episode && show) out.push(`${show} ${ctx.absolute}`);
+  if (own) out.push(`${own} batch`);
+  return out.slice(0, 4);
+}
+
+/** Keep the torrents that hold this anime episode (or film), marked episode/batch. */
+function animeTorrents(type, ctx, torrents) {
+  const out = [];
+  const seen = new Set();
+  torrents.forEach(t => {
+    if (!/^[a-f0-9]{40}$/.test(t.hash) || seen.has(t.hash)) return;
+    let fit = 'episode';
+    if (type === 'series') fit = anime.matchEpisode(t.name, ctx);
+    else {
+      const text = ` ${anime.norm(t.name)} `;
+      if (!(ctx.titles || []).concat(ctx.showTitles || []).some(x => anime.norm(x) && text.indexOf(` ${anime.norm(x)} `) >= 0)) fit = '';
+    }
+    if (!fit) return;
+    seen.add(t.hash);
+    out.push(Object.assign({}, t, { fit }));
+  });
+  return out;
+}
+
+function animeEpisodeOf(ctx) {
+  return { season: ctx.season, catalogEpisode: ctx.catalogEpisode, episode: ctx.episode, absolute: ctx.absolute };
+}
+
+/** SeaDex: the best release (and alternatives) for an anime entry; only Nyaa copies have public hashes. */
+async function seadex(type, id) {
+  const ctx = await anime.context(type, id);
+  if (!ctx || !ctx.anilistId) return { torrents: [] };
+  const json = await getJson(`https://releases.moe/api/collections/entries/records?filter=alID%3D${ctx.anilistId}&expand=trs`,
+    { timeout: USER_TIMEOUT_MS, maxBytes: 3000000 });
+  const torrents = [];
+  ((json && json.items) || []).forEach(entry => (((entry.expand || {}).trs) || []).forEach(t => {
+    if (t.tracker !== 'Nyaa' || !/^[a-f0-9]{40}$/i.test(t.infoHash || '')) return;
+    const files = (t.files || []).map(f => ({ name: String(f.name || ''), size: Number(f.length) || 0 })).filter(f => videoName(f.name));
+    const file = type === 'movie' ? files.sort((a, b) => b.size - a.size)[0] : anime.episodeFile(files, ctx);
+    if (!file) return;
+    const group = t.releaseGroup ? `[${t.releaseGroup}] ` : '';
+    torrents.push({
+      hash: t.infoHash.toLowerCase(),
+      name: `${group}${file.name.split('/').pop()}${t.dualAudio && !/dual/i.test(file.name) ? ' [Dual Audio]' : ''}`,
+      fileName: file.name.split('/').pop(),
+      size: file.size,
+      seadex: t.isBest ? 'best' : 'alt',
+      multiAudio: !!t.dualAudio,
+      fit: 'episode',
+    });
+  }));
+  return { torrents, filtered: true, animeEpisode: animeEpisodeOf(ctx) };
+}
+
+/** Torrentio by Kitsu ID: the anime entry's own episode numbers. */
+async function kitsu(type, id) {
+  const ctx = await anime.context(type, id);
+  if (!ctx || !ctx.kitsuId) return { streams: [] };
+  const kid = type === 'movie' ? `kitsu:${ctx.kitsuId}` : `kitsu:${ctx.kitsuId}:${ctx.episode}`;
+  const answer = await stremio('torrentio.strem.fun')(type, kid);
+  return Object.assign(answer, { animeEpisode: animeEpisodeOf(ctx) });
+}
+
+const SIZE_UNITS = { KiB: 1024, MiB: 1048576, GiB: 1073741824, TiB: 1099511627776, KB: 1e3, MB: 1e6, GB: 1e9, TB: 1e12 };
+function decodeXml(s) {
+  return String(s).replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n))).replace(/&quot;/g, '"').replace(/&#39;|&apos;/g, "'")
+    .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
+}
+
+/** Nyaa's RSS (English-translated anime), by the entry's titles. */
+async function nyaa(type, id) {
+  const ctx = await anime.context(type, id);
+  if (!ctx || !(ctx.titles || []).concat(ctx.showTitles || []).length) return { torrents: [] };
+  const all = [];
+  await Promise.all(animeQueries(type, ctx).map(async q => {
+    const result = await require('./net').get(`https://nyaa.si/?page=rss&c=1_2&f=0&q=${encodeURIComponent(q)}`,
+      { timeout: USER_TIMEOUT_MS, maxBytes: 3000000, accept: 'application/rss+xml' }).catch(() => null);
+    if (!result) return;
+    const xml = result.body.toString('utf8');
+    const items = xml.split('<item>').slice(1);
+    items.forEach(item => {
+      const pick = tag => { const m = new RegExp(`<${tag}>([\\s\\S]*?)</${tag}>`).exec(item); return m ? decodeXml(m[1].trim()) : ''; };
+      const size = /^([\d.]+)\s*([KMGT]i?B)$/.exec(pick('nyaa:size'));
+      all.push({
+        hash: pick('nyaa:infoHash').toLowerCase(),
+        name: pick('title'),
+        size: size ? Math.round(Number(size[1]) * (SIZE_UNITS[size[2]] || 1)) : 0,
+        seeders: Number(pick('nyaa:seeders')) || 0,
+      });
+    });
+  }));
+  return { torrents: animeTorrents(type, ctx, all), filtered: true, animeEpisode: animeEpisodeOf(ctx) };
+}
+
+/** Knaben's database: titles searched by text across many trackers (Nyaa, 1337x, TPB, RARBG's archive…). */
+async function knaben(type, id) {
+  const ctx = await anime.context(type, id).catch(() => null);
+  const [imdb, s, e] = id.split(':');
+  let queries;
+  let title = '', year = '';
+  if (ctx && ctx.anime && (ctx.titles || []).concat(ctx.showTitles || []).length) {
+    queries = animeQueries(type, ctx);
+  } else {
+    const meta = await require('./catalog').meta(type, imdb);
+    title = meta.name || '';
+    year = String(meta.year || '').slice(0, 4);
+    if (!title) return { torrents: [] };
+    queries = type === 'movie' ? [`${title} ${year}`.trim()] : [`${title} S${pad2(Number(s))}E${pad2(Number(e))}`, `${title} S${pad2(Number(s))}`];
+  }
+  const hits = [];
+  await Promise.all(queries.map(async query => {
+    const json = await postJson('https://api.knaben.org/v1', {
+      search_type: '100%', search_field: 'title', query, size: 100, order_by: 'seeders', order_direction: 'desc',
+      hide_unsafe: true, hide_xxx: true,
+    }, { timeout: USER_TIMEOUT_MS, maxBytes: 4000000 }).catch(() => null);
+    ((json && json.hits) || []).forEach(h => hits.push({
+      hash: String(h.hash || '').toLowerCase(),
+      name: String(h.title || ''),
+      size: Number(h.bytes) || 0,
+      seeders: Number(h.seeders) || 0,
+    }));
+  }));
+  if (ctx && ctx.anime && queries.length && (ctx.titles || []).concat(ctx.showTitles || []).length)
+    return { torrents: animeTorrents(type, ctx, hits), filtered: true, animeEpisode: animeEpisodeOf(ctx) };
+  // Plain titles: the name must carry the title (and, for a film, its year).
+  const want = anime.norm(title);
+  return {
+    torrents: hits.filter(h => {
+      const text = ` ${anime.norm(h.name)} `;
+      if (text.indexOf(` ${want} `) < 0) return false;
+      return type !== 'movie' || !year || text.indexOf(` ${year} `) >= 0;
+    }),
+  };
+}
+
 const PROVIDERS = [
+  { id: 'seadex', label: 'SeaDex', anime: true, search: seadex },
   { id: 'torrentio', label: 'Torrentio', primary: true, search: stremio('torrentio.strem.fun') },
+  { id: 'kitsu', label: 'Torrentio (anime)', anime: true, search: kitsu },
+  { id: 'nyaa', label: 'Nyaa', anime: true, search: nyaa },
+  { id: 'knaben', label: 'Knaben', search: knaben },
   { id: 'torrentsdb', label: 'TorrentsDB', search: stremio('torrentsdb.com') },
   { id: 'stremthru', label: 'StremThru', search: stremthru },
   { id: 'apibay', label: 'The Pirate Bay', search: apibay },
@@ -160,7 +317,11 @@ function fitsEpisode(name, season, episode) {
 
 /** Candidates from one provider's answer, for the requested title or episode. */
 function candidatesFrom(provider, answer, type, id) {
-  if (answer.streams) return parseStreams(answer.streams, provider.id, answer.limit || 60);
+  if (answer.streams) {
+    const list = parseStreams(answer.streams, provider.id, answer.limit || 60);
+    if (answer.animeEpisode) list.forEach(c => { c.animeEpisode = answer.animeEpisode; });
+    return list;
+  }
   const parts = id.split(':');
   const season = Number(parts[1]);
   const episode = Number(parts[2]);
@@ -168,12 +329,16 @@ function candidatesFrom(provider, answer, type, id) {
   const out = [];
   for (const t of answer.torrents || []) {
     if (!/^[a-f0-9]{40}$/.test(t.hash) || seen.has(t.hash) || !t.name) continue;
-    if (type === 'series' && !fitsEpisode(t.name, season, episode)) continue;
+    if (type === 'series' && !answer.filtered && !fitsEpisode(t.name, season, episode)) continue;
     seen.add(t.hash);
     const candidate = parseStream(torrentStream(t), provider.id);
     if (!candidate) continue;
     if (t.languages && t.languages.length && !candidate.languages.length) candidate.languages = t.languages;
     if (t.multiAudio) candidate.multiAudio = true;
+    if (t.seadex) candidate.seadex = t.seadex;
+    if (answer.animeEpisode) candidate.animeEpisode = answer.animeEpisode;
+    if (t.fit === 'episode') candidate.pack = false;  // "S2 - 05" is one episode, not a season
+    if (t.fit === 'batch') candidate.pack = true;
     if (candidate.pack && candidate.sizeBytes) {
       // The pack's size, not the episode's: keep it out of the bitrate estimate.
       candidate.packBytes = candidate.sizeBytes;
@@ -206,6 +371,9 @@ function merge(lists) {
     if (c.seeders !== undefined && (have.seeders === undefined || c.seeders > have.seeders)) have.seeders = c.seeders;
     if (!have.sizeBytes && c.sizeBytes) have.sizeBytes = c.sizeBytes;
     if (!have.fileName && c.fileName) have.fileName = c.fileName;
+    if (!have.seadex && c.seadex) have.seadex = c.seadex;
+    if (!have.animeEpisode && c.animeEpisode) have.animeEpisode = c.animeEpisode;
+    if (c.multiAudio) have.multiAudio = true;
   }));
   return result;
 }

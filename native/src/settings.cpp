@@ -258,7 +258,7 @@ class SettingsScreen : public Screen {
         case Row::Sources:
           title = "Sources";
           value = c.sources == "torrentio" ? "Torrentio only: fastest, fewer versions"
-                                           : "Torrentio, StremThru, TorrentsDB, The Pirate Bay and EZTV";
+                                           : "Torrentio, StremThru, TorrentsDB, Knaben, The Pirate Bay and EZTV; anime adds SeaDex and Nyaa";
           choice = true;
           break;
         case Row::Autoplay:
@@ -358,7 +358,7 @@ class AboutScreen : public Screen {
         {"SDL2", "Sam Lantinga and contributors \xC2\xB7 zlib licence (the TV's own copy)"},
         {"Big Buck Bunny (test clip)", "Blender Foundation, peach.blender.org \xC2\xB7 Creative Commons Attribution 3.0"},
         {"Titles and artwork", "Cinemeta and Metahub catalogue services \xC2\xB7 rights stay with their owners"},
-        {"Sources", "Found by public indexes (Torrentio, StremThru, TorrentsDB, The Pirate Bay, EZTV) and prepared by your own AllDebrid account"},
+        {"Sources", "Found by public indexes (Torrentio, StremThru, TorrentsDB, Knaben, The Pirate Bay, EZTV; for anime SeaDex and Nyaa) and prepared by your own AllDebrid account"},
     };
     for (auto &cr : credits) {
       text(Text::Callout, cr.first, x, y, label(Label::Primary), 560);

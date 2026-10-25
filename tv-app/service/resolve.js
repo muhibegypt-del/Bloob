@@ -42,8 +42,9 @@ function pickFile(files, hint) {
     const e = hint.episode;
     const pattern = new RegExp(`s0*${s}[\\s._-]*e0*${e}(?!\\d)|(?:^|\\D)${s}x0*${e}(?!\\d)`, 'i');
     const matches = candidates.filter(f => pattern.test(f.name));
-    if (!matches.length) return null;
-    return matches.sort((a, b) => b.size - a.size)[0];
+    if (matches.length) return matches.sort((a, b) => b.size - a.size)[0];
+    // Anime packs name files "Title - 05" or by absolute number (3.1).
+    return hint.anime ? require('./anime').episodeFile(candidates, hint.anime) : null;
   }
   const ranked = candidates.slice().sort((a, b) => b.size - a.size);
   return ranked[0].size > 0 && ranked[0].size >= ranked[1].size * 1.5 ? ranked[0] : null;

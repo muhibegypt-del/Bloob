@@ -1,5 +1,6 @@
 #include "model.h"
 
+#include <map>
 #include <cstdio>
 #include <cstdlib>
 #include <ctime>
@@ -152,7 +153,14 @@ static SourceOption parse_option(const Json &j) {
   o.group = j["group"].as_string();
   std::string dv = j["dolbyVision"].as_string();
   o.dolby_vision = dv == "p8" ? 8 : dv == "p5" ? 5 : 0;
-  o.sources = strings(j["sources"]);
+  // The indexes that found it, by name ("Found by SeaDex, Nyaa").
+  static const std::map<std::string, std::string> kNames = {
+      {"torrentio", "Torrentio"}, {"torrentsdb", "TorrentsDB"}, {"stremthru", "StremThru"}, {"apibay", "The Pirate Bay"},
+      {"eztv", "EZTV"}, {"knaben", "Knaben"}, {"seadex", "SeaDex"}, {"kitsu", "Torrentio (anime)"}, {"nyaa", "Nyaa"}};
+  for (const auto &id : strings(j["sources"])) {
+    auto it = kNames.find(id);
+    o.sources.push_back(it != kNames.end() ? it->second : id);
+  }
   // "120 seeders" leads with the number; anything else is unknown.
   const std::string &a = o.availability;
   if (!a.empty() && a[0] >= '0' && a[0] <= '9') o.seeders = std::atoi(a.c_str());

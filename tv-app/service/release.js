@@ -48,7 +48,7 @@ const SOURCE_TYPES = [
   [/\b(hd-?cam|cam-?rip|cam)\b/i, 'CAM'],
   [/\b(hd-?ts|telesync|hd-?tc|telecine)\b/i, 'TS'],
   [/\b(dvd-?scr|screener|scr)\b/i, 'SCR'],
-  [/\b(blu-?ray|bd-?rip|br-?rip|bdremux)\b/i, 'BluRay'],
+  [/\b(blu-?ray|bd-?rip|br-?rip|bdremux|bd)\b/i, 'BluRay'],  // "BD 1080p": anime's Blu-ray
   [/\bweb[ -]?dl\b/i, 'WEB-DL'],
   [/\bweb-?rip\b/i, 'WEBRip'],
   [/\bweb\b/i, 'WEB-DL'],
@@ -104,6 +104,7 @@ const UNMISTAKABLE_SOURCES = [
   [/\b(hd-?ts|telesync|hd-?tc|telecine)\b/i, 'TS'],
   [/\b(dvd-?scr|screener)\b/i, 'SCR'],
   [/\b(blu-?ray|bd-?rip|br-?rip)\b/i, 'BluRay'],
+  [/[[(]bd\b|\bbd[ ._-]?(?:1080|720|2160)p\b/i, 'BluRay'],  // anime: "(BD 1080p …)", "[BD 1080p]"
   [/\bweb-dl\b/i, 'WEB-DL'],
   [/\bweb-?rip\b/i, 'WEBRip'],
 ];
@@ -165,7 +166,10 @@ const NOT_GROUP = /^(dl|rip|hd|sd|ma|x|audio|hdr|dv|\d+)$/i;
 
 function releaseGroup(name) {
   const m = GROUP.exec(String(name || ''));
-  return m && !NOT_GROUP.test(m[1]) ? m[1] : undefined;
+  if (m && !NOT_GROUP.test(m[1])) return m[1];
+  // Anime names lead with the group in brackets: "[SubsPlease] Title - 05" (3.1).
+  const lead = /^\s*\[([A-Za-z0-9][\w&+ -]{0,23})\]/.exec(String(name || ''));
+  return lead && !/^(www|\d+p$)/i.test(lead[1]) ? lead[1].trim() : undefined;
 }
 
 const EPISODE = /\bs\d{1,2}[ .-]?e\d{1,3}\b|\b\d{1,2}x\d{2,3}\b/i;

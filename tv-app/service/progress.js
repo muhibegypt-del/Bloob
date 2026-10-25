@@ -126,7 +126,7 @@ async function save(entry, edition) {
   };
   map.set(value.videoId, value);
   // Starting a title again brings it back to Continue.
-  if (dismissed.has(value.id) && dismissed.get(value.id) < value.updated) dismissed.delete(value.id);
+  if (dismissed.has(value.id) && dismissed.get(value.id) <= value.updated) dismissed.delete(value.id);
   scheduleWrite();
   return { accepted: true, entry: value };
 }

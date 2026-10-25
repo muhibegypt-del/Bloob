@@ -127,6 +127,24 @@ The owner chose native. `native/` is a C++ webOS app (`com.muhib.bloob`, "Bloob 
   - **Desktop:** the engine runs with a clock-driven stand-in sink (`BLOOB_ENGINE=lg` uses the old stand-in). Demuxer tests run on a generated MKV (HEVC, TrueHD, DTS, AC-3, SubRip, chapters).
   - **Build:** the glibc guard is now 2.7 (FFmpeg's `__isoc99_sscanf`, `__sched_cpucount`). The tour script presses OK twice since 2.7.3's versions-list change.
   - **TV pass:** `native/TV-TEST.md` §14; the IPK is `native/artifacts/com.muhib.bloob_3.0.0_arm.ipk`. Still to come in 3.x: Skip intro from chapters, track memory, edition-aware resume, title-page collection/cast/similar, the intro hook.
+- **3.1.0 anime and searchers (25 October 2026, built, not yet on the TV).** The owner found anime searches weak and asked for every top-tier searcher. Research: `research/Searchers-and-anime-for-Bloob.md` (Magneto Module is a wrapper around POV's 19 scrapers. It isn't anime-aware, and its AllDebrid `instant` check uses an endpoint I believe AllDebrid retired).
+  - **Causes:** the ranker marked Japanese audio down; every index was asked by IMDb season/episode; there was no anime index.
+  - **`tv-app/service/anime.js`:**
+    - Fribb's anime-lists index (`anime-list-mini.json`, refreshed weekly into `anime-index.json`);
+    - AniList titles (`anime-titles.json`);
+    - episode mapping: TVDB season and cour offsets, absolute numbers for long runners;
+    - release matching ("S2 - 05", "2nd Season - 05", SxxEyy, absolute numbers, batches) and pack file picking.
+  - **New searchers (`sources.js`):**
+    - **Knaben** for every title (text search; carries Nyaa, TPB, 1337x…);
+    - for anime: **SeaDex** (the curated best release; Nyaa hashes only; exact episode file), **Torrentio by Kitsu ID** and **Nyaa** RSS.
+  - **Not added (probed):**
+    - Comet and MediaFusion need a configuration;
+    - the public Zilean is gone;
+    - Anime Tosho stopped in May 2026;
+    - AIOStreams would duplicate the others.
+  - **Ranking:** for anime, Japanese audio is not marked down. Dual audio gets +2, SeaDex best +8 (it leads at equal resolution), a SeaDex alternative +2, all shown as tags. `release.js` reads bracketed groups and "BD". The app names the indexes in *Found by*.
+  - **Also fixed:** a same-millisecond dismissal check in `progress.js` that made a Continue test flaky.
+  - **TV pass:** `native/TV-TEST.md` §15; the IPK is `native/artifacts/com.muhib.bloob_3.1.0_arm.ipk`.
 - **Design (2.0, Glass):** the visual system, with materials, tokens, type, focus, motion, states, the spoken interface and per-screen layouts, is in `native/DESIGN.md`. The tokens live in `native/src/theme.h`, the type scale, label roles and components in `ui.cpp`, and the frost bake in `images.cpp`.
 - **Rendering and playback:**
   - The TV's SDL2 provides the window and remote. Bloob draws with its own renderer: Inter via stb_truetype with oversampling and gamma, exact-size anti-aliased shapes, and artwork via stb_image scaled on worker threads, on a 1920×1080 offscreen canvas.
@@ -143,7 +161,7 @@ The owner chose native. `native/` is a C++ webOS app (`com.muhib.bloob`, "Bloob 
   - watch progress and settings.
   If the bus will not start the service, the app runs it directly with the TV's Node and stops it on exit.
 - **Build and test scripts:**
-  - `native/scripts/build.sh`: tests, cross-build, ABI guards (no GLIBCXX, and since 2.4 no glibc symbol newer than GLIBC_2.4), service staging, IPK with fixed modes (`native/artifacts/com.muhib.bloob_3.0.0_arm.ipk`).
+  - `native/scripts/build.sh`: tests, cross-build, ABI guards (no GLIBCXX, and since 2.4 no glibc symbol newer than GLIBC_2.4), service staging, IPK with fixed modes (`native/artifacts/com.muhib.bloob_3.1.0_arm.ipk`).
   - `native/scripts/tv-inspect.sh`: reads the runtime inspector snapshot `/tmp/bloob-state.json` from the TV, read-only.
   - `native/scripts/ui-tour.sh`: drives the whole app on the desktop through the acceptance task, plus quick-menu, Home and pipeline-lost events, against the real service with fixture sources.
   - `native/scripts/ui-snapshots.sh`: covers player states.

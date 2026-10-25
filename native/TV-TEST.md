@@ -274,3 +274,11 @@ Read `/tmp/bloob-native.log` after each step: `[engine]` and `[demux]` lines say
 5. **Tracks.** Change the audio language: the pipeline reloads where it was. Turn on subtitles: Bloob draws them (text in the Settings size, Blu-ray PGS pictures as on the disc), and they rise above the bar when it shows.
 6. **CPU.** During a TrueHD 7.1 conversion, the info panel's Bloob CPU figure. Sound that stutters or drifts means the TV's processor can't keep up.
 7. **Fallback.** If the engine fails before a picture, or shows none within 20 s, LG's player takes over at the same place (with the audio bridge for a DTS- or TrueHD-only version). Note the reason in the log.
+
+## 15. New in 3.1: anime and more searchers
+
+1. **Anime episode.** Open a current anime (for example Frieren, season 2), choose an episode, and open the versions list. Expect releases from SeaDex, Nyaa and Torrentio (anime) under *Found by*, the SeaDex pick first and tagged *SeaDex best*, and no "Tagged Japanese audio" warning.
+2. **Pack.** Play a SeaDex or batch version: the right episode starts, without a file chooser.
+3. **Long runner.** One Piece or Detective Conan: releases by absolute number appear.
+4. **Ordinary titles.** A film and a series episode now also list Knaben under *Found by*.
+5. **First start.** The anime index downloads once (about 6 MB) a few seconds after the service starts; `[anime] index: … titles` in the service log.

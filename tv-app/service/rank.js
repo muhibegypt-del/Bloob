@@ -14,6 +14,10 @@ const TYPICAL_MINUTES = { movie: 120, series: 45 };
 
 const WEIGHTS = {
   ready: 3,  // ready now on the owner's AllDebrid: a tie-breaker at equal quality (2.8)
+  // Anime (3.1): SeaDex's pick of the best release, an alternative it lists, and dual audio.
+  seadexBest: 8,  // leads at equal resolution, even over well-seeded web releases
+  seadexAlt: 2,
+  dualAudio: 2,
   dolbyVision: 6,
   hdr: 5,
   atmos: 4,
@@ -292,11 +296,23 @@ function score(candidate, prefs) {
   if (hasPreferred) {
     value += WEIGHTS.preferredLanguage;
     notes.push(`${preferredName} audio`);
+  } else if (prefs.anime && languages.every(l => l.indexOf('japanese') === 0)) {
+    // Anime in its original Japanese with subtitles is the usual way to watch: no mark-down (3.1).
   } else if (languages.length && !candidate.multiAudio) {
     value -= WEIGHTS.otherLanguage;
     issue(3, `Tagged ${candidate.languages.slice(0, 2).join(', ')} audio`, `${candidate.languages.slice(0, 2).join(' + ')} audio`);
   }
-  if (candidate.multiAudio) notes.push('Multiple audio languages');
+  if (candidate.multiAudio && prefs.anime) {
+    value += WEIGHTS.dualAudio;
+    notes.push('Dual audio');
+  } else if (candidate.multiAudio) notes.push('Multiple audio languages');
+  if (candidate.seadex === 'best') {
+    value += WEIGHTS.seadexBest;
+    notes.push('SeaDex best release');
+  } else if (candidate.seadex === 'alt') {
+    value += WEIGHTS.seadexAlt;
+    notes.push('On SeaDex');
+  }
   if (candidate.pack) notes.push('Part of a season pack');  // a fact, not a penalty
 
   const match = matchOf(candidate, prefs.intent);
@@ -400,7 +416,7 @@ function view(ranked, prefs) {
 function cinephileView(ranked, base) {
   const c = ranked.candidate;
   const cut = cine.cutOf(c);
-  const tags = cine.tagsOf(c);
+  const tags = cine.tagsOf(c).concat(c.seadex === 'best' ? ['SeaDex best'] : c.seadex === 'alt' ? ['SeaDex'] : []);
   const pictureName = cine.pictureName(c, dolbyVisionProfile(c));
   const size = c.sizeBytes ? sizeText(c.sizeBytes) : c.packBytes ? `${sizeText(c.packBytes)} pack` : '';
   const tier = cine.tierOf(c);

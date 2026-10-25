@@ -49,4 +49,39 @@ async function getJson(url, options) {
   catch (_) { throw new Error('Unreadable response'); }
 }
 
-module.exports = { get, getJson };
+/** POST a JSON body and read a JSON answer (Knaben's search, AniList's GraphQL). */
+function postJson(url, body, options) {
+  const opts = Object.assign({ timeout: 15000, maxBytes: 5000000 }, options || {});
+  return new Promise((resolve, reject) => {
+    let target;
+    try { target = new URL(url); } catch (_) { return reject(new Error('Invalid URL')); }
+    if (target.protocol !== 'https:') return reject(new Error('Unsupported URL'));
+    const data = Buffer.from(JSON.stringify(body));
+    const request = https.request(target, {
+      method: 'POST', timeout: opts.timeout,
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json', 'Content-Length': data.length, 'User-Agent': USER_AGENT },
+    }, response => {
+      if (response.statusCode !== 200) {
+        response.resume();
+        return reject(new Error(`${target.hostname} returned ${response.statusCode}`));
+      }
+      const chunks = [];
+      let size = 0;
+      response.on('data', chunk => {
+        size += chunk.length;
+        if (size > opts.maxBytes) request.destroy(new Error('Response is too large'));
+        else chunks.push(chunk);
+      });
+      response.on('end', () => {
+        try { resolve(JSON.parse(Buffer.concat(chunks).toString('utf8'))); }
+        catch (_) { reject(new Error('Unreadable response')); }
+      });
+      response.on('error', reject);
+    });
+    request.on('timeout', () => request.destroy(new Error(`${target.hostname} timed out`)));
+    request.on('error', reject);
+    request.end(data);
+  });
+}
+
+module.exports = { get, getJson, postJson };

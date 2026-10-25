@@ -17,6 +17,7 @@ const { rank, editionOf, hashOf } = require('./rank');
 const { createResolver } = require('./resolve');
 const { createReadyCheck } = require('./ready');
 const bridge = require('./bridge');
+const anime = require('./anime');
 const sources = require('./sources');
 
 const PORT = config.port;
@@ -316,7 +317,8 @@ async function handleApi(req, res, url) {
     const runtimeMinutes = sent > 0 && sent < 1000 ? sent : await catalog.cachedRuntime(type, id.split(':')[0]);
     // A show keeps to the version the viewer chose or last played (UX-PLAN X3).
     const intent = type === 'series' ? await progress.intentFor(id.split(':')[0]).catch(() => null) : null;
-    const prefs = { language: input.language || 'English', type, runtimeMinutes: runtimeMinutes || undefined, intent: intent || undefined, picture: settings.picture };
+    const animeContext = devFixtures ? null : await anime.context(type, id).catch(() => null);
+    const prefs = { language: input.language || 'English', type, runtimeMinutes: runtimeMinutes || undefined, intent: intent || undefined, picture: settings.picture, anime: !!animeContext };
     const answered = found.report.filter(r => !r.error && r.count > 0).map(r => r.label);
     // Ready now (2.8): ask the owner's AllDebrid about the top versions, for at most 3 s.
     let ranked = rank(candidates, prefs);
@@ -338,7 +340,7 @@ async function handleApi(req, res, url) {
     if (input.candidate) {
       const candidate = knownCandidates.get(String(input.candidate));
       if (!candidate) return reply(res, 404, { error: 'This source list has expired. Search again.' });
-      source = { kind: candidate.kind, value: candidate.value, fileName: candidate.fileName };
+      source = { kind: candidate.kind, value: candidate.value, fileName: candidate.fileName, anime: candidate.animeEpisode };
     } else if (isHttpUrl(input.link)) {
       source = { kind: 'link', value: String(input.link) };
     } else if (/^magnet:\?xt=urn:btih:/i.test(String(input.magnet || '')) || /^[a-f0-9]{40}$/i.test(String(input.magnet || ''))) {
@@ -349,6 +351,7 @@ async function handleApi(req, res, url) {
     if (!apiKey) return reply(res, 401, { error: 'Connect AllDebrid first' });
     const hint = { fileName: source.fileName };
     if (Number.isInteger(input.season) && Number.isInteger(input.episode)) { hint.season = input.season; hint.episode = input.episode; }
+    if (source.anime) hint.anime = source.anime;
     return reply(res, 200, resolver.start(source, hint));
   }
   if (pathname === '/api/resolve/choose' && req.method === 'POST') {
@@ -527,6 +530,8 @@ server.listen(PORT, '127.0.0.1', async () => {
   await accountReady;
   ready = true;
   pendingStarts.splice(0).forEach(message => message.respond({ ready: true, port: PORT, version: VERSION }));
+  // The anime mapping (3.1): read the saved index, or fetch it once, off the start path.
+  if (!devFixtures) setTimeout(anime.warm, 8000);
 });
 
 try {
