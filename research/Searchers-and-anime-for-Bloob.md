@@ -26,7 +26,11 @@ What the owner asked: why anime searches are weak, how the Magneto Module works 
 | Fribb anime-lists (`anime-list-mini.json`) | 200: IMDb/TVDB/TMDB to Kitsu/AniList with season and offset, refreshed daily by its author |
 | Torrentio | 403 from the build machine's datacentre address (Cloudflare), as before; works from the owner's home connection |
 | Comet (ElfHosted) | 403 without a configuration |
-| MediaFusion (ElfHosted) | 200 with no streams without a configuration |
+| Comet (`comet.feels.legal`, in POV's list) | 200: 1,114 torrents for The Matrix, no key (added in 3.1.1) |
+| Meteor (`meteorfortheweebs.midnightignite.me`, POV's list) | 200: 113, with seeders and file names (added in 3.1.1) |
+| Zilean (`zilean.stremio.ru`, POV's list) | 200: 220 DMM hashes (added in 3.1.1) |
+| Bitmagnet (`bitmagnetfortheweebs…`, POV's list) | 200: 100, Torznab XML (added in 3.1.1) |
+| MediaFusion (ElfHosted) | 200 with no streams without a configuration; POV's instance needs a per-user token, not added |
 | Zilean (ElfHosted public) | 404, gone |
 | AIOStreams | aggregator needing its own configuration; it would duplicate the indexes above |
 | Anime Tosho | stopped taking new torrents in May 2026 (its own notice) |
@@ -40,5 +44,7 @@ What the owner asked: why anime searches are weak, how the Magneto Module works 
 - `rank.js`: for anime, Japanese audio is not marked down; dual audio +2; SeaDex best +8 (leads at equal resolution), SeaDex alternative +2.
 - `release.js`: bracketed groups, "BD" as Blu-ray.
 - `resolve.js`: anime pack files.
+
+**3.1.1:** the community instances POV itself points at (Comet, Meteor, Zilean, Bitmagnet) answer without a key, so Bloob asks them too. Not added: MediaFusion (needs a per-user token), DMM direct (needs an account), and POV's HTML scrapers (TorrentGalaxy, Torlock, TorrentDownload, TorrentFunk, Kickass, Rutor), which break whenever a site changes; Knaben and Meteor already carry several of those sites.
 
 **Design proposals not built:** Comet or MediaFusion with a configuration that sends no debrid key; TorBox as a second cache with Usenet.

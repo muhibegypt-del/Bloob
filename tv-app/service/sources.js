@@ -12,6 +12,8 @@
 //   apibay      The Pirate Bay's JSON API, searched by IMDb ID
 //   eztv        EZTV's JSON API (series only)
 //   knaben      Knaben's database (3.1): many trackers, Nyaa among them, searched by title
+//   comet, meteor, zilean, bitmagnet (3.1.1): the community instances Magneto/POV
+//               use, in their keyless torrent mode (Zilean: DMM hash lists; Bitmagnet: a DHT crawler)
 //   Anime only (3.1, anime.js maps the episode to its anime entry):
 //   seadex      SeaDex (releases.moe): the community's best release per anime, Nyaa copies only
 //   kitsu       Torrentio by Kitsu ID, in the anime entry's own numbering
@@ -281,12 +283,58 @@ async function knaben(type, id) {
   };
 }
 
+/** Zilean: Debrid Media Manager's hash lists, searched by IMDb ID. */
+async function zilean(type, id) {
+  const [imdb, season, episode] = id.split(':');
+  const query = type === 'series' ? `ImdbId=${imdb}&Season=${season}&Episode=${episode}` : `ImdbId=${imdb}`;
+  const list = await getJson(`https://zilean.stremio.ru/dmm/filtered?${query}`, { timeout: USER_TIMEOUT_MS, maxBytes: 5000000 });
+  return {
+    torrents: (Array.isArray(list) ? list : []).map(t => ({
+      hash: String(t.info_hash || '').toLowerCase(),
+      name: String(t.raw_title || ''),
+      size: Number(t.size) || 0,
+    })),
+  };
+}
+
+/** Bitmagnet: a DHT crawler's index, as Torznab XML. */
+async function bitmagnet(type, id) {
+  const [imdb, season, episode] = id.split(':');
+  const query = type === 'series' ? `t=tvsearch&imdbid=${imdb}&season=${season}&ep=${episode}` : `t=movie&imdbid=${imdb}`;
+  const result = await require('./net').get(`https://bitmagnetfortheweebs.midnightignite.me/torznab/api?${query}`,
+    { timeout: USER_TIMEOUT_MS, maxBytes: 4000000, accept: 'application/rss+xml' });
+  const items = result.body.toString('utf8').split('<item>').slice(1);
+  return {
+    torrents: items.map(item => {
+      const attr = name => { const m = new RegExp(`name="${name}" value="([^"]*)"`).exec(item); return m ? m[1] : ''; };
+      const title = /<title>([\s\S]*?)<\/title>/.exec(item);
+      return {
+        hash: attr('infohash').toLowerCase(),
+        name: title ? decodeXml(title[1].trim()) : '',
+        size: Number(attr('size')) || Number((/<size>(\d+)<\/size>/.exec(item) || [])[1]) || 0,
+        seeders: attr('seeders') !== '' ? Number(attr('seeders')) : undefined,
+      };
+    }),
+  };
+}
+
+/** A Stremio addon with a bigger answer than Torrentio's (Comet lists over a thousand). */
+function stremioWide(host) {
+  const search = stremio(host);
+  return async (type, id) => Object.assign(await search(type, id), { limit: PER_PROVIDER_LIMIT });
+}
+
 const PROVIDERS = [
   { id: 'seadex', label: 'SeaDex', anime: true, search: seadex },
   { id: 'torrentio', label: 'Torrentio', primary: true, search: stremio('torrentio.strem.fun') },
   { id: 'kitsu', label: 'Torrentio (anime)', anime: true, search: kitsu },
   { id: 'nyaa', label: 'Nyaa', anime: true, search: nyaa },
   { id: 'knaben', label: 'Knaben', search: knaben },
+  // From Magneto/POV's list (3.1.1): community instances that answer without a debrid key.
+  { id: 'comet', label: 'Comet', search: stremioWide('comet.feels.legal') },
+  { id: 'meteor', label: 'Meteor', search: stremioWide('meteorfortheweebs.midnightignite.me') },
+  { id: 'zilean', label: 'Zilean', search: zilean },
+  { id: 'bitmagnet', label: 'Bitmagnet', search: bitmagnet },
   { id: 'torrentsdb', label: 'TorrentsDB', search: stremio('torrentsdb.com') },
   { id: 'stremthru', label: 'StremThru', search: stremthru },
   { id: 'apibay', label: 'The Pirate Bay', search: apibay },

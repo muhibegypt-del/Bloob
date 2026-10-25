@@ -156,7 +156,8 @@ static SourceOption parse_option(const Json &j) {
   // The indexes that found it, by name ("Found by SeaDex, Nyaa").
   static const std::map<std::string, std::string> kNames = {
       {"torrentio", "Torrentio"}, {"torrentsdb", "TorrentsDB"}, {"stremthru", "StremThru"}, {"apibay", "The Pirate Bay"},
-      {"eztv", "EZTV"}, {"knaben", "Knaben"}, {"seadex", "SeaDex"}, {"kitsu", "Torrentio (anime)"}, {"nyaa", "Nyaa"}};
+      {"eztv", "EZTV"}, {"knaben", "Knaben"}, {"seadex", "SeaDex"}, {"kitsu", "Torrentio (anime)"}, {"nyaa", "Nyaa"},
+      {"comet", "Comet"}, {"meteor", "Meteor"}, {"zilean", "Zilean"}, {"bitmagnet", "Bitmagnet"}};
   for (const auto &id : strings(j["sources"])) {
     auto it = kNames.find(id);
     o.sources.push_back(it != kNames.end() ? it->second : id);

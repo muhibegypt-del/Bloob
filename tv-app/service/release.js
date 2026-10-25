@@ -189,7 +189,8 @@ function parseStream(stream, provider) {
   const body = String(stream.description || stream.title || '');
   const nameLines = String(stream.name || '').split('\n').map(s => s.trim()).filter(Boolean);
   const lines = body.split('\n').map(s => s.trim()).filter(Boolean);
-  const release = (lines[0] || nameLines.join(' ') || 'Unnamed release').replace(/\s+/g, ' ').slice(0, 160);
+  // Comet and Meteor lead the name with a file emoji ("📄 The.Matrix…").
+  const release = (lines[0] || nameLines.join(' ') || 'Unnamed release').replace(/^[📄📁🎞️\s]+/u, '').replace(/\s+/g, ' ').slice(0, 160);
   // Lines after the release name that aren't stats or flags name the file inside a pack.
   const fileLine = lines.slice(1).find(line => !/[👤💾⚙️]/u.test(line) && !/^[\u{1F1E6}-\u{1F1FF}\s/|]+$/u.test(line) && /\.\w{2,4}$|\bs\d{1,2}e\d/i.test(line));
   const hints = stream.behaviorHints || {};
@@ -202,7 +203,7 @@ function parseStream(stream, provider) {
   const each = parts.map(parseRelease);
   const sourceType = each.map(p => p.sourceType).filter(Boolean)[0];
   const container = parseRelease(fileName || '').container;
-  const seeders = /👤\s*([\d,]+)/.exec(body);
+  const seeders = /👤\s*([\d,]+)/.exec(body) || (Number.isInteger(hints.seeders) ? [null, String(hints.seeders)] : null);
   const sizeBytes = Number(hints.videoSize) > 0 ? Number(hints.videoSize) : parseSize(body);
   const languages = flags(body);
   const multiAudio = /\b(multi|dual)[ .-]?(audio|lang)/i.test(body + ' ' + release);
