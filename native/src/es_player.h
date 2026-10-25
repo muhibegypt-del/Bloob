@@ -60,6 +60,9 @@ class EsSink {
   virtual const char *name() const = 0;
 };
 
+// "3840×2160 · 23.976 fps · HDR10" from a reply naming width/height/frameRate/hdrType.
+std::string summarise_video_info(const std::string &json);
+
 // The TV's pipeline (libplayerAPIs, opened at run time), or null where it isn't there.
 std::unique_ptr<EsSink> make_starfish_sink();
 // A stand-in that "plays" by the wall clock (desktop runs and tests).
@@ -91,6 +94,7 @@ class EsPlayer : public MediaBackend {
   long long next_cue_change(long long ms) const override;
   bool converts_audio() const override { return true; }
   std::string audio_note() const override { return audio_note_; }
+  std::string decoder_note() const override { return decoder_note_; }
   const char *engine_name() const override;
   const std::vector<DemuxFacts::Chapter> &chapters() const { return chapters_; }
 
@@ -117,6 +121,7 @@ class EsPlayer : public MediaBackend {
   MediaInfo info_;  // UI thread only
   std::vector<DemuxFacts::Chapter> chapters_;
   std::string audio_note_;
+  std::string decoder_note_;  // from the pipeline's video info (UI thread)
   SubtitleStyle style_;
   std::string url_, app_id_, window_id_;
   long long start_ms_ = 0;

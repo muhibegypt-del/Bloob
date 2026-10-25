@@ -31,6 +31,39 @@ std::string quoted(const std::string &s) {
 
 }  // namespace
 
+// "3840×2160 · 23.976 fps · HDR10" from a JSON reply that names width, height,
+// frame rate and HDR type somewhere (the pipeline's video info, videooutput's status).
+std::string summarise_video_info(const std::string &json) {
+  auto number = [&](const char *key) -> double {
+    std::string k = std::string("\"") + key + "\"";
+    size_t at = json.find(k);
+    if (at == std::string::npos) return 0;
+    at = json.find(':', at + k.size());
+    return at == std::string::npos ? 0 : std::atof(json.c_str() + at + 1);
+  };
+  auto text = [&](const char *key) -> std::string {
+    std::string k = std::string("\"") + key + "\"";
+    size_t at = json.find(k);
+    if (at == std::string::npos) return "";
+    size_t q1 = json.find('"', json.find(':', at + k.size()) + 1);
+    size_t q2 = q1 == std::string::npos ? q1 : json.find('"', q1 + 1);
+    return q2 == std::string::npos ? "" : json.substr(q1 + 1, q2 - q1 - 1);
+  };
+  int w = static_cast<int>(number("width")), h = static_cast<int>(number("height"));
+  if (w <= 0 || h <= 0) return "";
+  char buf[96];
+  std::snprintf(buf, sizeof buf, "%d\xC3\x97%d", w, h);
+  std::string out = buf;
+  double fps = number("frameRate");
+  if (fps > 0) {
+    std::snprintf(buf, sizeof buf, " \xC2\xB7 %.3f fps", fps);
+    out += buf;
+  }
+  std::string hdr = text("hdrType");
+  if (!hdr.empty() && hdr != "none" && hdr != "NONE") out += " \xC2\xB7 " + hdr;
+  return out;
+}
+
 // ---------------------------------------------------------------- payloads
 
 std::string EsPlayer::load_payload(const DemuxFacts &f, const AudioOut &a, const std::string &app_id,
@@ -337,9 +370,20 @@ void EsPlayer::on_sink(int type, long long num, const std::string &str) {
     case EsSink::StrError:
       logf("engine", "pipeline error %lld %s", num, str.c_str());
       break;
-    case EsSink::VideoInfo:
+    case EsSink::VideoInfo: {
+      logf("engine", "pipeline video info: %.400s", str.c_str());
+      // "width":3840,"height":2160,"frameRate":23.976,"hdrType":"…" (field names as the pipeline sends them).
+      std::string note = summarise_video_info(str);
+      if (!note.empty()) {
+        std::weak_ptr<int> alive = alive_;
+        post_([this, alive, note] {
+          if (alive.lock()) decoder_note_ = note;
+        });
+      }
+      break;
+    }
     case EsSink::AudioInfo:
-      logf("engine", "pipeline %s info: %.300s", type == EsSink::VideoInfo ? "video" : "audio", str.c_str());
+      logf("engine", "pipeline audio info: %.300s", str.c_str());
       break;
     default:
       break;

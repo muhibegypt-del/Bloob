@@ -1027,6 +1027,24 @@ class PlayerScreen : public Screen {
 
   void sample_stats(long long t) {
     stats_next_ = t + 500;
+    // What the TV's video output is showing, every 2 s while the panel is open.
+    if (t >= output_next_) {
+      output_next_ = t + 2000;
+      std::weak_ptr<int> alive = alive_;
+      Luna::instance().call("luna://com.webos.service.videooutput/getStatus", "{}", [this, alive](const std::string &payload) {
+        if (!alive.lock()) return;
+        if (!output_logged_) {
+          output_logged_ = true;
+          logf("qoe", "video output status: %.700s", payload.c_str());
+        }
+        // The main video's entry, when the reply lists several sinks.
+        size_t main = payload.find("\"MAIN\"");
+        std::string part = main != std::string::npos ? payload.substr(main) : payload;
+        size_t video = part.find("\"video\"");
+        output_ = summarise_video_info(video != std::string::npos ? part.substr(video) : part);
+        if (output_.empty()) output_ = "not reported (see the log)";
+      });
+    }
     net_.add(t, stats::read_net_rx(&net_iface_));
     long long total = 0, idle = 0, self = stats::read_self_ticks();
     if (stats::read_cpu_total(&total, &idle)) {
@@ -1063,6 +1081,10 @@ class PlayerScreen : public Screen {
     }
     video += " \xC2\xB7 picture: " + (m.hdr.empty() ? std::string("not reported") : m.hdr);
     rows.push_back({"Video", video});
+    // Proof of what is shown, not what the file claims: the decoder's report
+    // (Bloob's engine) and the TV's video output (videooutput service).
+    if (!media_->decoder_note().empty()) rows.push_back({"Decoder", media_->decoder_note()});
+    rows.push_back({"TV output", output_.empty() ? std::string("asking the TV\xE2\x80\xA6") : output_});
     std::string audio = "\xE2\x80\x94";
     for (size_t i = 0; i < m.audio.size(); i++)
       if (m.audio[i].selected) {
@@ -1467,6 +1489,9 @@ class PlayerScreen : public Screen {
   // The info panel (Info, I or the blue key): sampled twice a second while open.
   bool stats_ = false;
   long long stats_next_ = 0;
+  long long output_next_ = 0;
+  bool output_logged_ = false;
+  std::string output_;  // the TV's video output, from com.webos.service.videooutput
   stats::RateMeter net_;
   std::string net_iface_;
   long long cpu_total_ = -1, cpu_idle_ = -1, self_ticks_ = -1;

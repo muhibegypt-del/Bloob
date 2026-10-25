@@ -282,3 +282,7 @@ Read `/tmp/bloob-native.log` after each step: `[engine]` and `[demux]` lines say
 3. **Long runner.** One Piece or Detective Conan: releases by absolute number appear.
 4. **Ordinary titles.** A film and a series episode now also list Knaben under *Found by*.
 5. **First start.** The anime index downloads once (about 6 MB) a few seconds after the service starts; `[anime] index: … titles` in the service log.
+
+## 16. New in 3.1.2: is the video 4K?
+
+Open the info panel (blue key) during a 4K version. **Video** is what the file says; **Decoder** (Bloob's engine) is what the TV's decoder reports; **TV output** is what the TV's video output service reports for the main video. 4K playback shows `3840×2160` in all three. The first reply of the output service is logged once as `[qoe] video output status: …` in `/tmp/bloob-native.log`; if the row says "not reported", that line shows the TV's own field names.

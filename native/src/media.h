@@ -95,6 +95,8 @@ class MediaBackend {
   virtual bool converts_audio() const { return false; }
   // For the info panel: what the sound becomes, when converted ("TrueHD 7.1 -> Dolby Digital Plus 5.1").
   virtual std::string audio_note() const { return ""; }
+  // What the TV's decoder reports it is decoding ("3840×2160 · 23.976 fps · DolbyVision"), when known.
+  virtual std::string decoder_note() const { return ""; }
   virtual const char *engine_name() const = 0;
 };
 
