@@ -46,7 +46,7 @@ run task 0 \
   "key:down" "wait:1500" "snap:07-seasons-episodes" \
   "key:down" "key:right" "wait:900" "snap:08-episode-focused" \
   "key:ok" "wait:1200" "snap:09-starting" \
-  "wait:14000" "snap:13-player-starting" \
+  "key:ok" "wait:14000" "snap:13-player-starting" \
   'media:{"loadCompleted":{}}' "media:$SRC" "media:$VI" 'media:{"playing":{}}' \
   'media:{"currentTime":{"currentTime":754000}}' "wait:500" "snap:14-player-hud" \
   "key:right" "key:right" "key:right" "wait:120" "snap:15-player-seek-preview" \

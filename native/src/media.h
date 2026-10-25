@@ -50,50 +50,90 @@ struct MediaEvent {
   int code = 0;      // error code or track index
 };
 
-class UmsPlayer {
+// A subtitle Bloob draws itself (the engine's subtitles; uMediaServer draws its own).
+struct SubPicture;
+struct SubtitleCue {
+  long long start_ms = 0, end_ms = 0;
+  std::string text;
+  std::shared_ptr<SubPicture> picture;  // a PGS picture instead of text
+};
+
+// What the player screen drives. Two backends: UmsPlayer (LG's player, given
+// the URL) and EsPlayer (Bloob's engine: its own demuxer feeding the TV's decoders).
+class MediaBackend {
  public:
   using Listener = std::function<void(const MediaEvent &)>;
+  struct SubtitleStyle {
+    int size = 0;
+    bool background = false;
+  };
+  struct Bridge {
+    std::string url;
+    long long duration_ms = 0;
+  };
+  virtual ~MediaBackend() = default;
+  virtual bool load(const std::string &uri, const std::string &app_id, const std::string &window_id,
+                    const std::string &load_type, Listener listener, long long start_ms = 0) = 0;
+  virtual void play() = 0;
+  virtual void pause() = 0;
+  virtual void seek(long long position_ms) = 0;
+  virtual void select_track(const std::string &type, int index) = 0;
+  virtual void set_subtitles(bool enabled) = 0;
+  virtual void set_subtitle_style(const SubtitleStyle &style) = 0;
+  virtual void set_subtitle_position(int position, std::function<void(bool ok)> done) = 0;
+  virtual void unload() = 0;
+  virtual void notify_foreground() = 0;
+  virtual void notify_background() = 0;
+  virtual const MediaInfo &info() const = 0;
+  virtual void set_bridge(const Bridge &) {}
+  // The engine draws subtitles in Bloob's UI: the cues showing at `ms`.
+  virtual bool draws_subtitles() const { return false; }
+  virtual std::vector<SubtitleCue> cues_at(long long ms) const { return {}; }
+  // When what cues_at shows next changes after `ms` (-1: nothing known yet).
+  virtual long long next_cue_change(long long ms) const { return -1; }
+  // Every audio track plays (the engine converts what the TV can't decode).
+  virtual bool converts_audio() const { return false; }
+  // For the info panel: what the sound becomes, when converted ("TrueHD 7.1 -> Dolby Digital Plus 5.1").
+  virtual std::string audio_note() const { return ""; }
+  virtual const char *engine_name() const = 0;
+};
+
+class UmsPlayer : public MediaBackend {
+ public:
 
   // `load_type` is uMediaServer's pipeline type ("media" by default).
   // `start_ms` asks the pipeline to begin there (LG's documented
   // transmission.playTime.start option; unverified on this TV). If the TV
   // refuses a load carrying it, the load is retried once without it.
   bool load(const std::string &uri, const std::string &app_id, const std::string &window_id,
-            const std::string &load_type, Listener listener, long long start_ms = 0);
-  void play();
-  void pause();
-  void seek(long long position_ms);
-  void select_track(const std::string &type, int index);
-  void set_subtitles(bool enabled);
+            const std::string &load_type, Listener listener, long long start_ms = 0) override;
+  void play() override;
+  void pause() override;
+  void seek(long long position_ms) override;
+  void select_track(const std::string &type, int index) override;
+  void set_subtitles(bool enabled) override;
   // Subtitle look, re-sent after every enable: TVs drop it when subtitles are
   // switched on again. Community-documented uMediaServer calls (also used by
   // Stremio's webOS player): setSubtitleFontSize 0 (smallest) .. 4, the TV's
   // default being 2; character and background colours by name, opacity 0..255.
-  struct SubtitleStyle {
-    int size = 0;
-    bool background = false;
-  };
-  void set_subtitle_style(const SubtitleStyle &style) { style_ = style; }
+  void set_subtitle_style(const SubtitleStyle &style) override { style_ = style; }
   // Undocumented uMediaServer call (community-documented): -3 lowest .. 4 highest, 0 default.
   // `done(false)` when the TV refuses it.
-  void set_subtitle_position(int position, std::function<void(bool ok)> done);
-  void unload();
+  void set_subtitle_position(int position, std::function<void(bool ok)> done) override;
+  void unload() override;
   // uMediaServer's resource policy follows the app's foreground state.
-  void notify_foreground();
-  void notify_background();
+  void notify_foreground() override;
+  void notify_background() override;
 
   const std::string &media_id() const { return media_id_; }
-  const MediaInfo &info() const { return info_; }
+  const MediaInfo &info() const override { return info_; }
+  const char *engine_name() const override { return bridged() ? "LG player (audio bridge)" : "LG player"; }
 
   // The audio bridge (3.0): for a DTS-only file, play the service's converted
   // stream instead. `url` takes &t=<seconds>; loads start there and clock
   // reports are offset by it, the duration is the file's, and a seek reloads
   // the stream at the new time without the rest of the player noticing.
-  struct Bridge {
-    std::string url;
-    long long duration_ms = 0;
-  };
-  void set_bridge(const Bridge &bridge) { bridge_ = bridge; }
+  void set_bridge(const Bridge &bridge) override { bridge_ = bridge; }
   bool bridged() const { return !bridge_.url.empty(); }
 
  private:

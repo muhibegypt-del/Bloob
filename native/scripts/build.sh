@@ -20,7 +20,10 @@ if readelf -V build-webos/pkg/bin/bloob | grep -q GLIBCXX; then
 fi
 # And no glibc symbol newer than the TV is known to provide (validation A3:
 # this was claimed, never enforced). Raise BLOOB_MAX_GLIBC only with TV evidence.
-MAX_GLIBC=${BLOOB_MAX_GLIBC:-2.4}
+# 2.7 since 3.0, by deduction rather than a TV reading: FFmpeg (the engine's
+# demuxer) uses __isoc99_sscanf (2.7) and __sched_cpucount (2.6), symbols from
+# 2006-07. The TV's own SDL2 and GLib (which Bloob already links) need 2.9 and 2.12.
+MAX_GLIBC=${BLOOB_MAX_GLIBC:-2.7}
 NEWEST=$(readelf -V build-webos/pkg/bin/bloob | grep -o 'GLIBC_[0-9.]*' | sed 's/GLIBC_//' | sort -uV | tail -1)
 if [ -n "$NEWEST" ] && [ "$(printf '%s\n%s\n' "$NEWEST" "$MAX_GLIBC" | sort -V | tail -1)" != "$MAX_GLIBC" ]; then
   echo "error: binary needs GLIBC_$NEWEST, newer than GLIBC_$MAX_GLIBC:" >&2

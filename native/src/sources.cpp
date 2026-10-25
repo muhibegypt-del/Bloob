@@ -469,7 +469,6 @@ class SourcesScreen : public Screen {
   }
 
   void start_job() {
-    bridge_asked_ = false;
     modal_ = Modal::Resolving;
     sheet_focus_ = 0;
     modal_since_ = ctx().now;
@@ -516,28 +515,8 @@ class SourcesScreen : public Screen {
     if (step_ == "caching") saw_caching_ = true;
     next_poll_ = ctx().now + kPollMs;
     if (state == "ready") {
-      std::string url = j["url"].as_string();
-      std::string file = j["fileName"].as_string();
-      // 3.0: a version whose name says DTS may need the audio bridge. The service
-      // reads the file's tracks and says; the starting sheet stays up meanwhile.
-      if (!bridge_asked_ && (chosen_.audio.find("DTS") != std::string::npos || chosen_.line.find("DTS") != std::string::npos ||
-                            chosen_.audio.find("TrueHD") != std::string::npos || chosen_.line.find("TrueHD") != std::string::npos)) {
-        bridge_asked_ = true;
-        job_id_.clear();  // no more polling: the job is done
-        step_label_ = "Checking the sound for this TV\xE2\x80\xA6";
-        ctx().api.post("/api/bridge/open", "{\"url\":" + Json::quote(url) + ",\"language\":" + Json::quote(ctx().language) + "}",
-                       [this, j](const ApiResult &b) {
-                         Bridge bridge;
-                         if (b.ok() && b.json["bridge"].as_bool()) {
-                           bridge.url = b.json["play"].as_string();
-                           bridge.duration_ms = b.json["durationMs"].as_int(0);
-                           bridge.note = b.json["note"].as_string();
-                         }
-                         logf("sources", "audio bridge: %s", bridge.url.empty() ? "not needed" : bridge.note.c_str());
-                         launch(j, bridge);
-                       }, alive_);
-        return;
-      }
+      // 3.0: Bloob's engine plays every sound; if it can't, the player falls back
+      // to LG's player and asks for the audio bridge itself.
       launch(j, Bridge{});
     } else if (state == "error") {
       fail(j["error"].as_string("Could not get this source."));
@@ -1111,7 +1090,6 @@ class SourcesScreen : public Screen {
   Ranking all_;  // the service's whole answer; ranking_ is the chosen cut's view of it
   std::string cut_;
   std::set<std::string> expanded_;  // tiers whose folded versions are shown
-  bool bridge_asked_ = false;  // the audio bridge was asked about this resolve
   std::vector<Pill> pills_;
   int pill_ = 0;
   bool pills_focused_ = false;

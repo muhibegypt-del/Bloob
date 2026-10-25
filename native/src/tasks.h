@@ -35,6 +35,9 @@ class Tasks {
   // Runs completions until `budget_ms` has passed (0: all). Returns how many
   // ran; `more` (optional) says whether any remain.
   size_t pump(int budget_ms = 0, bool *more = nullptr);
+  // From any thread: run `completion` on the UI thread at the next pump (the
+  // playback engine's threads use this for pipeline events). Dropped once `owner` expires.
+  void post(std::function<void()> completion, const std::shared_ptr<void> &owner = nullptr);
   size_t pending() const;
 
   struct Stats {

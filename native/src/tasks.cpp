@@ -131,3 +131,12 @@ size_t Tasks::pump(int budget_ms, bool *more) {
     }
   }
 }
+
+void Tasks::post(std::function<void()> completion, const std::shared_ptr<void> &owner) {
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (stopping_) return;
+    done_.push_back({owner, {owner != nullptr, std::move(completion)}});
+  }
+  if (wake_) wake_();
+}

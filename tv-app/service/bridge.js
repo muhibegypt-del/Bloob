@@ -127,6 +127,14 @@ function describe(track) {
   return `${name} ${ch} → Dolby Digital Plus 5.1 (Bloob)`;
 }
 
+/** A local address for the file, for Bloob's engine (3.0): no probe, no conversion. */
+function source(port, url) {
+  prune();
+  const token = crypto.randomBytes(12).toString('hex');
+  sessions.set(token, { url: String(url), at: Date.now(), probe: null, speed: null });
+  return srcUrl(port, token);
+}
+
 /** Called by the app after resolving: decide, and if needed, hand back the bridge's stream. */
 async function open(port, url, language) {
   prune();
@@ -188,4 +196,4 @@ function status(token) {
   return s ? { speed: s.speed } : null;
 }
 
-module.exports = { open, serveSource, servePlay, status, bridgeTrack, summarise, describe };
+module.exports = { open, source, serveSource, servePlay, status, bridgeTrack, summarise, describe };

@@ -7,9 +7,13 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <ctime>
+#include <map>
 
 #include "common.h"
+#include "demux.h"
+#include "es_player.h"
 #include "log.h"
 #include "luna.h"
 #include "media.h"
@@ -28,6 +32,8 @@ constexpr long long kSaveEveryMs = 15000;
 constexpr long long kPrepareNextBeforeEndMs = 150000;  // start finding the next episode in the credits
 constexpr long long kUpNextMs = 10000;
 constexpr long long kBufferingDelayMs = 500;
+// The engine has this long to show a picture before LG's player takes over.
+constexpr long long kEngineFirstFrameMs = 20000;
 constexpr int kMaxReloads = 3;
 constexpr long long kReloadWindowMs = 60000;
 
@@ -137,17 +143,17 @@ std::string wall_clock(long long offset_ms = 0) {
   return buf;
 }
 
-class UmsPort : public PlayerPort {
+class MediaPort : public PlayerPort {
  public:
-  explicit UmsPort(UmsPlayer &player) : player_(player) {}
-  void play() override { player_.play(); }
-  void pause() override { player_.pause(); }
-  void seek(long long ms) override { player_.seek(ms); }
-  void select_track(const std::string &type, int index) override { player_.select_track(type, index); }
-  void set_subtitles(bool enabled) override { player_.set_subtitles(enabled); }
+  explicit MediaPort(std::unique_ptr<MediaBackend> &media) : media_(media) {}
+  void play() override { media_->play(); }
+  void pause() override { media_->pause(); }
+  void seek(long long ms) override { media_->seek(ms); }
+  void select_track(const std::string &type, int index) override { media_->select_track(type, index); }
+  void set_subtitles(bool enabled) override { media_->set_subtitles(enabled); }
 
  private:
-  UmsPlayer &player_;
+  std::unique_ptr<MediaBackend> &media_;
 };
 
 enum class Ctl { Toggle, Audio, Subtitles, StartOver, Next, Stats };
@@ -157,7 +163,8 @@ class PlayerScreen : public Screen {
   PlayerScreen(const PlayRequest &req, const std::string &url, const PlaySourceInfo &info, const std::string &load_type)
       : req_(req), url_(url), source_(info.headline), load_type_(load_type), dolby_vision_(info.dolby_vision), info_(info) {
     start_at_ = req.resume_ms;
-    if (!info.bridge_url.empty()) ums_.set_bridge({info.bridge_url, info.bridge_duration_ms});
+    choose_backend();
+    if (!info.bridge_url.empty()) media_->set_bridge({info.bridge_url, info.bridge_duration_ms});
     // One viewing, one session: reports carry it and a rising sequence so the
     // service can drop late ones (UX-PLAN X1). A reopen keeps the session.
     char id[40];
@@ -166,7 +173,55 @@ class PlayerScreen : public Screen {
     today_ = today_iso();
     open();
   }
-  ~PlayerScreen() override { close(); }
+  ~PlayerScreen() override {
+    close();
+    clear_sub_textures();
+  }
+
+  // Bloob's engine where the TV has its pipeline (the desktop plays by the
+  // clock instead), unless it already failed for this film; else LG's player.
+  void choose_backend() {
+    std::unique_ptr<EsSink> sink;
+    if (!engine_failed_) {
+      sink = make_starfish_sink();
+      const char *choice = std::getenv("BLOOB_ENGINE");
+      if (!sink && !(choice && std::string(choice) == "lg")) sink = make_clock_sink();
+    }
+    if (sink) {
+      media_.reset(new EsPlayer(std::move(sink), [](std::function<void()> f) { ctx().api_tasks.post(std::move(f)); }));
+    } else {
+      media_.reset(new UmsPlayer());
+    }
+    logf("player", "engine: %s", media_->engine_name());
+  }
+
+  // The engine couldn't play this file: LG's player takes over at the same place.
+  // A DTS- or TrueHD-only version goes through the audio bridge there.
+  void fall_back(const std::string &why) {
+    if (engine_failed_ || !media_->converts_audio()) return;
+    logf("player", "engine gave up (%s); LG's player takes over", why.c_str());
+    long long at = session_.first_frame_ms() >= 0 ? session_.position_ms(ctx().now) : start_at_;
+    close(true);
+    engine_failed_ = true;
+    start_at_ = at;
+    choose_backend();
+    std::string claims = info_.headline + " " + info_.release;
+    bool needs_bridge = claims.find("DTS") != std::string::npos || claims.find("TrueHD") != std::string::npos;
+    if (!needs_bridge || url_.compare(0, 4, "http") != 0) {
+      open();
+      return;
+    }
+    std::weak_ptr<int> alive = alive_;
+    ctx().api.post("/api/bridge/open", "{\"url\":" + Json::quote(url_) + ",\"language\":" + Json::quote(ctx().language) + "}",
+                   [this, alive](const ApiResult &b) {
+                     if (!alive.lock()) return;
+                     if (b.ok() && b.json["bridge"].as_bool()) {
+                       info_.bridge_note = b.json["note"].as_string();
+                       media_->set_bridge({b.json["play"].as_string(), b.json["durationMs"].as_int(0)});
+                     }
+                     open();
+                   }, alive_);
+  }
 
   const char *name() const override { return "player"; }
   bool over_video() const override { return true; }
@@ -195,8 +250,26 @@ class PlayerScreen : public Screen {
     opened_ = true;
     // A reopen continues exactly where it was; a first start only past the resume threshold.
     load_start_ = start_at_ >= (reconnecting_ ? 1000 : play::kResumeMinMs) ? start_at_ : 0;
-    ums_.set_subtitle_style({c.subtitle_size, c.subtitle_background});
-    ums_.load(url_, c.app_id, window_id_, load_type_, [this](const MediaEvent &event) { on_media(event); }, load_start_);
+    media_->set_subtitle_style({c.subtitle_size, c.subtitle_background});
+    // The engine reads AllDebrid's HTTPS link through the service, which keeps it in memory.
+    if (media_->converts_audio() && url_.compare(0, 8, "https://") == 0 && engine_url_.empty()) {
+      if (engine_url_asked_) {
+        fall_back("no local address for the file");
+        return;
+      }
+      engine_url_asked_ = true;
+      std::weak_ptr<int> alive = alive_;
+      c.api.post("/api/bridge/source", "{\"url\":" + Json::quote(url_) + "}", [this, alive](const ApiResult &r) {
+        if (!alive.lock() || !opened_) return;
+        engine_url_ = r.ok() ? r.json["src"].as_string() : "";
+        Ctx &c2 = ctx();
+        if (engine_url_.empty()) return fall_back("the service gave no local address");
+        media_->load(engine_url_, c2.app_id, window_id_, load_type_, [this](const MediaEvent &event) { on_media(event); }, load_start_);
+      }, alive_);
+      return;
+    }
+    const std::string &uri = media_->converts_audio() && !engine_url_.empty() ? engine_url_ : url_;
+    media_->load(uri, c.app_id, window_id_, load_type_, [this](const MediaEvent &event) { on_media(event); }, load_start_);
   }
 
   // Release the pipeline. `keep_window` when reopening straight away.
@@ -206,7 +279,7 @@ class PlayerScreen : public Screen {
     Ctx &c = ctx();
     session_.account(c.now);
     total_ += session_.stats();
-    ums_.unload();
+    media_->unload();
     session_.close();
     opened_ = false;
     if (!keep_window) log_quality();
@@ -258,13 +331,13 @@ class PlayerScreen : public Screen {
     if (!session_.started()) return;
     if (session_.intent_play()) session_.pause();
     save_progress("paused");
-    ums_.notify_background();
+    media_->notify_background();
   }
 
   void foreground() override {
     if (!in_background_) return;
     in_background_ = false;
-    ums_.notify_foreground();
+    media_->notify_foreground();
     if (lost_) reload("pipeline released while away");
   }
 
@@ -282,25 +355,30 @@ class PlayerScreen : public Screen {
       return;
     }
     bool had_frame = session_.first_frame_ms() >= 0;
+    if (event.kind == MediaEvent::Error && event.code <= -100 && !had_frame && media_->converts_audio()) {
+      logf("player", "engine: %s", event.text.c_str());
+      fall_back(event.text);
+      return;
+    }
     auto pending = session_.pending_ms();
     long long seek_started = session_.seek_started_ms();
-    session_.on_event(event, ums_.info(), t);
+    session_.on_event(event, media_->info(), t);
     if (!had_frame && session_.first_frame_ms() >= 0) logf("player", "first frame after %lld ms", session_.first_frame_ms());
     if (pending && !session_.pending_ms())
       logf("player", "seek to %lld ms landed at %lld ms after %lld ms", *pending, session_.position_ms(t), t - seek_started);
     // The version promised Dolby Vision: say in the log whether the TV agrees, so
     // a TV run shows if Dolby Vision is lost on the way (TV, 2.2.0: "HDR every
     // time the video is DV").
-    if (event.kind == MediaEvent::VideoInfo && !ums_.info().hdr.empty() && (dolby_vision_ || source_.find("Dolby Vision") != std::string::npos)) {
-      std::string got = upper(ums_.info().hdr);
+    if (event.kind == MediaEvent::VideoInfo && !media_->info().hdr.empty() && (dolby_vision_ || source_.find("Dolby Vision") != std::string::npos)) {
+      std::string got = upper(media_->info().hdr);
       bool dv = got.find("DOLBY") != std::string::npos || got == "DV";
-      logf("qoe", "picture: version claims Dolby Vision (p%d), TV reports %s%s", dolby_vision_, ums_.info().hdr.c_str(),
+      logf("qoe", "picture: version claims Dolby Vision (p%d), TV reports %s%s", dolby_vision_, media_->info().hdr.c_str(),
            dv ? "" : " (the TV did not report Dolby Vision)");
     }
     if (event.kind == MediaEvent::VideoInfo || event.kind == MediaEvent::SourceInfo || event.kind == MediaEvent::Loaded)
-      place_video(ums_.info().width, ums_.info().height);
+      place_video(media_->info().width, media_->info().height);
     if ((event.kind == MediaEvent::SourceInfo || event.kind == MediaEvent::TrackSelected) && !tracks_applied_ &&
-        (!ums_.info().audio.empty() || !ums_.info().text.empty()))
+        (!media_->info().audio.empty() || !media_->info().text.empty()))
       apply_tracks();
     // Continue where the viewer left off. The load asked the pipeline to start
     // there; the first clock report shows whether it did, else seek.
@@ -342,14 +420,16 @@ class PlayerScreen : public Screen {
   // first start, the preferred audio and subtitle languages from Settings.
   void apply_tracks() {
     tracks_applied_ = true;
-    const MediaInfo &info = ums_.info();
+    const MediaInfo &info = media_->info();
     Ctx &c = ctx();
     if (!preferences_applied_) {
       preferences_applied_ = true;
       bool current_fits = false, current_dts = false;
+      // Bloob's engine plays every track (it converts what the TV can't decode).
+      auto unplayable = [this](const MediaTrack &a) { return !media_->converts_audio() && dts(a); };
       for (auto &a : info.audio) {
-        current_fits = current_fits || (a.selected && speaks(a, c.language) && !dts(a));
-        current_dts = current_dts || (a.selected && dts(a));
+        current_fits = current_fits || (a.selected && speaks(a, c.language) && !unplayable(a));
+        current_dts = current_dts || (a.selected && unplayable(a));
       }
       // Remuxes often start on a DTS track with a Dolby or AAC one beside it:
       // the viewer's language first, then any main track this TV can play.
@@ -357,13 +437,13 @@ class PlayerScreen : public Screen {
         for (int pass = 0; pass < 2 && chosen_audio_ < 0; pass++)
           for (size_t i = 0; i < info.audio.size(); i++) {
             const MediaTrack &a = info.audio[i];
-            if (dts(a) || !track_role(a, true).empty() || (pass == 0 && !speaks(a, c.language))) continue;
+            if (unplayable(a) || !track_role(a, true).empty() || (pass == 0 && !speaks(a, c.language))) continue;
             if (pass == 1 && !current_dts) break;  // a playable track is on: only DTS makes a stranger worth it
             chosen_audio_ = static_cast<int>(i);
             break;
           }
       bool any_playable = false;
-      for (auto &a : info.audio) any_playable = any_playable || !dts(a);
+      for (auto &a : info.audio) any_playable = any_playable || !unplayable(a);
       if (!info.audio.empty() && !any_playable) {
         logf("player", "every audio track is DTS or TrueHD (%zu tracks)", info.audio.size());
         failure_ = "This version\xE2\x80\x99s sound is DTS or TrueHD only, which this TV can\xE2\x80\x99t play. Choose another version: "
@@ -523,7 +603,7 @@ class PlayerScreen : public Screen {
     if (up_next_ && req_.next) return "Up next, " + episode_code(req_.next->season, req_.next->episode) + ", " + req_.next->title + ". Play now, button";
     if (!session_.started()) return reconnecting_ ? "Reconnecting" : "Starting " + req_.item.name;
     if (panel_ != Panel::None) {
-      const MediaInfo &info = ums_.info();
+      const MediaInfo &info = media_->info();
       auto labels = distinct_labels(panel_ == Panel::Audio ? info.audio : info.text, panel_ == Panel::Audio);
       int rows = panel_rows();
       std::string name = panel_ == Panel::Subtitles && panel_index_ == 0 ? "Off"
@@ -580,7 +660,7 @@ class PlayerScreen : public Screen {
   }
 
   std::string control_label(Ctl ctl) const {
-    const MediaInfo &info = ums_.info();
+    const MediaInfo &info = media_->info();
     switch (ctl) {
       case Ctl::Audio: {
         for (auto &a : info.audio)
@@ -629,7 +709,7 @@ class PlayerScreen : public Screen {
 
   void open_panel(Panel p) {
     panel_ = p;
-    const MediaInfo &info = ums_.info();
+    const MediaInfo &info = media_->info();
     if (p == Panel::Audio) {
       panel_index_ = 0;
       for (size_t i = 0; i < info.audio.size(); i++) if (info.audio[i].selected) panel_index_ = static_cast<int>(i);
@@ -639,7 +719,7 @@ class PlayerScreen : public Screen {
   }
 
   int panel_rows() const {
-    const MediaInfo &info = ums_.info();
+    const MediaInfo &info = media_->info();
     return panel_ == Panel::Audio ? static_cast<int>(info.audio.size()) : static_cast<int>(info.text.size()) + 1;
   }
 
@@ -758,6 +838,9 @@ class PlayerScreen : public Screen {
     }
     // No clock report after the start: the load option may not apply here.
     if (resume_check_ && t - playing_at_ > 2000) check_start(session_.position_ms(t));
+    // The engine loaded but showed nothing: LG's player takes over.
+    if (opened_ && media_->converts_audio() && session_.first_frame_ms() < 0 && t - opened_at_ > kEngineFirstFrameMs)
+      fall_back("no picture after " + std::to_string(kEngineFirstFrameMs / 1000) + " s");
     long long duration = session_.duration_ms();
     if (!prepared_ && next_ready() && c.autoplay_next && session_.phase() == Phase::Playing && duration > 0 &&
         duration - session_.position_ms(t) <= kPrepareNextBeforeEndMs)
@@ -795,11 +878,108 @@ class PlayerScreen : public Screen {
     }
     sub_pos_sent_ = sub_pos_want_;
     std::weak_ptr<int> alive = alive_;
-    ums_.set_subtitle_position(sub_pos_sent_, [this, alive](bool ok) {
+    media_->set_subtitle_position(sub_pos_sent_, [this, alive](bool ok) {
       if (alive.expired() || ok || !sub_pos_supported_) return;
       sub_pos_supported_ = false;
       logf("player", "subtitle position not supported here; leaving subtitles where the TV puts them");
     });
+  }
+
+  // ---------------------------------------------------------------- subtitles (engine)
+
+  void clear_sub_textures(const std::vector<SubtitleCue> *keep = nullptr) {
+    for (auto it = sub_textures_.begin(); it != sub_textures_.end();) {
+      bool kept = false;
+      if (keep)
+        for (const auto &c : *keep) kept = kept || c.picture.get() == it->first;
+      if (kept) {
+        ++it;
+        continue;
+      }
+      for (SDL_Texture *t : it->second) SDL_DestroyTexture(t);
+      it = sub_textures_.erase(it);
+    }
+  }
+
+  // The engine's subtitles, drawn by Bloob over the picture: text in the size and
+  // background from Settings, Blu-ray pictures as the disc placed them. They rise
+  // above the bar while the controls show. Redraws only when a cue starts or ends.
+  void draw_subtitles() {
+    if (!media_ || !media_->draws_subtitles() || session_.subtitle_index() < 0) return;
+    Ctx &c = ctx();
+    long long pos = session_.position_ms(c.now);
+    std::vector<SubtitleCue> cues = media_->cues_at(pos);
+    long long next = media_->next_cue_change(pos);
+    long long wait = next > pos ? std::min(next - pos, 500LL) : 500;
+    if (session_.phase() == Phase::Playing) c.redraw_at(c.now + wait);
+    clear_sub_textures(&cues);
+    float lift = 150.0f * hud_anim_.value;
+    for (const auto &cue : cues) {
+      if (!cue.picture) continue;
+      const SubPicture &pic = *cue.picture;
+      auto &textures = sub_textures_[cue.picture.get()];
+      if (textures.empty())
+        for (const auto &piece : pic.pieces) {
+          SDL_Texture *t = SDL_CreateTexture(c.renderer, SDL_PIXELFORMAT_ABGR8888, SDL_TEXTUREACCESS_STATIC, piece.w, piece.h);
+          if (t) {
+            SDL_UpdateTexture(t, nullptr, piece.rgba.data(), piece.w * 4);
+            SDL_SetTextureBlendMode(t, SDL_BLENDMODE_BLEND);
+          }
+          textures.push_back(t);
+        }
+      float sx = static_cast<float>(W) / std::max(1, pic.canvas_w), sy = static_cast<float>(H) / std::max(1, pic.canvas_h);
+      for (size_t i = 0; i < pic.pieces.size() && i < textures.size(); i++) {
+        if (!textures[i]) continue;
+        const auto &piece = pic.pieces[i];
+        int y = static_cast<int>(piece.y * sy);
+        if (y + piece.h * sy > H * 0.6f) y -= static_cast<int>(lift);  // bottom pictures move up with the bar
+        c.gfx.texture(textures[i], static_cast<int>(piece.x * sx), y, static_cast<int>(piece.w * sx), static_cast<int>(piece.h * sy));
+      }
+    }
+    // Text: wrapped to 80% of the width, bottom-centred.
+    static const int kSizes[] = {40, 46, 52, 60, 68};
+    int size = kSizes[std::max(0, std::min(4, c.subtitle_size))];
+    Font &font = c.fonts.medium;
+    std::vector<std::string> lines;
+    for (const auto &cue : cues) {
+      if (cue.picture || cue.text.empty()) continue;
+      size_t start = 0;
+      while (start <= cue.text.size()) {
+        size_t nl = cue.text.find('\n', start);
+        std::string para = cue.text.substr(start, nl == std::string::npos ? std::string::npos : nl - start);
+        std::string line;
+        size_t w = 0;
+        while (w <= para.size()) {
+          size_t sp = para.find(' ', w);
+          std::string word = para.substr(w, sp == std::string::npos ? std::string::npos : sp - w);
+          std::string trial = line.empty() ? word : line + " " + word;
+          if (!line.empty() && font.measure(trial, size) > W * 4 / 5) {
+            lines.push_back(line);
+            line = word;
+          } else {
+            line = trial;
+          }
+          if (sp == std::string::npos) break;
+          w = sp + 1;
+        }
+        if (!line.empty()) lines.push_back(line);
+        if (nl == std::string::npos) break;
+        start = nl + 1;
+      }
+    }
+    if (lines.empty()) return;
+    int lh = font.line_height(size);
+    int y = H - 90 - static_cast<int>(lift) - lh * static_cast<int>(lines.size());
+    for (const auto &line : lines) {
+      int w = font.measure(line, size);
+      int x = (W - w) / 2;
+      if (c.subtitle_background) c.gfx.fill_round(x - 18, y - 4, w + 36, lh + 8, 10, {0, 0, 0, 170});
+      else {
+        font.draw(line, x + 2, y + 3, size, {0, 0, 0, 200});  // a soft shadow keeps white text readable on bright scenes
+      }
+      font.draw(line, x, y, size, {255, 255, 255, 255});
+      y += lh;
+    }
   }
 
   void draw() override {
@@ -813,6 +993,7 @@ class PlayerScreen : public Screen {
     c.gfx.clear({0, 0, 0, 0});
     if (phase == Phase::Error || !failure_.empty()) return draw_error();
     if (up_next_) return draw_up_next();
+    draw_subtitles();
 
     float a = hud_anim_.value;
     if (phase == Phase::Buffering && session_.started()) {
@@ -866,7 +1047,7 @@ class PlayerScreen : public Screen {
   // buffer, how playback has gone, and the device.
   void draw_stats() {
     Ctx &c = ctx();
-    const MediaInfo &m = ums_.info();
+    const MediaInfo &m = media_->info();
     long long t = c.now;
     std::vector<std::pair<std::string, std::string>> rows;
     char buf[160];
@@ -888,8 +1069,10 @@ class PlayerScreen : public Screen {
         audio = audio_label(m.audio[i]) + "  (" + std::to_string(i + 1) + " of " + std::to_string(m.audio.size()) + ")";
         if (!m.audio[i].codec.empty()) audio += " \xC2\xB7 " + m.audio[i].codec;
       }
-    if (!info_.bridge_note.empty()) audio = info_.bridge_note;
+    if (!media_->audio_note().empty()) audio = media_->audio_note();
+    else if (!info_.bridge_note.empty()) audio = info_.bridge_note;
     rows.push_back({"Audio", audio});
+    rows.push_back({"Engine", media_->engine_name()});
     int sub = session_.subtitle_index();
     rows.push_back({"Subtitles", sub >= 0 && sub < static_cast<int>(m.text.size())
                                      ? subtitle_label(m.text[static_cast<size_t>(sub)]) + "  (" + std::to_string(sub + 1) + " of " +
@@ -967,7 +1150,7 @@ class PlayerScreen : public Screen {
   }
 
   std::vector<std::string> badges() const {
-    const MediaInfo &info = ums_.info();
+    const MediaInfo &info = media_->info();
     std::vector<std::string> out;
     if (info.height >= 2000) out.push_back("4K");
     else if (info.height >= 1000) out.push_back("HD");
@@ -1157,7 +1340,7 @@ class PlayerScreen : public Screen {
 
   void draw_panel_tracks(float a) {
     Ctx &c = ctx();
-    const MediaInfo &info = ums_.info();
+    const MediaInfo &info = media_->info();
     int rows = panel_rows();
     bool empty = (panel_ == Panel::Audio && rows == 0) || (panel_ == Panel::Subtitles && info.text.empty());
     int list_h = std::max(1, rows) * (kRowH + kRowGap) - kRowGap + (empty ? 70 : 0);
@@ -1288,8 +1471,14 @@ class PlayerScreen : public Screen {
   std::string net_iface_;
   long long cpu_total_ = -1, cpu_idle_ = -1, self_ticks_ = -1;
   double tv_cpu_ = -1, app_cpu_ = -1;
-  UmsPlayer ums_;
-  UmsPort port_{ums_};
+  std::unique_ptr<MediaBackend> media_;
+  MediaPort port_{media_};
+  // 3.0: Bloob's engine plays first; LG's player takes over if it can't.
+  bool engine_failed_ = false;
+  std::string engine_url_;  // the file through the service (FFmpeg reads plain HTTP)
+  bool engine_url_asked_ = false;
+  // Picture subtitles uploaded as textures, by the picture they came from.
+  std::map<const SubPicture *, std::vector<SDL_Texture *>> sub_textures_;
   Session session_;
   std::string window_id_;
   bool opened_ = false;

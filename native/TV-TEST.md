@@ -260,3 +260,17 @@ Install `artifacts/com.muhib.bloob_2.5.3_arm.ipk`. Keep `/tmp/bloob-native.log` 
 **DTS (2.8.1).**
 - [ ] A remux that starts on DTS with a Dolby/AAC track beside it switches by itself (log: `skipping a DTS track for …`); the audio panel shows the playing track.
 - [ ] A DTS-only version pauses with "This version's sound is DTS only…" and *Choose another version* returns to the list.
+
+## 14. New in 3.0: Bloob's own engine
+
+3.0 plays through Bloob's engine (`src/es_player.*`, `src/demux.*`, `src/starfish.cpp`): Bloob reads the file with its own FFmpeg and feeds the TV's decoders through LG's elementary-stream pipeline (`libplayerAPIs`, the route Kodi's webOS build uses). None of it has run on the TV. It was chosen by deduction from the owner's report that every remux said "audio codec not supported" (remuxes start on TrueHD or DTS, which LG's player doesn't decode); the TV pass is the first evidence.
+
+Read `/tmp/bloob-native.log` after each step: `[engine]` and `[demux]` lines say what happened, and `[player] engine gave up (…)` means LG's player took over.
+
+1. **Pipeline.** Start any version. Expect `[engine] TV media pipeline ready (libplayerAPIs)`, then `[demux] MKV H265 3840x2160 …`, `[engine] pipeline loading at …`, `[engine] first frame at …`. If instead `no libplayerAPIs` or `Load refused`, LG's player takes over: note the line.
+2. **Remux sound.** A UHD remux with TrueHD Atmos or DTS-HD MA: no "audio codec not supported" message, and sound plays. The info panel (blue key) shows `Engine: Bloob engine` and the Audio row `TrueHD 7.1 → Dolby Digital Plus 5.1 (converted by Bloob)`. Atmos from TrueHD is not kept (E-AC-3 conversion has no Atmos); E-AC-3 Atmos versions pass through with Atmos.
+3. **Picture.** A Dolby Vision profile 8 version: does the TV show Dolby Vision? A profile 7 remux: plays as HDR10 (`base layer only` in the `[demux]` line). An HDR10 version: HDR10.
+4. **Seeking.** Seek forward and back. Each seek reloads the pipeline at the exact time (`[engine] pipeline loading at …` then `seek … landed …`). Note how long the picture takes to come back.
+5. **Tracks.** Change the audio language: the pipeline reloads where it was. Turn on subtitles: Bloob draws them (text in the Settings size, Blu-ray PGS pictures as on the disc), and they rise above the bar when it shows.
+6. **CPU.** During a TrueHD 7.1 conversion, the info panel's Bloob CPU figure. Sound that stutters or drifts means the TV's processor can't keep up.
+7. **Fallback.** If the engine fails before a picture, or shows none within 20 s, LG's player takes over at the same place (with the audio bridge for a DTS- or TrueHD-only version). Note the reason in the log.

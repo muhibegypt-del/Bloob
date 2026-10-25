@@ -296,6 +296,12 @@ async function handleApi(req, res, url) {
     if (!isHttpUrl(input.url)) return reply(res, 400, { error: 'Expected the resolved link' });
     return reply(res, 200, await bridge.open(PORT, String(input.url), String(input.language || 'English')));
   }
+  if (pathname === '/api/bridge/source' && req.method === 'POST') {
+    // Bloob's engine (3.0) reads the file itself, over plain HTTP from here:
+    // the resolved link stays in this process's memory.
+    if (!/^https?:\/\//.test(String(input.url || ''))) return reply(res, 400, { error: 'bad url' });
+    return reply(res, 200, { src: bridge.source(PORT, String(input.url)) });
+  }
   if (pathname === '/api/bridge/status' && req.method === 'GET') return reply(res, 200, bridge.status(String(query.get('token') || '')) || {});
   if (pathname === '/api/sources/ranked' && req.method === 'POST') {
     const type = input.type;
