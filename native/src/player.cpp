@@ -143,6 +143,39 @@ std::string wall_clock(long long offset_ms = 0) {
   return buf;
 }
 
+// The TV's video output for the main video, from videooutput/getStatus:
+// "3840×2024 on 3840×2160 · 23.976 fps · DolbyVision · hardware decoder" (TV, 25 October 2026:
+// "video" is a list of sinks; MAIN carries width, height, frameRate,
+// displayOutput and videoInfo.hdrType).
+std::string video_output_note(const std::string &payload) {
+  Json j = Json::parse(payload);
+  const Json &list = j["video"];
+  for (size_t i = 0; i < list.size(); i++) {
+    const Json &v = list[i];
+    if (v["sink"].as_string() != "MAIN" || !v["connected"].as_bool()) continue;
+    long long w = v["width"].as_int(), h = v["height"].as_int();
+    if (w <= 0 || h <= 0) return "";
+    char buf[160];
+    std::snprintf(buf, sizeof buf, "%lld\xC3\x97%lld", w, h);
+    std::string out = buf;
+    const Json &shown = v["displayOutput"];
+    if (shown["width"].as_int() > 0 && (shown["width"].as_int() != w || shown["height"].as_int() != h)) {
+      std::snprintf(buf, sizeof buf, " shown at %lld\xC3\x97%lld", shown["width"].as_int(), shown["height"].as_int());
+      out += buf;
+    }
+    double fps = v["frameRate"].as_number();
+    if (fps > 0) {
+      std::snprintf(buf, sizeof buf, " \xC2\xB7 %.3f fps", fps);
+      out += buf;
+    }
+    std::string hdr = v["videoInfo"]["hdrType"].as_string();
+    if (!hdr.empty() && hdr != "none") out += " \xC2\xB7 " + hdr;
+    if (v["connectedSource"].as_string() == "VDEC") out += " \xC2\xB7 hardware decoder";
+    return out;
+  }
+  return "";
+}
+
 class MediaPort : public PlayerPort {
  public:
   explicit MediaPort(std::unique_ptr<MediaBackend> &media) : media_(media) {}
@@ -1037,11 +1070,7 @@ class PlayerScreen : public Screen {
           output_logged_ = true;
           logf("qoe", "video output status: %.700s", payload.c_str());
         }
-        // The main video's entry, when the reply lists several sinks.
-        size_t main = payload.find("\"MAIN\"");
-        std::string part = main != std::string::npos ? payload.substr(main) : payload;
-        size_t video = part.find("\"video\"");
-        output_ = summarise_video_info(video != std::string::npos ? part.substr(video) : part);
+        output_ = video_output_note(payload);
         if (output_.empty()) output_ = "not reported (see the log)";
       });
     }
