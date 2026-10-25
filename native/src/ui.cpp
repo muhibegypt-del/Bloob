@@ -373,7 +373,9 @@ int draw_glass_button(int x, int y, const GlassButton &b) {
   int w = l.w, h = l.h;
   // Focus grows the button sideways by a fixed amount; there is no scale [EoA B4, P4].
   int grow_by = b.pill ? theme::pill_focus_grow : theme::button_grow;
-  int grow = b.focused && !c.reduce_motion ? static_cast<int>(std::lround(grow_by * b.lift)) : 0;
+  // An even number of pixels, so the button grows equally on both sides: an odd
+  // one shifted it a pixel left on alternate frames, a visible wobble (3.1.4).
+  int grow = b.focused && !c.reduce_motion ? 2 * static_cast<int>(std::lround(grow_by * b.lift / 2.0f)) : 0;
   int gx = x - grow / 2, gy = y, gw = w + grow, gh = h;
   int radius = gh / 2;
   Color rest = b.variant == ButtonStyle::Player ? theme::button_player

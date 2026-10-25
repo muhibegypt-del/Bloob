@@ -1,5 +1,7 @@
 #include "gfx.h"
 
+#include <dlfcn.h>
+
 #include <algorithm>
 #include <cmath>
 #include <fstream>
@@ -373,6 +375,14 @@ int Font::measure(const std::string &text, int size) {
   return static_cast<int>(std::ceil(x));
 }
 
+// SDL_RenderCopyF (SDL 2.0.10+), looked up at run time: the TV's SDL version is
+// not known at build time, and an older one would not have it.
+using CopyF = int (*)(SDL_Renderer *, SDL_Texture *, const SDL_Rect *, const SDL_FRect *);
+static CopyF render_copy_f() {
+  static CopyF fn = reinterpret_cast<CopyF>(dlsym(RTLD_DEFAULT, "SDL_RenderCopyF"));
+  return fn;
+}
+
 int Font::draw(const std::string &text, int x, int y, int size, Color color) {
   Atlas *a = atlas(size);
   if (!a) return 0;
@@ -383,7 +393,9 @@ int Font::draw(const std::string &text, int x, int y, int size, Color color) {
   SDL_SetTextureColorMod(a->texture, color.r, color.g, color.b);
   SDL_SetTextureAlphaMod(a->texture, color.a);
   float pen = static_cast<float>(x);
-  float baseline = static_cast<float>(y) + a->ascent;
+  // The baseline sits on a whole pixel, so glyphs are never resampled vertically.
+  float baseline = std::round(static_cast<float>(y) + a->ascent);
+  const CopyF copy_f = render_copy_f();
   unsigned prev = 0;
   for (unsigned cp : cps) {
     unsigned key = 0;
@@ -393,9 +405,18 @@ int Font::draw(const std::string &text, int x, int y, int size, Color color) {
     prev = key;
     const Glyph &g = a->glyphs.find(key)->second;  // baked by flush() above
     if (g.src.w > 0 && g.src.h > 0) {
-      int x0 = static_cast<int>(std::lround(pen + g.xoff)), y0 = static_cast<int>(std::lround(baseline + g.yoff));
-      SDL_Rect dst{x0, y0, static_cast<int>(std::lround(pen + g.xoff2)) - x0, static_cast<int>(std::lround(baseline + g.yoff2)) - y0};
-      SDL_RenderCopy(renderer_, a->texture, &g.src, &dst);
+      // 3.1.4: each glyph at its exact sub-pixel position and width (the atlas is
+      // 2x oversampled horizontally for this). Rounding each glyph's edges to
+      // whole pixels (as before) stretched or squeezed it by up to a pixel and
+      // threw the oversampling away: uneven stems, blotchy, "pixelated" text.
+      if (copy_f) {
+        SDL_FRect dst{pen + g.xoff, std::round(baseline + g.yoff), g.xoff2 - g.xoff, g.yoff2 - g.yoff};
+        copy_f(renderer_, a->texture, &g.src, &dst);
+      } else {
+        int x0 = static_cast<int>(std::lround(pen + g.xoff)), y0 = static_cast<int>(std::lround(baseline + g.yoff));
+        SDL_Rect dst{x0, y0, static_cast<int>(std::lround(pen + g.xoff2)) - x0, static_cast<int>(std::lround(baseline + g.yoff2)) - y0};
+        SDL_RenderCopy(renderer_, a->texture, &g.src, &dst);
+      }
     }
     pen += advance;
   }
@@ -644,14 +665,12 @@ SDL_Texture *Gfx::disc(int radius) {
   std::vector<float> coverage(static_cast<size_t>(size) * size);
   for (int y = 0; y < size; y++) {
     for (int x = 0; x < size; x++) {
-      // 4×4 supersampled so small radii stay round.
-      float sum = 0;
-      for (int sy = 0; sy < 4; sy++)
-        for (int sx = 0; sx < 4; sx++) {
-          float dx = x + (sx + 0.5f) / 4 - radius, dy = y + (sy + 0.5f) / 4 - radius;
-          sum += dx * dx + dy * dy <= static_cast<float>(radius * radius) ? 1.0f : 0.0f;
-        }
-      coverage[static_cast<size_t>(y) * size + x] = sum / 16.0f;
+      // 3.1.4: coverage from the distance to the edge, so a curve shades in 256
+      // steps. The 4x4 supersampling before gave 17, visible as steps on large
+      // corners once the TV doubles the 1080p interface to the 4K panel.
+      float dx = x + 0.5f - radius, dy = y + 0.5f - radius;
+      float inside = static_cast<float>(radius) - std::sqrt(dx * dx + dy * dy) + 0.5f;
+      coverage[static_cast<size_t>(y) * size + x] = std::max(0.0f, std::min(1.0f, inside));
     }
   }
   return discs_.put(radius, texture_from_coverage(renderer_, coverage, size), size, size);
