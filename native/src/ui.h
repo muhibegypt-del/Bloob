@@ -95,9 +95,22 @@ struct Ctx {
   bool headphone_night = false;
   bool headphone_xm5 = true;                    // the WF-1000XM5 correction
   int headphone_lead_ms = 0;                    // sound ahead of the picture, 0..500
-  std::string headphone_ir;                     // the owner's measured response, when the file exists
   std::string sound_output;                     // the TV's sound output ("bt_soundbar", "tv_speaker"…), "" until known
-  HeadphoneOptions headphone_options() const;
+  // Measured responses the service found in its data folder (3.2.1): each usable
+  // one is a room choice "file:<id>"; the bytes are copied to /tmp when chosen.
+  struct HeadphoneResponse {
+    std::string id, name, why;
+    bool usable = false;
+  };
+  std::vector<HeadphoneResponse> headphone_responses;
+  std::map<std::string, std::string> headphone_cache;  // id -> local copy
+  std::set<std::string> headphone_fetching;
+  void refresh_headphone_responses();
+  // Room choices, built-in rooms first: (id, name).
+  std::vector<std::pair<std::string, std::string>> headphone_rooms() const;
+  std::string headphone_room_name(const std::string &room) const;
+  // The options now; fetches a chosen measured response on first use.
+  HeadphoneOptions headphone_options();
 
   // Effects tier: Full until rendering is measured to be slow, then Lite for the session
   // (no soft shadows, plain dimmed backdrops, a once-a-second player clock).

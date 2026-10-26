@@ -11,7 +11,6 @@
 #include <ctime>
 #include <map>
 
-#include "binaural.h"
 #include "common.h"
 #include "demux.h"
 #include "es_player.h"
@@ -285,6 +284,7 @@ class PlayerScreen : public Screen {
     // A reopen continues exactly where it was; a first start only past the resume threshold.
     load_start_ = start_at_ >= (reconnecting_ ? 1000 : play::kResumeMinMs) ? start_at_ : 0;
     media_->set_subtitle_style({c.subtitle_size, c.subtitle_background});
+    c.refresh_headphone_responses();
     applied_hp_ = c.headphone_options();
     media_->set_headphones(applied_hp_);
     // The engine reads AllDebrid's HTTPS link through the service, which keeps it in memory.
@@ -766,10 +766,10 @@ class PlayerScreen : public Screen {
   void adjust_headphones(int row, int d) {
     Ctx &c = ctx();
     if (row == 0) {
-      const auto &list = binaural::rooms();
+      auto list = c.headphone_rooms();
       int n = static_cast<int>(list.size()), i = 0;
-      for (int k = 0; k < n; k++) if (c.headphone_room == list[static_cast<size_t>(k)].id) i = k;
-      c.headphone_room = list[static_cast<size_t>((i + d + n) % n)].id;
+      for (int k = 0; k < n; k++) if (c.headphone_room == list[static_cast<size_t>(k)].first) i = k;
+      c.headphone_room = list[static_cast<size_t>((i + d + n) % n)].first;
     } else {
       c.headphone_lead_ms = std::max(0, std::min(500, c.headphone_lead_ms + 20 * d));
     }
@@ -777,7 +777,7 @@ class PlayerScreen : public Screen {
   }
   std::string headphone_row_label(int row) const {
     Ctx &c = ctx();
-    if (row == 0) return std::string("Room: ") + (c.headphone_ir.empty() ? binaural::room_named(c.headphone_room).name : "Measured");
+    if (row == 0) return "Room: " + c.headphone_room_name(c.headphone_room);
     return c.headphone_lead_ms ? "Lip-sync: " + std::to_string(c.headphone_lead_ms) + " ms" : std::string("Lip-sync: none");
   }
 

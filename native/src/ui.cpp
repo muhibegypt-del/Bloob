@@ -1,10 +1,14 @@
 #include "ui.h"
 
-#include "clock.h"
+#include <sys/stat.h>
 
+#include <cctype>
 #include <cmath>
 #include <cstdio>
 
+#include "binaural.h"
+#include "clock.h"
+#include "http.h"
 #include "log.h"
 #include "screens.h"
 
@@ -39,9 +43,45 @@ void Ctx::save_settings() {
                                 ",\"welcomeSeen\":" + (welcome_seen ? "true" : "false") + ",\"recentSearches\":[" + list + "]}");
 }
 
+std::vector<std::pair<std::string, std::string>> Ctx::headphone_rooms() const {
+  std::vector<std::pair<std::string, std::string>> list;
+  for (const auto &r : binaural::rooms()) list.push_back({r.id, r.name});
+  for (const auto &r : headphone_responses)
+    if (r.usable) list.push_back({"file:" + r.id, r.name});
+  return list;
+}
+
+std::string Ctx::headphone_room_name(const std::string &room) const {
+  for (const auto &r : headphone_rooms())
+    if (r.first == room) return r.second;
+  if (room.compare(0, 5, "file:") == 0) return room.substr(5) + " (not found)";
+  return binaural::room_named(room).name;
+}
+
+void Ctx::refresh_headphone_responses() {
+  if (!api.ready()) return;
+  api.get("/api/headphones", [](const ApiResult &r) {
+    if (!r.ok()) return;
+    Ctx &c = ctx();
+    c.headphone_responses.clear();
+    const Json &list = r.json["responses"];
+    for (size_t i = 0; i < list.size(); i++) {
+      HeadphoneResponse h;
+      h.id = list[i]["id"].as_string();
+      h.name = list[i]["name"].as_string(h.id);
+      h.usable = list[i]["usable"].as_bool();
+      h.why = list[i]["why"].as_string();
+      if (!h.usable) logf("sound", "headphone response %s not usable: %s", h.id.c_str(), h.why.c_str());
+      c.headphone_responses.push_back(h);
+    }
+    c.headphone_options();  // fetches the chosen measured response now, before a film needs it
+    c.invalidate();
+  }, nullptr);
+}
+
 // Automatic: on whenever the TV sends its sound to Bluetooth ("bt_soundbar" is
 // what this TV reports with the XM5 earbuds connected, 25 October 2026).
-HeadphoneOptions Ctx::headphone_options() const {
+HeadphoneOptions Ctx::headphone_options() {
   HeadphoneOptions o;
   o.enabled = headphones == "on" || (headphones == "auto" && sound_output.compare(0, 3, "bt_") == 0);
   o.room = headphone_room;
@@ -49,7 +89,47 @@ HeadphoneOptions Ctx::headphone_options() const {
   o.night = headphone_night;
   o.xm5 = headphone_xm5;
   o.lead_ms = headphone_lead_ms;
-  o.ir_file = headphone_ir;
+  if (headphone_room.compare(0, 5, "file:") == 0) {
+    // A measured response: used once its copy is here; Lounge stands in until then.
+    std::string id = headphone_room.substr(5);
+    auto cached = headphone_cache.find(id);
+    if (cached != headphone_cache.end()) {
+      o.ir_file = cached->second;
+      o.room = headphone_room;
+      o.label = headphone_room_name(headphone_room);
+    } else {
+      o.room = "lounge";
+      if (api.ready() && !headphone_fetching.count(id)) {
+        headphone_fetching.insert(id);
+        const Api *client = &api;
+        api_tasks.run([client, id]() -> std::function<void()> {
+          int status = 0;
+          std::string bytes = client->fetch_bytes("/api/headphones/file?id=" + url_encode(id), &status);
+          std::string path;
+          if (status == 200 && bytes.size() > 44) {
+            mkdir("/tmp/bloob-headphones", 0700);
+            std::string safe;
+            for (char ch : id) safe += (std::isalnum(static_cast<unsigned char>(ch)) || ch == '.' || ch == '-') ? ch : '_';
+            path = "/tmp/bloob-headphones/" + safe;
+            FILE *f = std::fopen(path.c_str(), "wb");
+            if (!f || std::fwrite(bytes.data(), 1, bytes.size(), f) != bytes.size()) path.clear();
+            if (f) std::fclose(f);
+          }
+          return [id, path, status]() {
+            Ctx &c = ctx();
+            c.headphone_fetching.erase(id);
+            if (path.empty()) {
+              logf("sound", "headphone response %s could not be fetched (HTTP %d)", id.c_str(), status);
+              return;
+            }
+            logf("sound", "headphone response %s ready", id.c_str());
+            c.headphone_cache[id] = path;
+            c.invalidate();
+          };
+        });
+      }
+    }
+  }
   return o;
 }
 

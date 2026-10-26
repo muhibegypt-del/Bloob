@@ -1,6 +1,7 @@
 // Headphones mode's filter chain (3.2). See headphones.h.
 #include "headphones.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -140,7 +141,7 @@ bool measured(const std::string &path, const std::vector<binaural::Speaker> &spe
 }  // namespace
 
 std::string HeadphoneOptions::summary() const {
-  std::string s = ir_file.empty() ? binaural::room_named(room).name : "Measured response";
+  std::string s = !label.empty() ? label : ir_file.empty() ? binaural::room_named(room).name : "Measured response";
   if (xm5) s += " \xC2\xB7 XM5";
   if (night) s += " \xC2\xB7 Night";
   if (boost_db != 0) s += " \xC2\xB7 +" + num(boost_db) + " dB";
@@ -188,6 +189,27 @@ bool HeadphoneChain::open(const HeadphoneOptions &o, const AVChannelLayout *layo
     std::string why;
     have = measured(o.ir_file, speakers, &frames, &ir, &why);
     if (!have) logf("headphones", "measured response not used: %s", why.c_str());
+  }
+  if (have) {
+    // Level-match a measured response to Bloob's rooms: its loudest ear channel
+    // gets the energy of Lounge's, so switching rooms doesn't jump in volume and
+    // LFE (mixed by the filter at a fixed level) keeps its balance.
+    binaural::Responses ref = binaural::compute(binaural::room_named("lounge"), speakers, 48000);
+    double want = 0, got = 0;
+    for (const auto &ch : ref.channels) {
+      double e = 0;
+      for (float v : ch) e += static_cast<double>(v) * v;
+      want = std::max(want, e);
+    }
+    for (size_t c = 0; c < n; c++) {
+      double e = 0;
+      for (int t = 0; t < frames; t++) e += static_cast<double>(ir[static_cast<size_t>(t) * n + c]) * ir[static_cast<size_t>(t) * n + c];
+      got = std::max(got, e);
+    }
+    if (got > 0 && want > 0) {
+      float scale = static_cast<float>(std::sqrt(want / got));
+      for (auto &v : ir) v *= scale;
+    }
   }
   if (!have) {
     binaural::Responses r = binaural::compute(binaural::room_named(o.room), speakers, 48000);

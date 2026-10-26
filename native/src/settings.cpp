@@ -3,7 +3,6 @@
 #include <algorithm>
 #include <cmath>
 
-#include "binaural.h"
 #include "common.h"
 #include "log.h"
 #include "pairing.h"
@@ -48,7 +47,10 @@ class SettingsScreen : public Screen {
   const char *name() const override { return "settings"; }
   bool root() const override { return true; }
   void set_tabs_focus(bool tabs) override { tabs_ = tabs; }
-  void shown() override { refresh(); }
+  void shown() override {
+    refresh();
+    ctx().refresh_headphone_responses();
+  }
 
   std::string spoken() const override {
     if (pairing_.active()) return pairing_.spoken();
@@ -67,7 +69,7 @@ class SettingsScreen : public Screen {
       case Row::Picture: say = std::string("Picture, ") + picture_name(c.picture) + ", adjustable"; break;
       case Row::Sources: say = std::string("Sources, ") + (c.sources == "torrentio" ? "Torrentio only" : "every index") + ", adjustable"; break;
       case Row::Headphones: say = std::string("Headphones, ") + headphones_name(c.headphones) + ", adjustable"; break;
-      case Row::HeadphoneRoom: say = std::string("Surround room, ") + binaural::room_named(c.headphone_room).name + ", adjustable"; break;
+      case Row::HeadphoneRoom: say = "Surround room, " + c.headphone_room_name(c.headphone_room) + ", adjustable"; break;
       case Row::HeadphoneBoost: say = "Headphone volume boost, " + std::to_string(c.headphone_boost) + " decibels, adjustable"; break;
       case Row::HeadphoneNight: say = std::string("Night listening, switch, ") + (c.headphone_night ? "on" : "off"); break;
       case Row::HeadphoneEq: say = std::string("Earbud correction, ") + (c.headphone_xm5 ? "Sony WF-1000XM5" : "off") + ", adjustable"; break;
@@ -168,10 +170,10 @@ class SettingsScreen : public Screen {
       int i = c.headphones == "off" ? 2 : c.headphones == "on" ? 1 : 0;
       c.headphones = order[(i + d + 3) % 3];
     } else if (r == Row::HeadphoneRoom) {
-      const auto &list = binaural::rooms();
+      auto list = c.headphone_rooms();
       int n = static_cast<int>(list.size()), i = 0;
-      for (int k = 0; k < n; k++) if (c.headphone_room == list[static_cast<size_t>(k)].id) i = k;
-      c.headphone_room = list[static_cast<size_t>((i + d + n) % n)].id;
+      for (int k = 0; k < n; k++) if (c.headphone_room == list[static_cast<size_t>(k)].first) i = k;
+      c.headphone_room = list[static_cast<size_t>((i + d + n) % n)].first;
     } else if (r == Row::HeadphoneBoost) c.headphone_boost = std::max(0, std::min(15, c.headphone_boost + 3 * d));
     else if (r == Row::HeadphoneNight) c.headphone_night = !c.headphone_night;
     else if (r == Row::HeadphoneEq) c.headphone_xm5 = !c.headphone_xm5;
@@ -303,11 +305,11 @@ class SettingsScreen : public Screen {
         case Row::HeadphoneRoom: {
           title = "Surround room";
           std::string id = c.headphone_room;
-          value = !c.headphone_ir.empty() ? "Your measured response (headphones.wav in Bloob's data folder)"
+          value = id.compare(0, 5, "file:") == 0 ? c.headphone_room_name(id) + ": a measured response from Bloob's data folder"
                   : id == "studio" ? "Studio: close and clear, a small treated room"
                   : id == "cinema" ? "Cinema: big and enveloping, speakers far away"
                                    : "Lounge: a living room with speakers around you";
-          choice = c.headphone_ir.empty();
+          choice = true;
           break;
         }
         case Row::HeadphoneBoost:

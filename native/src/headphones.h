@@ -32,6 +32,7 @@ struct HeadphoneOptions {
   // A measured response (WAV, 48 kHz): 14 channels in HeSuVi's order, or 16 in
   // Bloob's (FL FR FC LFE BL BR SL SR, each left ear then right). Empty: the room above.
   std::string ir_file;
+  std::string label;  // for people: the room's or the measured response's name
 
   bool operator==(const HeadphoneOptions &o) const {
     return enabled == o.enabled && room == o.room && dialogue_db == o.dialogue_db && boost_db == o.boost_db &&

@@ -19,6 +19,7 @@ const { createReadyCheck } = require('./ready');
 const bridge = require('./bridge');
 const anime = require('./anime');
 const sources = require('./sources');
+const hrir = require('./hrir');
 
 const PORT = config.port;
 const VERSION = require('./package.json').version;
@@ -282,6 +283,14 @@ async function handleApi(req, res, url) {
     if (pathname === '/api/resolve/status') {
       const job = resolver.status(query.get('id'));
       return job ? reply(res, 200, job) : reply(res, 404, { error: 'This request has expired. Choose the source again.' });
+    }
+    // Headphones mode's measured responses (3.2.1): the list, then one file's bytes.
+    if (pathname === '/api/headphones') return reply(res, 200, { responses: hrir.publicList() });
+    if (pathname === '/api/headphones/file') {
+      const wav = hrir.read(query.get('id'));
+      if (!wav) return reply(res, 404, { error: 'No usable response by that name' });
+      res.writeHead(200, { 'Content-Type': 'audio/wav', 'Content-Length': wav.length, 'Cache-Control': 'no-store' });
+      return res.end(wav);
     }
     if (pathname === '/api/progress') return reply(res, 200, { items: (await progress.continueWatching()).map(withArt) });
     if (pathname === '/api/settings') return reply(res, 200, await progress.getSettings());

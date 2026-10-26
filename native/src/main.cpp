@@ -79,13 +79,6 @@ class App {
     Ctx &c = ctx();
     c.dir = app_directory();
     c.app_id = app_id();
-    // The owner's own measured headphone response, if one was put in the data
-    // folder (never in the app or the repository): used instead of Bloob's room.
-    const char *ir = "/media/internal/com.muhib.bloob/headphones.wav";
-    if (access(ir, R_OK) == 0) {
-      c.headphone_ir = ir;
-      logf("sound", "measured headphone response found: %s", ir);
-    }
     SDL_SetHint("SDL_WEBOS_ACCESS_POLICY_KEYS_BACK", "true");
     SDL_SetHint("SDL_WEBOS_ACCESS_POLICY_KEYS_EXIT", "true");
     SDL_SetHint("SDL_WEBOS_CURSOR_SLEEP_TIME", "5000");
@@ -289,6 +282,7 @@ class App {
           x.headphone_lead_ms = static_cast<int>(std::max<long long>(0, std::min<long long>(500, r.json["headphoneLeadMs"].as_int(0))));
           x.welcome_seen = r.json["welcomeSeen"].as_bool(false);
           x.settings_loaded = true;
+          x.refresh_headphone_responses();
           x.recent_searches.clear();
           for (size_t i = 0; i < r.json["recentSearches"].size(); i++) x.recent_searches.push_back(r.json["recentSearches"][i].as_string());
         }, nullptr);

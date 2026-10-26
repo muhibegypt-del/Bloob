@@ -264,7 +264,9 @@ async function saveSettings(input) {
   if (typeof input.highContrast === 'boolean') current.highContrast = input.highContrast;
   if (typeof input.autoplayNext === 'boolean') current.autoplayNext = input.autoplayNext;
   if (['auto', 'on', 'off'].indexOf(input.headphones) >= 0) current.headphones = input.headphones;
-  if (['lounge', 'studio', 'cinema'].indexOf(input.headphoneRoom) >= 0) current.headphoneRoom = input.headphoneRoom;
+  // A built-in room, or 'file:<name>.wav' for a measured response in the data folder (hrir.js).
+  if (['lounge', 'studio', 'cinema'].indexOf(input.headphoneRoom) >= 0 ||
+      (typeof input.headphoneRoom === 'string' && /^file:[^/\\]{1,100}\.wav$/i.test(input.headphoneRoom))) current.headphoneRoom = input.headphoneRoom;
   if (Number.isInteger(input.headphoneBoost) && input.headphoneBoost >= 0 && input.headphoneBoost <= 15) current.headphoneBoost = input.headphoneBoost;
   if (typeof input.headphoneNight === 'boolean') current.headphoneNight = input.headphoneNight;
   if (['xm5', 'off'].indexOf(input.headphoneEq) >= 0) current.headphoneEq = input.headphoneEq;
