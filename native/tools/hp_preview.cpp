@@ -3,9 +3,11 @@
 // through every room, plus the plain stereo downmix for comparison.
 // Also reports how much faster than real time the render runs.
 //   hp_preview <out-dir> [film-file]
+// BLOOB_HP_IR=<measured.wav> renders through that response instead of the rooms.
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <string>
 #include <vector>
@@ -87,6 +89,26 @@ struct Render {
   }
 };
 
+// The renders to make: every room, or the measured response in BLOOB_HP_IR.
+std::vector<std::pair<std::string, HeadphoneOptions>> variants() {
+  std::vector<std::pair<std::string, HeadphoneOptions>> list;
+  const char *ir = std::getenv("BLOOB_HP_IR");
+  if (ir && *ir) {
+    HeadphoneOptions o;
+    o.enabled = true;
+    o.ir_file = ir;
+    list.push_back({"measured", o});
+    return list;
+  }
+  for (const auto &room : binaural::rooms()) {
+    HeadphoneOptions o;
+    o.enabled = true;
+    o.room = room.id;
+    list.push_back({room.id, o});
+  }
+  return list;
+}
+
 // The ITU stereo downmix, as a TV would play the same channels.
 void downmix(AVFrame *f, Wav &wav) {
   int n = f->nb_samples, ch = f->ch_layout.nb_channels;
@@ -120,13 +142,11 @@ void speaker_walk(const std::string &dir) {
   const int block = 1024, per_speaker = 48000 * 3 / 2;
   std::vector<Render *> renders;
   std::vector<std::string> names;
-  for (const auto &room : binaural::rooms()) {
-    HeadphoneOptions o;
-    o.enabled = true;
-    o.room = room.id;
-    auto *r = new Render(dir + "/walk-" + room.id + ".wav");
-    if (!r->open(o, &layout, 48000, AV_SAMPLE_FMT_FLTP)) return;
+  for (const auto &v : variants()) {
+    auto *r = new Render(dir + "/walk-" + v.first + ".wav");
+    if (!r->open(v.second, &layout, 48000, AV_SAMPLE_FMT_FLTP)) return;
     renders.push_back(r);
+    names.push_back(v.first);
   }
   Wav plain(dir + "/walk-tv-downmix.wav");
   AVFrame *f = av_frame_alloc();
@@ -170,7 +190,7 @@ void speaker_walk(const std::string &dir) {
   }
   av_frame_free(&f);
   for (size_t i = 0; i < renders.size(); i++) {
-    std::printf("walk %-7s rendered %.1fx faster than real time\n", binaural::rooms()[i].id,
+    std::printf("walk %-7s rendered %.1fx faster than real time\n", names[i].c_str(),
                 (7 * 1.5) / std::max(1e-6, renders[i]->seconds));
     delete renders[i];
   }
@@ -193,6 +213,7 @@ void film(const std::string &dir, const std::string &path) {
   avcodec_open2(dec, dc, &opts);
   av_dict_free(&opts);
   std::vector<Render *> renders;
+  std::vector<std::string> names;
   Wav plain(dir + "/film-tv-downmix.wav");
   AVPacket *pkt = av_packet_alloc();
   AVFrame *f = av_frame_alloc();
@@ -201,13 +222,11 @@ void film(const std::string &dir, const std::string &path) {
     if (pkt->stream_index == s && avcodec_send_packet(dec, pkt) >= 0) {
       while (avcodec_receive_frame(dec, f) == 0) {
         if (renders.empty()) {
-          for (const auto &room : binaural::rooms()) {
-            HeadphoneOptions o;
-            o.enabled = true;
-            o.room = room.id;
-            auto *r = new Render(dir + "/film-" + room.id + ".wav");
-            if (!r->open(o, &f->ch_layout, f->sample_rate, f->format)) return;
+          for (const auto &v : variants()) {
+            auto *r = new Render(dir + "/film-" + v.first + ".wav");
+            if (!r->open(v.second, &f->ch_layout, f->sample_rate, f->format)) return;
             renders.push_back(r);
+            names.push_back(v.first);
           }
         }
         audio_s += static_cast<double>(f->nb_samples) / f->sample_rate;
@@ -219,7 +238,7 @@ void film(const std::string &dir, const std::string &path) {
     av_packet_unref(pkt);
   }
   for (size_t i = 0; i < renders.size(); i++) {
-    std::printf("film %-7s %s, %.0f s rendered %.1fx faster than real time\n", binaural::rooms()[i].id,
+    std::printf("film %-7s %s, %.0f s rendered %.1fx faster than real time\n", names[i].c_str(),
                 renders[i]->chain.layout().c_str(), audio_s, audio_s / std::max(1e-6, renders[i]->seconds));
     delete renders[i];
   }

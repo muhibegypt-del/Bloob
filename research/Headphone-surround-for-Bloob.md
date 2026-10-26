@@ -78,3 +78,10 @@ The owner wants films in Bloob to sound "breathtaking" in Sony WF-1000XM5 earbud
 - **Tier 2:** Atmos heights for E-AC-3 JOC, from Cavern. Either a C++ port of its JOC decoder and renderer, or its .NET library hosted on the TV; CPU to be measured.
 - **Tier 3:** TrueHD Atmos objects via truehdd, rendered by the Tier 2 renderer.
 - **Tier 4:** the phone/LDAC route.
+
+## Findings on the TV (26 October 2026, owner's readings and checks)
+
+- **Bluetooth:** LG's own stack (`webos-bluetooth-service`, MediaTek MT7921 over `btmt7921_usb`), `btaudiosrc` encoding SBC (`libsbc`) or aptX (`libaptX_encoder.so`); no LDAC, and the XM5 has no aptX, so SBC. `btaudiosrc` carries a per-device bitpool table and calls `a2dp/internal/setSbcEncoderBitpool`; the same internal methods are in the open webOS OSE service (`getCodecConfiguration`, `setSbcEncoderBitpool`), with LG's `setCodecConfiguration` added. `native/scripts/bt-sbc.sh` reads and raises the SBC quality (SBC XQ, as LineageOS ships it).
+- **Kernel:** 5.4.268; no generic USB Bluetooth driver module, so a second adapter needs one built from LG's GPL source.
+- **Existing routes:** LG ThinQ "Sound Out → Mobile device" (TV sound to the phone over Wi-Fi; the phone sends LDAC); a 65C2 owner reports excellent quality and sync with TV apps (AVForums). LG's "TONE" Atmos list is for earbuds with their own Atmos engine, not a renderer in the TV.
+- **HeSuVi responses:** the 48 kHz `atmos.wav` (Dolby Atmos for Headphones capture) and `dh+.wav` (Dolby Headphone) are 14-channel float WAVs. Measured arrival order confirms Bloob's HeSuVi mapping: FL l/r = 0/1, SL = 2/3, BL = 4/5, FC = 6/13, FR r/l = 7/8, SR = 9/10, BR = 11/12. They stay on the owner's TV only.
