@@ -32,23 +32,27 @@ config() {
 CONFIG=$(config)
 echo "$CONFIG" | grep -E '"(sampleFrequency|channelMode|blockLength|subbands|allocationMethod|minBitpool|maxBitpool|errorText)"'
 MAX=$(echo "$CONFIG" | tr -d '\n' | sed -n 's/.*"maxBitpool": *\([0-9]*\).*/\1/p')
+# LG's service reports 0 for numbers it doesn't track (seen on an OLED55G2): treat as unknown.
+# 53 is the usual maximum headphones accept for joint stereo, and the A2DP high-quality setting.
+[ "${MAX:-0}" -gt 0 ] 2>/dev/null || MAX=
 
 bitpool() {
+  case "$1" in ''|*[!0-9]*) echo "Bitpool must be a number from 2 to 250."; exit 1 ;; esac
+  [ "$1" -ge 2 ] && [ "$1" -le 250 ] || { echo "Bitpool must be a number from 2 to 250."; exit 1; }
   echo "Setting bitpool $1"
-  luna-send -n 1 -f $BT/a2dp/internal/setSbcEncoderBitpool "{\"address\":\"$ADDR\",\"bitpool\":$1}"
+  timeout 5 luna-send -n 1 -f $BT/a2dp/internal/setSbcEncoderBitpool "{\"address\":\"$ADDR\",\"bitpool\":$1}"
 }
 
 case "$1" in
   max)
-    [ -n "$MAX" ] || { echo "The TV did not report the headphones' maximum bitpool."; exit 1; }
-    bitpool "$MAX"
+    bitpool "${MAX:-53}"
     ;;
   set)
     bitpool "${2:?bitpool number}"
     ;;
   xq)
     echo "Asking for dual channel"
-    luna-send -n 1 -f $BT/a2dp/internal/setCodecConfiguration \
+    timeout 5 luna-send -n 1 -f $BT/a2dp/internal/setCodecConfiguration \
       "{\"address\":\"$ADDR\",\"sbcConfiguration\":{\"channelMode\":\"dualChannel\"}}"
     # In dual channel the bitpool counts per channel: 47 stays under the usual maximum of 53.
     P=47
