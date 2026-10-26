@@ -43,6 +43,10 @@ int Luna::call(const std::string &uri, const std::string &payload, Callback call
     // The desktop test runs the real Node service itself, on this port.
     const char *port = std::getenv("BLOOB_SERVICE_PORT");
     reply = std::string("{\"returnValue\":true,\"ready\":true,\"version\":\"host\",\"port\":") + (port ? port : "8790") + "}";
+  } else if (uri.find("getSystemSettings") != std::string::npos && payload.find("soundOutput") != std::string::npos) {
+    // BLOOB_SOUND_OUTPUT=bt_soundbar plays the desktop as if headphones were connected.
+    const char *out = std::getenv("BLOOB_SOUND_OUTPUT");
+    reply = std::string("{\"returnValue\":true,\"subscribed\":true,\"settings\":{\"soundOutput\":\"") + (out ? out : "tv_speaker") + "\"}}";
   } else if (subscribe)
     reply = "{\"returnValue\":true,\"subscribed\":true}";
   int id;

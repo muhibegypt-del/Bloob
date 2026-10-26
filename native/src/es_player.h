@@ -93,6 +93,8 @@ class EsPlayer : public MediaBackend {
   std::vector<SubtitleCue> cues_at(long long ms) const override;
   long long next_cue_change(long long ms) const override;
   bool converts_audio() const override { return true; }
+  // Reloads the sound at the current time when the options change.
+  void set_headphones(const HeadphoneOptions &options) override;
   std::string audio_note() const override { return audio_note_; }
   std::string decoder_note() const override { return decoder_note_; }
   const char *engine_name() const override;
@@ -105,7 +107,7 @@ class EsPlayer : public MediaBackend {
 
  private:
   struct Command {
-    enum Kind { Seek, Audio, Text, Stop } kind;
+    enum Kind { Seek, Audio, Text, Headphones, Stop } kind;
     long long value = 0;
   };
   void run();
@@ -130,6 +132,7 @@ class EsPlayer : public MediaBackend {
   std::mutex mutex_;  // commands_, cues_
   std::condition_variable cv_;
   std::deque<Command> commands_;
+  HeadphoneOptions headphones_;  // under mutex_
   std::mutex sink_mutex_;  // every sink call
   Demuxer demux_;
 

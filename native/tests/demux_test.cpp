@@ -104,6 +104,31 @@ static void test_file() {
   CHECK(d.select_audio(1) && d.audio_out().converted);
   CHECK(d.select_audio(2) && !d.audio_out().converted && d.audio_out().codec == "AC3");
 
+  // Headphones: AC-3 is decoded too and rendered to E-AC-3 stereo, led by 100 ms.
+  HeadphoneOptions hp;
+  hp.enabled = true;
+  hp.lead_ms = 100;
+  d.set_headphones(hp);
+  CHECK(d.select_audio(0) && d.audio_out().headphones && d.audio_out().channels == 2 && d.audio_out().codec == "AC3 PLUS");
+  CHECK(d.seek(0));
+  int hp_audio = 0;
+  long long hp_first = -1;
+  bool hp_sync = true;
+  for (int i = 0; i < 20000 && hp_audio < 40; i++) {
+    DemuxPacket p = d.read();
+    if (p.kind == DemuxPacket::End || p.kind == DemuxPacket::Error) break;
+    if (p.kind != DemuxPacket::Audio) continue;
+    hp_audio++;
+    hp_sync = hp_sync && p.data.size() > 2 && p.data[0] == 0x0B && p.data[1] == 0x77;
+    if (hp_first < 0) hp_first = p.pts_us;
+  }
+  CHECK(hp_audio >= 40 && hp_sync);
+  // The file's sound starts at 0: led by 100 ms, what remains starts a frame or so after 0.
+  CHECK(hp_first >= 0 && hp_first < 40000);
+  if (hp_first < 0 || hp_first >= 40000) std::printf("  first headphone packet at %lld us\n", hp_first);
+  d.set_headphones(HeadphoneOptions());
+  CHECK(d.select_audio(2) && !d.audio_out().converted);
+
   // Seek: the next video is a key frame at or before 5 s, and audio follows near it.
   CHECK(d.seek(5000));
   bool first_video = true;

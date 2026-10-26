@@ -219,6 +219,17 @@ void EsPlayer::seek(long long position_ms) {
   cv_.notify_all();
 }
 
+void EsPlayer::set_headphones(const HeadphoneOptions &options) {
+  std::lock_guard<std::mutex> lock(mutex_);
+  if (options == headphones_) return;
+  headphones_ = options;
+  // Before the file is open the feeder reads them at the start; after, the sound reloads.
+  if (feeder_.joinable()) {
+    commands_.push_back({Command::Headphones, 0});
+    cv_.notify_all();
+  }
+}
+
 void EsPlayer::select_track(const std::string &type, int index) {
   bool audio = type == "audio";
   {
@@ -274,8 +285,9 @@ long long EsPlayer::next_cue_change(long long ms) const {
 void EsPlayer::publish_facts(bool track_change) {
   DemuxFacts f = demux_.facts();
   AudioOut a = demux_.audio_out();
+  std::string hp = demux_.headphones().summary();
   std::weak_ptr<int> alive = alive_;
-  post_([this, alive, f, a, track_change] {
+  post_([this, alive, f, a, hp, track_change] {
     if (!alive.lock()) return;
     MediaInfo &m = info_;
     m.container = f.container;
@@ -289,7 +301,8 @@ void EsPlayer::publish_facts(bool track_change) {
     m.audio = f.audio;
     m.text = f.text;
     chapters_ = f.chapters;
-    audio_note_ = a.converted ? a.from + " \xE2\x86\x92 Dolby Digital Plus " + (a.channels >= 6 ? "5.1" : a.channels == 1 ? "Mono" : "Stereo") +
+    audio_note_ = a.headphones ? a.from + " \xE2\x86\x92 Headphones (" + hp + ")"
+                 : a.converted ? a.from + " \xE2\x86\x92 Dolby Digital Plus " + (a.channels >= 6 ? "5.1" : a.channels == 1 ? "Mono" : "Stereo") +
                                     " (converted by Bloob)"
                               : (a.atmos ? a.from + " (Atmos, passed to the TV)" : "");
     if (!listener_) return;
@@ -409,6 +422,13 @@ void EsPlayer::run() {
   }
   // First sound: the file's default main track, else the first main track. The
   // player then applies the viewer's language (select_track).
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    demux_.set_headphones(headphones_);
+    // The options the feeder started with: a command queued before now is already applied.
+    for (auto it = commands_.begin(); it != commands_.end();)
+      it = it->kind == Command::Headphones ? commands_.erase(it) : it + 1;
+  }
   const auto &audio = demux_.facts().audio;
   int choice = -1;
   for (size_t i = 0; i < audio.size() && choice < 0; i++)
@@ -448,12 +468,19 @@ void EsPlayer::run() {
     if (got) {
       demux_.resume();
       have = false;
-      if (cmd.kind == Command::Seek || cmd.kind == Command::Audio) {
+      if (cmd.kind == Command::Seek || cmd.kind == Command::Audio || cmd.kind == Command::Headphones) {
         long long at = cmd.kind == Command::Seek ? cmd.value
                        : (clock_ns_ >= 0 ? clock_ns_.load() : target_ns_.load()) / 1000000;
         stop_pipeline();
         if (cmd.kind == Command::Audio) {
           demux_.select_audio(static_cast<int>(cmd.value));
+          publish_facts(true);
+        } else if (cmd.kind == Command::Headphones) {
+          {
+            std::lock_guard<std::mutex> lock(mutex_);
+            demux_.set_headphones(headphones_);
+          }
+          if (demux_.audio_index() >= 0) demux_.select_audio(demux_.audio_index());
           publish_facts(true);
         } else {
           seeking_ = true;

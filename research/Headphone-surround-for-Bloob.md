@@ -62,7 +62,8 @@ The owner wants films in Bloob to sound "breathtaking" in Sony WF-1000XM5 earbud
 
 ## Plan
 
-- **Tier 1, build first:** Headphones mode in Bloob's engine. Decode every track, then:
+- **Tier 1: built in 3.2.0 (26 October 2026, not yet on the TV).** See `CLAUDE.md` and `native/TV-TEST.md` §17. The rooms are Bloob's own model (Brown and Duda), not bundled third-party data, and Bluetooth is detected with `soundOutput` (`bt_soundbar`).
+- **Tier 1, as planned:** Headphones mode in Bloob's engine. Decode every track, then:
   1. dialnorm bypass;
   2. 7.1/5.1 bed through a BRIR (`headphone` filter);
   3. centre (dialogue) lift;

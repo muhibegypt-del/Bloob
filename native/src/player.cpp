@@ -11,6 +11,7 @@
 #include <ctime>
 #include <map>
 
+#include "binaural.h"
 #include "common.h"
 #include "demux.h"
 #include "es_player.h"
@@ -284,6 +285,8 @@ class PlayerScreen : public Screen {
     // A reopen continues exactly where it was; a first start only past the resume threshold.
     load_start_ = start_at_ >= (reconnecting_ ? 1000 : play::kResumeMinMs) ? start_at_ : 0;
     media_->set_subtitle_style({c.subtitle_size, c.subtitle_background});
+    applied_hp_ = c.headphone_options();
+    media_->set_headphones(applied_hp_);
     // The engine reads AllDebrid's HTTPS link through the service, which keeps it in memory.
     if (media_->converts_audio() && url_.compare(0, 8, "https://") == 0 && engine_url_.empty()) {
       if (engine_url_asked_) {
@@ -639,6 +642,7 @@ class PlayerScreen : public Screen {
       const MediaInfo &info = media_->info();
       auto labels = distinct_labels(panel_ == Panel::Audio ? info.audio : info.text, panel_ == Panel::Audio);
       int rows = panel_rows();
+      if (panel_index_ >= track_rows()) return headphone_row_label(panel_index_ - track_rows()) + ", adjustable, " + position(panel_index_, rows);
       std::string name = panel_ == Panel::Subtitles && panel_index_ == 0 ? "Off"
                          : panel_ == Panel::Audio ? (panel_index_ < static_cast<int>(labels.size()) ? labels[static_cast<size_t>(panel_index_)] : "")
                          : (panel_index_ - 1 < static_cast<int>(labels.size()) ? labels[static_cast<size_t>(panel_index_ - 1)] : "");
@@ -751,9 +755,30 @@ class PlayerScreen : public Screen {
     }
   }
 
-  int panel_rows() const {
+  // The Audio panel's last two rows tune Headphones mode while it is on: the room and the lip-sync.
+  bool headphone_rows() const { return panel_ == Panel::Audio && media_->converts_audio() && ctx().headphone_options().enabled; }
+  int track_rows() const {
     const MediaInfo &info = media_->info();
     return panel_ == Panel::Audio ? static_cast<int>(info.audio.size()) : static_cast<int>(info.text.size()) + 1;
+  }
+  int panel_rows() const { return track_rows() + (headphone_rows() ? 2 : 0); }
+  // Left/Right on a headphone row; the change applies after kHeadphoneSettleMs (update()).
+  void adjust_headphones(int row, int d) {
+    Ctx &c = ctx();
+    if (row == 0) {
+      const auto &list = binaural::rooms();
+      int n = static_cast<int>(list.size()), i = 0;
+      for (int k = 0; k < n; k++) if (c.headphone_room == list[static_cast<size_t>(k)].id) i = k;
+      c.headphone_room = list[static_cast<size_t>((i + d + n) % n)].id;
+    } else {
+      c.headphone_lead_ms = std::max(0, std::min(500, c.headphone_lead_ms + 20 * d));
+    }
+    c.save_settings();
+  }
+  std::string headphone_row_label(int row) const {
+    Ctx &c = ctx();
+    if (row == 0) return std::string("Room: ") + (c.headphone_ir.empty() ? binaural::room_named(c.headphone_room).name : "Measured");
+    return c.headphone_lead_ms ? "Lip-sync: " + std::to_string(c.headphone_lead_ms) + " ms" : std::string("Lip-sync: none");
   }
 
   // ---------------------------------------------------------------- input
@@ -781,9 +806,18 @@ class PlayerScreen : public Screen {
       return true;
     }
     if (panel_ != Panel::None) {
-      int rows = panel_rows();
+      int rows = panel_rows(), tracks = track_rows();
+      panel_index_ = std::min(panel_index_, std::max(0, rows - 1));
       if (key == Key::Up) panel_index_ = std::max(0, panel_index_ - 1);
       if (key == Key::Down) panel_index_ = std::min(std::max(0, rows - 1), panel_index_ + 1);
+      if (panel_index_ >= tracks) {
+        // A headphone row: Left/Right (and OK) change it; the panel stays open.
+        if ((key == Key::Left || key == Key::Right || key == Key::Ok) && !(repeat && key == Key::Ok))
+          adjust_headphones(panel_index_ - tracks, key == Key::Left ? -1 : 1);
+        if (key == Key::Back) panel_ = Panel::None;
+        show_hud();
+        return true;
+      }
       if (key == Key::Ok && rows > 0 && !repeat) {
         choose_track(panel_index_);
         panel_ = Panel::None;
@@ -882,6 +916,19 @@ class PlayerScreen : public Screen {
       play_next();
       return;
     }
+    // Headphones: the XM5s connecting or going, or a setting changed (a pause
+    // after the last change, since the sound reloads each time).
+    HeadphoneOptions hp = c.headphone_options();
+    if (hp != wanted_hp_) {
+      wanted_hp_ = hp;
+      hp_changed_at_ = t;
+    }
+    if (opened_ && wanted_hp_ != applied_hp_ && t - hp_changed_at_ >= kHeadphoneSettleMs) {
+      logf("player", "headphones %s (%s)", wanted_hp_.enabled ? "on" : "off", wanted_hp_.summary().c_str());
+      applied_hp_ = wanted_hp_;
+      media_->set_headphones(applied_hp_);
+    }
+    if (wanted_hp_ != applied_hp_) c.redraw_at(hp_changed_at_ + kHeadphoneSettleMs);
     if (stats_ && t >= stats_next_) sample_stats(t);
     if (stats_) c.redraw_at(stats_next_);
     bool show = hud_ || hud_pinned();
@@ -1123,6 +1170,15 @@ class PlayerScreen : public Screen {
     if (!media_->audio_note().empty()) audio = media_->audio_note();
     else if (!info_.bridge_note.empty()) audio = info_.bridge_note;
     rows.push_back({"Audio", audio});
+    {
+      Ctx &cx = ctx();
+      HeadphoneOptions hp = cx.headphone_options();
+      std::string where = cx.sound_output.empty() ? "sound output not reported" : "sound output: " + cx.sound_output;
+      std::string line = !hp.enabled ? "Off (" + where + ")"
+                         : !media_->converts_audio() ? "Not available with LG's player (" + where + ")"
+                         : "On \xC2\xB7 " + hp.summary() + " \xC2\xB7 lip-sync " + std::to_string(hp.lead_ms) + " ms (" + where + ")";
+      rows.push_back({"Headphones", line});
+    }
     rows.push_back({"Engine", media_->engine_name()});
     int sub = session_.subtitle_index();
     rows.push_back({"Subtitles", sub >= 0 && sub < static_cast<int>(m.text.size())
@@ -1411,11 +1467,14 @@ class PlayerScreen : public Screen {
     int visible = std::max(1, (h - kMenuPad * 2 - kMenuHeader + kRowGap) / (kRowH + kRowGap));
     int first = std::max(0, std::min(panel_index_ - visible / 2, rows - visible));
     int rx = x + kMenuPad, rw = w - 2 * kMenuPad;
+    int tracks = track_rows();
     for (int i = first; i < std::min(rows, first + visible); i++) {
       bool f = i == panel_index_;
       std::string name;
       bool selected = false;
-      if (panel_ == Panel::Audio) {
+      if (i >= tracks) {
+        name = headphone_row_label(i - tracks);
+      } else if (panel_ == Panel::Audio) {
         name = labels[static_cast<size_t>(i)];
         selected = info.audio[static_cast<size_t>(i)].selected;
       } else if (i == 0) {
@@ -1432,7 +1491,12 @@ class PlayerScreen : public Screen {
       Color fg = f ? fade(rgba(0x000000), a) : label(Label::Primary, a);
       // Leading box 66 holds the check (20 high); title Standard.Caption1 [EoA V21].
       if (selected) c.icons.draw(Icon::Check, rx + (66 - 20) / 2, ry + (kRowH - 20) / 2, 20, fg);
-      text(Text::Caption1, name, rx + 66, text_y_centered(Text::Caption1, ry + kRowH / 2), fg, rw - 66 - 20);
+      if (i >= tracks) {
+        // Adjustable: chevrons either side of the value.
+        c.icons.draw(Icon::ChevronLeft, rx + (66 - 24) / 2, ry + (kRowH - 24) / 2, 24, f ? fg : label(Label::Tertiary, a));
+        c.icons.draw(Icon::ChevronRight, rx + rw - 20 - 24, ry + (kRowH - 24) / 2, 24, f ? fg : label(Label::Tertiary, a));
+      }
+      text(Text::Caption1, name, rx + 66, text_y_centered(Text::Caption1, ry + kRowH / 2), fg, rw - 66 - 20 - (i >= tracks ? 30 : 0));
       ry += kRowH + kRowGap;
     }
     if (panel_ == Panel::Subtitles && info.text.empty())
@@ -1531,6 +1595,10 @@ class PlayerScreen : public Screen {
   bool engine_failed_ = false;
   std::string engine_url_;  // the file through the service (FFmpeg reads plain HTTP)
   bool engine_url_asked_ = false;
+  // Headphones mode (3.2): what the engine has, what the settings say now, and since when.
+  HeadphoneOptions applied_hp_, wanted_hp_;
+  long long hp_changed_at_ = 0;
+  static constexpr long long kHeadphoneSettleMs = 900;
   // Picture subtitles uploaded as textures, by the picture they came from.
   std::map<const SubPicture *, std::vector<SDL_Texture *>> sub_textures_;
   Session session_;

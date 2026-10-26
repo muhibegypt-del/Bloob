@@ -13,6 +13,7 @@
 
 #include "api.h"
 #include "gfx.h"
+#include "headphones.h"
 #include "icons.h"
 #include "images.h"
 #include "keys.h"
@@ -87,6 +88,16 @@ struct Ctx {
   bool reduce_motion = false;                   // no auto-advancing hero, page movement or focus zoom
   bool reduce_transparency = false;             // Glass panels become solid
   bool high_contrast = false;                   // secondary and tertiary labels brighter
+  // Headphones mode (3.2).
+  std::string headphones = "auto";              // "auto" (the TV's sound on Bluetooth), "on" or "off"
+  std::string headphone_room = "lounge";        // binaural::rooms() id
+  int headphone_boost = 9;                      // dB after the render, 0..15
+  bool headphone_night = false;
+  bool headphone_xm5 = true;                    // the WF-1000XM5 correction
+  int headphone_lead_ms = 0;                    // sound ahead of the picture, 0..500
+  std::string headphone_ir;                     // the owner's measured response, when the file exists
+  std::string sound_output;                     // the TV's sound output ("bt_soundbar", "tv_speaker"…), "" until known
+  HeadphoneOptions headphone_options() const;
 
   // Effects tier: Full until rendering is measured to be slow, then Lite for the session
   // (no soft shadows, plain dimmed backdrops, a once-a-second player clock).

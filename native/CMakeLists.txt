@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(bloob_native VERSION 3.1.4 LANGUAGES C CXX)
+project(bloob_native VERSION 3.2.0 LANGUAGES C CXX)
 
 # Cross-compile for the TV with the webOS NDK (openlgtv buildroot-nc4):
 #   cmake -B build -DCMAKE_TOOLCHAIN_FILE=/opt/arm-webos-linux-gnueabi_sdk-buildroot/share/buildroot/toolchainfile.cmake
@@ -24,7 +24,8 @@ find_package(Threads REQUIRED)
 target_link_libraries(buna_core PUBLIC Threads::Threads)
 target_include_directories(buna_core PUBLIC src)
 
-# The playback engine's demuxer and audio converter (3.0), on Bloob's own
+# The playback engine's demuxer and audio converter (3.0) and Headphones mode
+# (3.2: binaural.cpp, headphones.cpp), on Bloob's own
 # static FFmpeg (scripts/build-ffmpeg-libs.sh arm|host, into build-ffmpeg/).
 if (CMAKE_CROSSCOMPILING)
   set(FFMPEG_PREFIX ${CMAKE_SOURCE_DIR}/build-ffmpeg/arm)
@@ -34,10 +35,11 @@ endif ()
 if (NOT EXISTS ${FFMPEG_PREFIX}/lib/libavformat.a)
   message(FATAL_ERROR "FFmpeg libraries missing: run scripts/build-ffmpeg-libs.sh ${CMAKE_CROSSCOMPILING}")
 endif ()
-add_library(buna_demux STATIC src/demux.cpp)
+add_library(buna_demux STATIC src/demux.cpp src/binaural.cpp src/headphones.cpp)
 target_include_directories(buna_demux PUBLIC src ${FFMPEG_PREFIX}/include)
+target_compile_definitions(buna_demux PUBLIC __STDC_CONSTANT_MACROS)
 target_link_libraries(buna_demux PUBLIC buna_core
-  ${FFMPEG_PREFIX}/lib/libavformat.a ${FFMPEG_PREFIX}/lib/libavcodec.a
+  ${FFMPEG_PREFIX}/lib/libavfilter.a ${FFMPEG_PREFIX}/lib/libavformat.a ${FFMPEG_PREFIX}/lib/libavcodec.a
   ${FFMPEG_PREFIX}/lib/libswresample.a ${FFMPEG_PREFIX}/lib/libavutil.a m)
 
 # The app: shell, renderer, screens and media. The TV build talks to the real
@@ -93,8 +95,11 @@ else ()
     target_include_directories(bloob_host PRIVATE ${SDL2_INCLUDE_DIRS})
     target_link_libraries(bloob_host PRIVATE buna_core buna_demux ${SDL2_LIBRARIES} pthread dl)
   endif ()
+  # Headphones mode previews: WAVs to hear the rooms on a phone (tools/hp_preview.cpp).
+  add_executable(hp_preview tools/hp_preview.cpp)
+  target_link_libraries(hp_preview PRIVATE buna_demux)
   enable_testing()
-  add_executable(native_tests tests/session_test.cpp tests/play_test.cpp tests/runtime_test.cpp tests/demux_test.cpp)
+  add_executable(native_tests tests/session_test.cpp tests/play_test.cpp tests/runtime_test.cpp tests/demux_test.cpp tests/headphones_test.cpp)
   target_link_libraries(native_tests PRIVATE buna_core buna_demux)
   add_test(NAME native_tests COMMAND native_tests)
 endif ()

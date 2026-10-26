@@ -286,3 +286,18 @@ Read `/tmp/bloob-native.log` after each step: `[engine]` and `[demux]` lines say
 ## 16. New in 3.1.2: is the video 4K?
 
 Open the info panel (blue key) during a 4K version. **Video** is what the file says; **Decoder** (Bloob's engine) is what the TV's decoder reports; **TV output** is what the TV's video output service reports for the main video. 4K playback shows `3840×2160` in all three. The first reply of the output service is logged once as `[qoe] video output status: …` in `/tmp/bloob-native.log`; if the row says "not reported", that line shows the TV's own field names.
+
+## 17. New in 3.2: Headphones mode
+
+Connect the WF-1000XM5 earbuds to the TV first (*Sound out* → Bluetooth). Bloob follows the TV's sound output: `[sound] the TV's sound goes to bt_soundbar` in `/tmp/bloob-native.log`.
+
+1. **It turns itself on.** Play a remux (TrueHD or DTS) and a web version (E-AC-3 Atmos). Open the info panel (blue key): **Headphones** reads *On · Lounge · XM5 · +9 dB*, and **Audio** reads *… → Headphones (…)*. The log shows `[headphones] 7.1 render of …` or `5.1(side) render of …`.
+2. **Surround.** Voices sit in front, outside the head; effects pan round behind. Compare with Headphones *Off* in Settings: the TV's own downmix sits between the ears.
+3. **Rooms.** In the player, open *Audio*. Below the tracks: **Room** and **Lip-sync**, changed with Left/Right. The sound reloads about a second after the last press. Try Lounge, Studio and Cinema.
+4. **Lip-sync.** Watch a close-up of someone talking. If the voice comes after the lips, raise Lip-sync 20 ms at a time until they match. Write the number down: it is this TV's Bluetooth delay.
+5. **Loudness.** Loud scenes should never crackle (the limiter holds −1 dBFS). If films are still too quiet at full TV volume, raise *Headphone volume boost* in Settings (up to +15 dB). *Night listening* holds back explosions.
+6. **Taking them out.** Disconnect the earbuds: within about a second the sound reloads as Dolby 5.1 to the TV speakers (`[player] headphones off`).
+7. **CPU.** With the info panel open during a TrueHD 7.1 film, note *Bloob CPU*. Desktop measurements suggest the render costs well under one core; a reading over 60% means Cinema should get shorter responses.
+8. **Your own response (optional).** A measured 48 kHz WAV, 14 channels in HeSuVi's order or 16 in Bloob's, copied to `/media/internal/com.muhib.bloob/headphones.wav`, is used instead of Bloob's rooms after the next start (*Room: Measured*). Nothing is deleted; remove the file yourself to go back.
+
+Previews to hear before installing (phone and the same earbuds): `build-host/hp_preview <dir> <film>` writes a 7.1 speaker walk and the film excerpt through each room, plus the TV's plain downmix for comparison.

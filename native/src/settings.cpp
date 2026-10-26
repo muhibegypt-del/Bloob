@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 
+#include "binaural.h"
 #include "common.h"
 #include "log.h"
 #include "pairing.h"
@@ -25,6 +26,16 @@ const char *picture_note(const std::string &p) {
   return p == "sdr" ? "SDR versions first, whatever their resolution"
        : p == "hdr10" ? "HDR10 first; Dolby Vision versions play as HDR10"
        : "Dolby Vision or HDR first, at the highest resolution";
+}
+
+const char *headphones_name(const std::string &h) {
+  return h == "on" ? "Always" : h == "off" ? "Off" : "Automatic";
+}
+std::string headphones_note(const Ctx &c) {
+  if (c.headphones == "off") return "Off: the film's sound goes to the TV as it is";
+  std::string now = c.sound_output.empty() ? "" : c.sound_output.compare(0, 3, "bt_") == 0 ? " (on now: Bluetooth)" : " (off now: TV speakers)";
+  if (c.headphones == "on") return "Always: every film rendered for headphones";
+  return "Automatic: surround for two ears whenever the TV's sound goes to Bluetooth" + now;
 }
 
 #ifndef BLOOB_VERSION
@@ -55,6 +66,12 @@ class SettingsScreen : public Screen {
       case Row::SubtitleBackground: say = std::string("Subtitle background, switch, ") + (c.subtitle_background ? "on" : "off"); break;
       case Row::Picture: say = std::string("Picture, ") + picture_name(c.picture) + ", adjustable"; break;
       case Row::Sources: say = std::string("Sources, ") + (c.sources == "torrentio" ? "Torrentio only" : "every index") + ", adjustable"; break;
+      case Row::Headphones: say = std::string("Headphones, ") + headphones_name(c.headphones) + ", adjustable"; break;
+      case Row::HeadphoneRoom: say = std::string("Surround room, ") + binaural::room_named(c.headphone_room).name + ", adjustable"; break;
+      case Row::HeadphoneBoost: say = "Headphone volume boost, " + std::to_string(c.headphone_boost) + " decibels, adjustable"; break;
+      case Row::HeadphoneNight: say = std::string("Night listening, switch, ") + (c.headphone_night ? "on" : "off"); break;
+      case Row::HeadphoneEq: say = std::string("Earbud correction, ") + (c.headphone_xm5 ? "Sony WF-1000XM5" : "off") + ", adjustable"; break;
+      case Row::HeadphoneSync: say = "Headphone lip-sync, " + std::to_string(c.headphone_lead_ms) + " milliseconds, adjustable"; break;
       case Row::Autoplay: say = std::string("Play the next episode automatically, switch, ") + (c.autoplay_next ? "on" : "off"); break;
       case Row::Motion: say = std::string("Reduce motion, switch, ") + (c.reduce_motion ? "on" : "off"); break;
       case Row::Transparency: say = std::string("Reduce transparency, switch, ") + (c.reduce_transparency ? "on" : "off"); break;
@@ -88,15 +105,19 @@ class SettingsScreen : public Screen {
     }, alive_);
   }
 
-  enum class Row { Account, Disconnect, Audio, Subtitles, SubtitleSize, SubtitleBackground, Picture, Sources, Autoplay, Motion,
+  enum class Row { Account, Disconnect, Audio, Subtitles, SubtitleSize, SubtitleBackground, Picture, Sources, Headphones,
+                   HeadphoneRoom, HeadphoneBoost, HeadphoneNight, HeadphoneEq, HeadphoneSync, Autoplay, Motion,
                    Transparency, Contrast, About, Diagnostics };
 
   std::vector<Row> rows() const {
     std::vector<Row> list = {Row::Account};
     if (ctx().paired) list.push_back(Row::Disconnect);
-    for (Row r : {Row::Audio, Row::Subtitles, Row::SubtitleSize, Row::SubtitleBackground, Row::Picture, Row::Sources, Row::Autoplay,
-                  Row::Motion, Row::Transparency, Row::Contrast, Row::About, Row::Diagnostics})
+    for (Row r : {Row::Audio, Row::Subtitles, Row::SubtitleSize, Row::SubtitleBackground, Row::Picture, Row::Sources, Row::Headphones})
       list.push_back(r);
+    // The headphone details only matter while Headphones mode can be on.
+    if (ctx().headphones != "off")
+      for (Row r : {Row::HeadphoneRoom, Row::HeadphoneBoost, Row::HeadphoneNight, Row::HeadphoneEq, Row::HeadphoneSync}) list.push_back(r);
+    for (Row r : {Row::Autoplay, Row::Motion, Row::Transparency, Row::Contrast, Row::About, Row::Diagnostics}) list.push_back(r);
     return list;
   }
 
@@ -142,6 +163,19 @@ class SettingsScreen : public Screen {
       int i = c.picture == "sdr" ? 2 : c.picture == "hdr10" ? 1 : 0;
       c.picture = order[(i + d + 3) % 3];
     } else if (r == Row::Sources) c.sources = c.sources == "torrentio" ? "all" : "torrentio";
+    else if (r == Row::Headphones) {
+      static const char *order[] = {"auto", "on", "off"};
+      int i = c.headphones == "off" ? 2 : c.headphones == "on" ? 1 : 0;
+      c.headphones = order[(i + d + 3) % 3];
+    } else if (r == Row::HeadphoneRoom) {
+      const auto &list = binaural::rooms();
+      int n = static_cast<int>(list.size()), i = 0;
+      for (int k = 0; k < n; k++) if (c.headphone_room == list[static_cast<size_t>(k)].id) i = k;
+      c.headphone_room = list[static_cast<size_t>((i + d + n) % n)].id;
+    } else if (r == Row::HeadphoneBoost) c.headphone_boost = std::max(0, std::min(15, c.headphone_boost + 3 * d));
+    else if (r == Row::HeadphoneNight) c.headphone_night = !c.headphone_night;
+    else if (r == Row::HeadphoneEq) c.headphone_xm5 = !c.headphone_xm5;
+    else if (r == Row::HeadphoneSync) c.headphone_lead_ms = std::max(0, std::min(500, c.headphone_lead_ms + 20 * d));
     else if (r == Row::Autoplay) c.autoplay_next = !c.autoplay_next;
     else if (r == Row::Motion) c.reduce_motion = !c.reduce_motion;
     else if (r == Row::Transparency) c.reduce_transparency = !c.reduce_transparency;
@@ -261,6 +295,42 @@ class SettingsScreen : public Screen {
                                            : "Torrentio, Comet, Meteor, StremThru, Zilean, TorrentsDB, Knaben, Bitmagnet, The Pirate Bay and EZTV; anime adds SeaDex and Nyaa";
           choice = true;
           break;
+        case Row::Headphones:
+          title = "Headphones";
+          value = headphones_note(c);
+          choice = true;
+          break;
+        case Row::HeadphoneRoom: {
+          title = "Surround room";
+          std::string id = c.headphone_room;
+          value = !c.headphone_ir.empty() ? "Your measured response (headphones.wav in Bloob's data folder)"
+                  : id == "studio" ? "Studio: close and clear, a small treated room"
+                  : id == "cinema" ? "Cinema: big and enveloping, speakers far away"
+                                   : "Lounge: a living room with speakers around you";
+          choice = c.headphone_ir.empty();
+          break;
+        }
+        case Row::HeadphoneBoost:
+          title = "Headphone volume boost";
+          value = c.headphone_boost ? "+" + std::to_string(c.headphone_boost) + " dB, with a limiter so peaks never clip" : "None";
+          choice = true;
+          break;
+        case Row::HeadphoneNight:
+          title = "Night listening";
+          value = c.headphone_night ? "Loud scenes held back, quiet ones lifted" : "Off: the film's full dynamics";
+          toggle = c.headphone_night;
+          break;
+        case Row::HeadphoneEq:
+          title = "Earbud correction";
+          value = c.headphone_xm5 ? "Sony WF-1000XM5 (AutoEQ, oratory1990's measurement)" : "Off";
+          choice = true;
+          break;
+        case Row::HeadphoneSync:
+          title = "Headphone lip-sync";
+          value = c.headphone_lead_ms ? "Sound sent " + std::to_string(c.headphone_lead_ms) + " ms ahead of the picture"
+                                      : "None: raise it if voices come after lips";
+          choice = true;
+          break;
         case Row::Autoplay:
           title = "Play the next episode automatically";
           value = c.autoplay_next ? "Starts after a 10 second countdown" : "Off";
@@ -357,6 +427,9 @@ class AboutScreen : public Screen {
         {"stb_truetype, stb_image", "Sean Barrett \xC2\xB7 public domain or MIT, at your choice"},
         {"SDL2", "Sam Lantinga and contributors \xC2\xB7 zlib licence (the TV's own copy)"},
         {"Big Buck Bunny (test clip)", "Blender Foundation, peach.blender.org \xC2\xB7 Creative Commons Attribution 3.0"},
+        {"Headphones correction", "AutoEq by Jaakko Pasanen (MIT), from oratory1990's WF-1000XM5 measurement"},
+        {"Headphones rooms", "Bloob's own, after Brown and Duda's structural model of binaural sound (1998)"},
+        {"FFmpeg", "The FFmpeg developers \xC2\xB7 LGPL 2.1 or later (the engine and Headphones mode)"},
         {"Titles and artwork", "Cinemeta and Metahub catalogue services \xC2\xB7 rights stay with their owners"},
         {"Sources", "Found by public indexes (Torrentio, Comet, Meteor, StremThru, Zilean, TorrentsDB, Knaben, Bitmagnet, The Pirate Bay, EZTV; for anime SeaDex and Nyaa) and prepared by your own AllDebrid account"},
     };

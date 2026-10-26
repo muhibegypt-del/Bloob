@@ -8,7 +8,9 @@
 //   - sound as Dolby: AC-3 and E-AC-3 (with Atmos) pass through untouched;
 //     everything else (DTS, TrueHD, AAC, FLAC, PCM, Opus…) is decoded and
 //     re-encoded to E-AC-3, 5.1 at most, on this thread;
-//   - text subtitles as cues for Bloob to draw.
+//   - text subtitles as cues for Bloob to draw;
+//   - in Headphones mode (3.2), every track (Dolby included) decoded and
+//     rendered for two ears (headphones.h), then sent as E-AC-3 stereo.
 // Not thread-safe: one thread (the engine's feeder) calls everything.
 #include <atomic>
 #include <cstdint>
@@ -16,6 +18,7 @@
 #include <string>
 #include <vector>
 
+#include "headphones.h"
 #include "media.h"
 
 struct DemuxFacts {
@@ -53,6 +56,7 @@ struct AudioOut {
   int sample_rate = 0;
   bool atmos = false;      // E-AC-3 with Atmos, passed through
   bool converted = false;  // decoded and re-encoded by Bloob
+  bool headphones = false; // rendered for headphones (stereo out)
   std::string from;        // what it was, for people: "TrueHD 7.1"
 };
 
@@ -89,6 +93,10 @@ class Demuxer {
   void close();
   const DemuxFacts &facts() const { return facts_; }
 
+  // Headphones mode, applied at the next select_audio().
+  void set_headphones(const HeadphoneOptions &options) { headphones_ = options; }
+  const HeadphoneOptions &headphones() const { return headphones_; }
+
   // Track choice (-1: no sound / no subtitles). Returns false for a track it can't play.
   bool select_audio(int index);
   void select_text(int index);
@@ -112,6 +120,7 @@ class Demuxer {
   std::unique_ptr<Impl> impl_;
   DemuxFacts facts_;
   AudioOut audio_out_;
+  HeadphoneOptions headphones_;
   int audio_choice_ = -1, text_choice_ = -1;
   std::atomic<bool> interrupted_{false};
   friend int demux_interrupt(void *);

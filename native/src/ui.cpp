@@ -31,7 +31,26 @@ void Ctx::save_settings() {
                                 ",\"reduceMotion\":" + (reduce_motion ? "true" : "false") +
                                 ",\"reduceTransparency\":" + (reduce_transparency ? "true" : "false") +
                                 ",\"highContrast\":" + (high_contrast ? "true" : "false") +
+                                ",\"headphones\":" + Json::quote(headphones) + ",\"headphoneRoom\":" + Json::quote(headphone_room) +
+                                ",\"headphoneBoost\":" + std::to_string(headphone_boost) +
+                                ",\"headphoneNight\":" + (headphone_night ? "true" : "false") +
+                                ",\"headphoneEq\":" + (headphone_xm5 ? "\"xm5\"" : "\"off\"") +
+                                ",\"headphoneLeadMs\":" + std::to_string(headphone_lead_ms) +
                                 ",\"welcomeSeen\":" + (welcome_seen ? "true" : "false") + ",\"recentSearches\":[" + list + "]}");
+}
+
+// Automatic: on whenever the TV sends its sound to Bluetooth ("bt_soundbar" is
+// what this TV reports with the XM5 earbuds connected, 25 October 2026).
+HeadphoneOptions Ctx::headphone_options() const {
+  HeadphoneOptions o;
+  o.enabled = headphones == "on" || (headphones == "auto" && sound_output.compare(0, 3, "bt_") == 0);
+  o.room = headphone_room;
+  o.boost_db = static_cast<float>(headphone_boost);
+  o.night = headphone_night;
+  o.xm5 = headphone_xm5;
+  o.lead_ms = headphone_lead_ms;
+  o.ir_file = headphone_ir;
+  return o;
 }
 
 void Ctx::mark(const char *stage) {

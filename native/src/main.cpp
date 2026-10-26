@@ -79,6 +79,13 @@ class App {
     Ctx &c = ctx();
     c.dir = app_directory();
     c.app_id = app_id();
+    // The owner's own measured headphone response, if one was put in the data
+    // folder (never in the app or the repository): used instead of Bloob's room.
+    const char *ir = "/media/internal/com.muhib.bloob/headphones.wav";
+    if (access(ir, R_OK) == 0) {
+      c.headphone_ir = ir;
+      logf("sound", "measured headphone response found: %s", ir);
+    }
     SDL_SetHint("SDL_WEBOS_ACCESS_POLICY_KEYS_BACK", "true");
     SDL_SetHint("SDL_WEBOS_ACCESS_POLICY_KEYS_EXIT", "true");
     SDL_SetHint("SDL_WEBOS_CURSOR_SLEEP_TIME", "5000");
@@ -171,6 +178,7 @@ class App {
                             cx.invalidate();
                           });
     watch_network();
+    watch_sound_output();
     watch_memory();
     start_service();
 
@@ -231,6 +239,21 @@ class App {
     }, true);
   }
 
+  // Where the TV sends its sound: Headphones mode turns itself on for Bluetooth
+  // ("bt_soundbar" with the XM5 earbuds, "tv_speaker" without, 25 October 2026).
+  void watch_sound_output() {
+    Luna::instance().call("luna://com.webos.service.settings/getSystemSettings",
+                          "{\"category\":\"sound\",\"keys\":[\"soundOutput\"],\"subscribe\":true}", [](const std::string &reply) {
+      Json j = Json::parse(reply);
+      std::string out = j["settings"]["soundOutput"].as_string();
+      if (out.empty()) return;
+      Ctx &c = ctx();
+      if (out != c.sound_output) logf("sound", "the TV's sound goes to %s", out.c_str());
+      c.sound_output = out;
+      c.invalidate();
+    }, true);
+  }
+
   void start_service() {
     Ctx &c = ctx();
     service_started_at_ = now_ms();
@@ -258,6 +281,12 @@ class App {
           x.reduce_motion = r.json["reduceMotion"].as_bool(false);
           x.reduce_transparency = r.json["reduceTransparency"].as_bool(false);
           x.high_contrast = r.json["highContrast"].as_bool(false);
+          x.headphones = r.json["headphones"].as_string("auto");
+          x.headphone_room = r.json["headphoneRoom"].as_string("lounge");
+          x.headphone_boost = static_cast<int>(std::max<long long>(0, std::min<long long>(15, r.json["headphoneBoost"].as_int(9))));
+          x.headphone_night = r.json["headphoneNight"].as_bool(false);
+          x.headphone_xm5 = r.json["headphoneEq"].as_string("xm5") == "xm5";
+          x.headphone_lead_ms = static_cast<int>(std::max<long long>(0, std::min<long long>(500, r.json["headphoneLeadMs"].as_int(0))));
           x.welcome_seen = r.json["welcomeSeen"].as_bool(false);
           x.settings_loaded = true;
           x.recent_searches.clear();

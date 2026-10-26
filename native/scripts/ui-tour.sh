@@ -25,7 +25,7 @@ run() {  # run <name> <unpaired 0|1> <steps...>
   sleep 1
   local script
   script=$(IFS='|'; echo "$*")
-  BLOOB_EFFECTS=full SDL_VIDEODRIVER=dummy BLOOB_WINDOW=1280x720 BLOOB_SERVICE_PORT=$PORT BLOOB_SNAPSHOT_DIR="$OUT" BLOOB_SCRIPT="$script" \
+  BLOOB_SOUND_OUTPUT=${BLOOB_SOUND_OUTPUT:-bt_soundbar} BLOOB_EFFECTS=full SDL_VIDEODRIVER=dummy BLOOB_WINDOW=1280x720 BLOOB_SERVICE_PORT=$PORT BLOOB_SNAPSHOT_DIR="$OUT" BLOOB_SCRIPT="$script" \
     timeout 240 "$STAGE/bin/bloob_host" > "$OUT/$name.log" 2>&1 || { echo "$name: app exited with $?"; tail -30 "$OUT/$name.log"; }
   kill $service 2>/dev/null || true
   wait $service 2>/dev/null || true

@@ -119,6 +119,12 @@ struct Demuxer::Impl {
   AVAudioFifo *fifo = nullptr;
   AVFrame *frame = nullptr;
   AVFrame *enc_frame = nullptr;
+  // Headphones mode: the binaural chain between decoder and encoder.
+  HeadphoneOptions hp;
+  HeadphoneChain chain;
+  AVFrame *hp_frame = nullptr;
+  bool hp_failed = false;
+  long long lead_us = 0;  // sound sent this much ahead of the picture
   long long next_pts_us = AV_NOPTS_VALUE;  // of the next encoded frame
   std::deque<DemuxPacket> ready;
   // Picture subtitles.
@@ -132,6 +138,11 @@ struct Demuxer::Impl {
     fifo = nullptr;
     av_frame_free(&frame);
     av_frame_free(&enc_frame);
+    av_frame_free(&hp_frame);
+    chain.close();
+    hp = HeadphoneOptions();
+    hp_failed = false;
+    lead_us = 0;
     next_pts_us = AV_NOPTS_VALUE;
   }
   void close_sub() { avcodec_free_context(&sub_dec); }
@@ -336,13 +347,15 @@ bool Demuxer::select_audio(int index) {
   AVCodecParameters *p = st->codecpar;
   AudioOut out;
   out.from = facts_.audio[static_cast<size_t>(index)].codec + " " + channels_name(p->ch_layout.nb_channels);
-  if (p->codec_id == AV_CODEC_ID_AC3 || p->codec_id == AV_CODEC_ID_EAC3) {
+  const bool hp = headphones_.enabled;
+  if (!hp && (p->codec_id == AV_CODEC_ID_AC3 || p->codec_id == AV_CODEC_ID_EAC3)) {
     out.codec = p->codec_id == AV_CODEC_ID_AC3 ? "AC3" : "AC3 PLUS";
     out.channels = p->ch_layout.nb_channels;
     out.sample_rate = p->sample_rate;
     out.atmos = p->profile == AV_PROFILE_EAC3_DDP_ATMOS;
   } else {
-    // Decode, then E-AC-3: 5.1 for anything with surround, stereo otherwise.
+    // Decode, then E-AC-3: 5.1 for anything with surround, stereo otherwise;
+    // in Headphones mode, the binaural render's stereo.
     const AVCodec *dc = avcodec_find_decoder(p->codec_id);
     const AVCodec *ec = avcodec_find_encoder(AV_CODEC_ID_EAC3);
     if (!dc || !ec) {
@@ -352,40 +365,54 @@ bool Demuxer::select_audio(int index) {
     m.dec = avcodec_alloc_context3(dc);
     avcodec_parameters_to_context(m.dec, p);
     m.dec->pkt_timebase = st->time_base;
-    if (avcodec_open2(m.dec, dc, nullptr) < 0) {
+    AVDictionary *dopts = nullptr;
+    // Dolby decoders: the stream's compression off for full dynamics (Night
+    // keeps it). Dialogue normalisation isn't applied by FFmpeg's decoder.
+    if (hp) av_dict_set(&dopts, "drc_scale", headphones_.night ? "1" : "0", 0);
+    int opened = avcodec_open2(m.dec, dc, &dopts);
+    av_dict_free(&dopts);
+    if (opened < 0) {
       m.close_audio();
       logf("demux", "could not open the %s decoder", out.from.c_str());
       return false;
     }
     int in_ch = p->ch_layout.nb_channels;
     AVChannelLayout layout;
-    av_channel_layout_default(&layout, in_ch >= 3 ? 6 : in_ch == 1 ? 1 : 2);  // 5.1, mono or stereo
+    av_channel_layout_default(&layout, hp ? 2 : in_ch >= 3 ? 6 : in_ch == 1 ? 1 : 2);  // 5.1, mono or stereo
     m.enc = avcodec_alloc_context3(ec);
     m.enc->sample_fmt = AV_SAMPLE_FMT_FLTP;
     m.enc->sample_rate = kOutRate;
     av_channel_layout_copy(&m.enc->ch_layout, &layout);
-    m.enc->bit_rate = in_ch >= 3 ? 1024000 : 256000;
+    m.enc->bit_rate = hp ? 448000 : in_ch >= 3 ? 1024000 : 256000;
     m.enc->time_base = AVRational{1, kOutRate};
     if (avcodec_open2(m.enc, ec, nullptr) < 0) {
       m.close_audio();
       logf("demux", "could not open the E-AC-3 encoder");
       return false;
     }
-    // The decoder's layout may only be known after the first frame; swr is set up then.
+    // The decoder's layout may only be known after the first frame; swr (and
+    // the headphone chain) are set up then.
     m.fifo = av_audio_fifo_alloc(AV_SAMPLE_FMT_FLTP, layout.nb_channels, m.enc->frame_size * 4);
     m.frame = av_frame_alloc();
     m.enc_frame = av_frame_alloc();
+    if (hp) {
+      m.hp = headphones_;
+      m.hp_frame = av_frame_alloc();
+      m.lead_us = std::max(0, headphones_.lead_ms) * 1000LL;
+    }
     out.codec = "AC3 PLUS";
     out.channels = layout.nb_channels;
     out.sample_rate = kOutRate;
     out.converted = true;
+    out.headphones = hp;
   }
   st->discard = AVDISCARD_DEFAULT;
   m.audio_stream = m.audio_streams[static_cast<size_t>(index)];
   audio_choice_ = index;
   audio_out_ = out;
   facts_.audio[static_cast<size_t>(index)].selected = true;
-  logf("demux", "sound: %s%s", out.from.c_str(), out.converted ? " -> Dolby Digital Plus (converted by Bloob)" : " (passed to the TV)");
+  logf("demux", "sound: %s%s", out.from.c_str(),
+       out.headphones ? " -> headphones, Dolby Digital Plus stereo" : out.converted ? " -> Dolby Digital Plus (converted by Bloob)" : " (passed to the TV)");
   return true;
 }
 
@@ -429,6 +456,7 @@ bool Demuxer::seek(long long ms) {
   if (m.enc) avcodec_flush_buffers(m.enc);
   if (m.fifo) av_audio_fifo_reset(m.fifo);
   swr_free(&m.swr);
+  m.chain.close();  // reopened at the next frame, without the old sound in it
   m.next_pts_us = AV_NOPTS_VALUE;
   if (m.sub_dec) avcodec_flush_buffers(m.sub_dec);
   m.ready.clear();
@@ -457,7 +485,11 @@ void drain_fifo(Demuxer::Impl &m) {
       DemuxPacket p;
       p.kind = DemuxPacket::Audio;
       p.data.assign(out->data, out->data + out->size);
-      p.pts_us = pts;
+      p.pts_us = pts - m.lead_us;
+      if (p.pts_us < 0) {  // led out of the film's start: nothing to play
+        av_packet_unref(out);
+        continue;
+      }
       p.duration_us = static_cast<long long>(n) * 1000000 / kOutRate;
       m.ready.push_back(std::move(p));
       av_packet_unref(out);
@@ -466,32 +498,57 @@ void drain_fifo(Demuxer::Impl &m) {
   }
 }
 
+// Resamples a frame into the encoder's layout and encodes what fills a frame.
+void queue_samples(Demuxer::Impl &m, AVFrame *f) {
+  if (!m.swr) {
+    if (swr_alloc_set_opts2(&m.swr, &m.enc->ch_layout, AV_SAMPLE_FMT_FLTP, kOutRate, &f->ch_layout,
+                            static_cast<AVSampleFormat>(f->format), f->sample_rate, 0, nullptr) < 0 ||
+        swr_init(m.swr) < 0) {
+      swr_free(&m.swr);
+      return;
+    }
+  }
+  int out_max = swr_get_out_samples(m.swr, f->nb_samples);
+  uint8_t **buf = nullptr;
+  if (av_samples_alloc_array_and_samples(&buf, nullptr, m.enc->ch_layout.nb_channels, out_max, AV_SAMPLE_FMT_FLTP, 0) >= 0) {
+    int got = swr_convert(m.swr, buf, out_max, const_cast<const uint8_t **>(f->extended_data), f->nb_samples);
+    if (got > 0) av_audio_fifo_write(m.fifo, reinterpret_cast<void **>(buf), got);
+    av_freep(&buf[0]);
+    av_freep(&buf);
+  }
+  drain_fifo(m);
+}
+
 void convert_audio(Demuxer::Impl &m, AVPacket *pkt) {
   if (avcodec_send_packet(m.dec, pkt) < 0) return;
   while (avcodec_receive_frame(m.dec, m.frame) == 0) {
-    if (!m.swr) {
-      if (swr_alloc_set_opts2(&m.swr, &m.enc->ch_layout, AV_SAMPLE_FMT_FLTP, kOutRate, &m.frame->ch_layout,
-                              static_cast<AVSampleFormat>(m.frame->format), m.frame->sample_rate, 0, nullptr) < 0 ||
-          swr_init(m.swr) < 0) {
-        swr_free(&m.swr);
-        av_frame_unref(m.frame);
-        continue;
-      }
-    }
     if (m.next_pts_us == AV_NOPTS_VALUE) {
       int64_t ts = m.frame->best_effort_timestamp;
       m.next_pts_us = ts == AV_NOPTS_VALUE ? 0 : m.to_us(ts, m.dec->pkt_timebase);
     }
-    int out_max = swr_get_out_samples(m.swr, m.frame->nb_samples);
-    uint8_t **buf = nullptr;
-    if (av_samples_alloc_array_and_samples(&buf, nullptr, m.enc->ch_layout.nb_channels, out_max, AV_SAMPLE_FMT_FLTP, 0) >= 0) {
-      int got = swr_convert(m.swr, buf, out_max, const_cast<const uint8_t **>(m.frame->extended_data), m.frame->nb_samples);
-      if (got > 0) av_audio_fifo_write(m.fifo, reinterpret_cast<void **>(buf), got);
-      av_freep(&buf[0]);
-      av_freep(&buf);
+    if (m.hp_frame && !m.hp_failed) {
+      // Headphones: through the binaural chain (built for the decoder's real layout).
+      if (!m.chain.is_open()) {
+        std::string why;
+        if (!m.chain.open(m.hp, &m.frame->ch_layout, m.frame->sample_rate, m.frame->format, &why)) {
+          // Without the chain the sound still plays: a plain stereo downmix.
+          logf("demux", "headphones off for this track: %s", why.c_str());
+          m.hp_failed = true;
+        }
+      }
+      if (!m.hp_failed) {
+        m.frame->pts = av_rescale_q(m.frame->best_effort_timestamp, m.dec->pkt_timebase, AVRational{1, m.frame->sample_rate});
+        m.chain.push(m.frame);
+        av_frame_unref(m.frame);
+        while (m.chain.pull(m.hp_frame)) {
+          queue_samples(m, m.hp_frame);
+          av_frame_unref(m.hp_frame);
+        }
+        continue;
+      }
     }
+    queue_samples(m, m.frame);
     av_frame_unref(m.frame);
-    drain_fifo(m);
   }
 }
 

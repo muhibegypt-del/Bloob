@@ -8,6 +8,8 @@
 #include <string>
 #include <vector>
 
+#include "headphones.h"
+
 struct MediaTrack {
   int index = 0;
   std::string language;
@@ -97,6 +99,8 @@ class MediaBackend {
   virtual std::string audio_note() const { return ""; }
   // What the TV's decoder reports it is decoding ("3840×2160 · 23.976 fps · DolbyVision"), when known.
   virtual std::string decoder_note() const { return ""; }
+  // Headphones mode (3.2): the engine renders the sound for two ears; others ignore it.
+  virtual void set_headphones(const HeadphoneOptions &) {}
   virtual const char *engine_name() const = 0;
 };
 
