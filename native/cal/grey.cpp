@@ -27,7 +27,7 @@ GreyOutcome solve_grey(Device &dev, Measurer &meter, const GreySpec &spec, const
     std::vector<Vec3> m(n);
     for (int k = 0; k < n; k++) {
       int c = spec.codes[k];
-      if (!meter.read({c, c, c}, &m[k], 3)) return out;
+      if (!meter.read({c, c, c}, &m[k], spec.grey_reads)) return out;
     }
     // Score this table: the average, with the worst level counting too.
     double avg = 0, worst = 0;
@@ -56,6 +56,7 @@ GreyOutcome solve_grey(Device &dev, Measurer &meter, const GreySpec &spec, const
       char b[96];
       std::snprintf(b, sizeof b, "grey pass %d: %.3f", pass, score);
       log->push_back(b);
+      if (g_log_hook) g_log_hook(b);
     }
     if (score < best_score - 0.01) {
       best_score = score;
@@ -82,13 +83,14 @@ GreyOutcome solve_grey(Device &dev, Measurer &meter, const GreySpec &spec, const
         j_at[k] = outputs(lut, k);
         int code = spec.codes[k], s = spec.step;
         if (m[k].y < 1.0 || code + s > spec.code_hi || code - s < spec.code_lo) continue;
+        if (spec.jac_every > 1 && k % spec.jac_every != 0 && k != n - 2) continue;
         double dv = spec.signal(code + s) - spec.signal(code - s);
         for (int c = 0; c < 3; c++) {
           Vec3 up, down;
           Patch pu{code, code, code}, pd{code, code, code};
           (c == 0 ? pu.r : c == 1 ? pu.g : pu.b) += s;
           (c == 0 ? pd.r : c == 1 ? pd.g : pd.b) -= s;
-          if (!meter.read(pu, &up, 3) || !meter.read(pd, &down, 3)) return out;
+          if (!meter.read(pu, &up, spec.jac_reads) || !meter.read(pd, &down, spec.jac_reads)) return out;
           double dout = lut.eval(c, spec.signal(code + s)) - lut.eval(c, spec.signal(code - s));
           if (std::fabs(dout) < 1e-4 * dv) dout = 1e-4 * dv;
           Vec3 col = (up - down) / dout;
@@ -104,6 +106,17 @@ GreyOutcome solve_grey(Device &dev, Measurer &meter, const GreySpec &spec, const
         double f = m[k].y / std::max(m[below].y, 1e-6) * lv[below] / std::max(lv[k], 1e-6);
         for (int r = 0; r < 3; r++)
           for (int c = 0; c < 3; c++) J[k].m[r][c] = J[below].m[r][c] * f;
+        haveJ[k] = true;
+      }
+      // Levels skipped by jac_every borrow from the nearest measured level below, scaled by slope (∝ Y/v).
+      for (int k = 0; k < n; k++) {
+        if (haveJ[k] || m[k].y < 1.0) continue;
+        int b = k - 1;
+        while (b >= 0 && !haveJ[b]) b--;
+        if (b < 0) continue;
+        double f = m[k].y / std::max(m[b].y, 1e-6) * lv[b] / std::max(lv[k], 1e-6);
+        for (int r = 0; r < 3; r++)
+          for (int c = 0; c < 3; c++) J[k].m[r][c] = J[b].m[r][c] * f;
         haveJ[k] = true;
       }
       // Near black: the nearest measured sensitivity, scaled by the local slope of the grey ramp.
@@ -146,6 +159,10 @@ GreyOutcome solve_grey(Device &dev, Measurer &meter, const GreySpec &spec, const
       double damp = (m[k].y > 5 ? 0.9 : 0.6) * (pass < 3 ? 1.0 : 0.7);
       delta[k] = J[k].inverse() * (spec.target(spec.codes[k]) - m[k]) * damp;
     }
+    // No table value moves more than 0.1 in one pass: a sensitivity that read as almost
+    // nothing (a level that did not respond) must not turn into a wild step.
+    for (auto &d : delta)
+      for (int c = 0; c < 3; c++) d[c] = std::clamp(d[c], -0.1, 0.1);
     // After the first big steps the remaining error is mostly smooth in level and the
     // meter's noise is not: smooth each level's correction with its neighbours.
     if (pass >= 2) {

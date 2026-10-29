@@ -2,9 +2,15 @@
 // Reading rules (CALIBRATION-PLAN.md §4.3): every reading the procedure uses
 // passes through here. Repeats until two consecutive readings agree (more near
 // black), keeps the median, and normalises slow dimming with a sentinel patch.
+#include <functional>
+#include <string>
+
 #include "device.h"
 
 namespace cal {
+
+// Every line the procedure logs is also passed here (bloob-cal shows them live).
+extern std::function<void(const std::string &)> g_log_hook;
 
 class Measurer {
  public:

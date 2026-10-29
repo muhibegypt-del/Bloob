@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(bloob_native VERSION 3.2.1 LANGUAGES C CXX)
+project(bloob_native VERSION 3.3.0 LANGUAGES C CXX)
 
 # Cross-compile for the TV with the webOS NDK (openlgtv buildroot-nc4):
 #   cmake -B build -DCMAKE_TOOLCHAIN_FILE=/opt/arm-webos-linux-gnueabi_sdk-buildroot/share/buildroot/toolchainfile.cmake
@@ -61,7 +61,7 @@ target_link_libraries(buna_demux PUBLIC buna_core
 set(APP_SOURCES
   src/main.cpp src/gfx.cpp src/media.cpp src/platform.cpp src/http.cpp src/api.cpp
   src/images.cpp src/icons.cpp src/ui.cpp src/common.cpp src/pairing.cpp src/speech.cpp
-  src/browse.cpp src/details.cpp src/sources.cpp src/player.cpp src/search.cpp src/settings.cpp src/inspect.cpp src/alloc.cpp
+  src/browse.cpp src/details.cpp src/sources.cpp src/player.cpp src/search.cpp src/settings.cpp src/calibrate.cpp src/inspect.cpp src/alloc.cpp
   src/es_player.cpp src/starfish.cpp)
 
 if (CMAKE_CROSSCOMPILING)
@@ -70,6 +70,7 @@ if (CMAKE_CROSSCOMPILING)
   pkg_check_modules(GLIB REQUIRED glib-2.0)
 
   add_executable(bloob ${APP_SOURCES} src/luna.cpp)
+  add_dependencies(bloob bloob-cal)  # packaged beside it (Settings → Calibrate)
   target_include_directories(bloob PRIVATE ${SDL2_INCLUDE_DIRS} ${GLIB_INCLUDE_DIRS})
   # BLOOB_STARFISH: the engine's TV output (starfish.cpp; libplayerAPIs is opened at run time).
   target_compile_definitions(bloob PRIVATE BLOOB_STARFISH)
@@ -85,6 +86,8 @@ if (CMAKE_CROSSCOMPILING)
     COMMAND ${CMAKE_COMMAND} -E make_directory ${PKG}/bin ${PKG}/assets/fonts ${PKG}/assets/media
     COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:bloob> ${PKG}/bin/bloob
     COMMAND ${CMAKE_STRIP} ${PKG}/bin/bloob
+    COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:bloob-cal> ${PKG}/bin/bloob-cal
+    COMMAND ${CMAKE_STRIP} ${PKG}/bin/bloob-cal
     COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_SOURCE_DIR}/package/appinfo.json ${CMAKE_SOURCE_DIR}/package/icon.png ${PKG}/
     COMMAND ${CMAKE_COMMAND} -E copy
       ${CMAKE_SOURCE_DIR}/third_party/fonts/Inter-Regular.ttf

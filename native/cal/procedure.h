@@ -43,7 +43,21 @@ struct SdrOptions {
   int colour_passes = 3;
   int lattice = 11;
   int grid = 9;              // characterisation grid per axis
+  int loop_samples = 100;    // extra random cube samples per closed-loop pass
+  int jac_every = 1, jac_reads = 3, grey_reads = 3;  // grey-stage reading budget (grey.h)
   unsigned seed = 7;
+  // Fewer readings for the real TV, where a Spyder5 takes seconds per reading.
+  static SdrOptions tv_profile() {
+    SdrOptions o;
+    o.grey_passes = 8;
+    o.colour_passes = 2;
+    o.grid = 7;
+    o.loop_samples = 40;
+    o.jac_every = 2;
+    o.jac_reads = 2;
+    o.grey_reads = 2;
+    return o;
+  }
 };
 
 struct SdrResult {

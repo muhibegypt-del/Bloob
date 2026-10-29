@@ -17,7 +17,10 @@ struct GreySpec {
   std::function<Vec3(int)> target;                           // code → wanted XYZ, cd/m²
   std::function<double(const Vec3 &, const Vec3 &)> error;   // measured, wanted → ΔE
   int passes = 12;
-  int step = 8;  // codes, for the sensitivity patches
+  int step = 8;          // codes, for the sensitivity patches
+  int jac_every = 1;     // measure sensitivities at every Nth level; the others borrow, scaled
+  int jac_reads = 3;     // readings per sensitivity patch
+  int grey_reads = 3;    // readings per grey level
 };
 
 struct GreyOutcome {

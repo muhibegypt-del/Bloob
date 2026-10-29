@@ -160,25 +160,31 @@ The owner chose native. `native/` is a C++ webOS app (`com.muhib.bloob`, "Bloob 
   - **Player:** Audio panel rows *Room* and *Lip-sync* (Left/Right; applied 900 ms after the last change); info-panel row *Headphones*. Settings rows: Headphones, Surround room, Headphone volume boost, Night listening, Earbud correction, Headphone lip-sync (all saved by the service: `headphones`, `headphoneRoom`, `headphoneBoost`, `headphoneNight`, `headphoneEq`, `headphoneLeadMs`).
   - **Measured on the desktop:** one chain renders 50–85× faster than real time. Previews come out at about −14 LUFS with a −0.9 dBFS peak; the plain downmix is about 13 dB quieter. `tools/hp_preview.cpp` (`build-host/hp_preview <dir> [film]`) writes WAV previews. Tests are in `tests/headphones_test.cpp` and the demux test.
   - **Not yet:** Atmos heights (Cavern's E-AC-3 JOC; truehdd for TrueHD), lip-sync measured on the TV, and the phone/LDAC route. TV pass: `native/TV-TEST.md` §17; the IPK is `native/artifacts/com.muhib.bloob_3.2.1_arm.ipk`.
-- **Calibration (brain built and proven on a simulated G2, 29 October 2026; nothing on the TV yet).** One run, no questions: SDR (`expert2`), HDR10 (`hdr_cinema`) and Dolby Vision (`dolby_cinema_dark`).
-  - **Equipment:** the owner's Spyder5 with Argyll `spotread`, called on the TV and never bundled (AGPL), and patterns from the TV's own generator.
-  - **Tables:** LUTs and tone mapping are written through LG's calibration API, with the exact `externalpq` formats taken from bscpylgtv's source.
-  - **Plan:** `native/CALIBRATION-PLAN.md`, revision 4. It holds the targets, the TV interface, measurement rules, solver, per-mode sequences (checked against Calman's LG method), safety, the TV bring-up steps C0–C6 and work packages W1–W10.
-  - **Built:** `native/cal/`, written once against `cal::Device`:
-    - colour science and LG's table formats (unity tables byte-identical to bscpylgtv's);
-    - a WOLED panel model;
-    - the reading rules;
-    - the shared grey solver;
-    - the SDR, HDR10 and Dolby Vision procedures;
-    - the virtual G2.
-  - **Proven:** `build-host/cal_tests` (7 s, also run by `build.sh`) reaches the pass marks from 2.5–7.6 ΔE starts: SDR grey about 0.2 and colour 0.1–0.2; HDR10 grey 0.18 and colour 0.81 ΔE ITP; Dolby Vision grey 0.14. Fault cases are caught, including firmware that ignores the 3D LUT, a reversed pipeline, dimming, no USB stick and no pass-through. The same tests pass as ARM code under qemu (static build).
-  - **Next (W3b–W8):** the `bloob-cal` bridge, `bloob-meter`, `cal-tv.js`/`cal-meter.js`/`calibrate.js`, carrier clips and the Calibrate screen.
-  - **TV, 29 October 2026 (`cal-check.sh`, read-only):** OLED55G26LA, chip W22O, firmware 23.25.55 (`getCurrentSWInformation` reports webOSTV 7.0).
-    - The owner watches SDR in `expert1`, so that is the SDR mode calibrated. `expert2` is the spare for experiments.
-    - The calibration service is `com.webos.service.pqcontroller`; it answers `luna-send` from root, so no pairing is needed. The 1D LUT getter returned 3072 values.
-    - No meter correction was on the TV yet. The correction is DisplayCAL's "LG TV 55G2 (i1 Pro 2)" `.ccss`, at `/media/internal/com.muhib.bloob/calibration/argyll/lg-55g2.ccss`, on the TV only. A Spyder5 needs no Datacolor data for a `.ccss`.
-    - **Runner:** `native/artifacts/bloob-cal` (ARM, run as root over SSH; source `tools/bloob_cal.cpp`). `check` is read-only (getters, meter, noise, range). `test` is the Expert 2 write/order/reset test, which always restores Expert 2 and the owner's mode. It passes 7 of 7 against `tools/fake-tv/fake_tv.py`. Next: `sdr` on `expert1`.
-  - **Queue:** it follows real Dolby Vision for profile 7.
+- **3.3.0 Calibrate (29 October 2026, built, not yet run from Bloob on the TV).** Settings → **Calibrate** (`src/calibrate.cpp`). Its rows:
+  - **Check** (read-only);
+  - **Test on Expert 2** (writes, then puts Expert 2 back);
+  - **Calibrate Expert 1** (the owner's SDR mode, **140 nits**: "a small lamp on in the corner");
+  - **Undo**, and **Stop** while a run is going.
+
+  How it works:
+  - **The program.** The screen starts `bin/bloob-cal`, packaged in the IPK and built from `tools/bloob_cal.cpp` and `cal/`, as root through the Homebrew Channel. It runs on if Bloob is closed. Every line it writes also goes to `/media/internal/com.muhib.bloob/calibration/status.json`, which the screen reads every second, and the whole run log is `last-run.log`.
+  - **The procedure** (`native/cal/`, `native/CALIBRATION-PLAN.md`, revision 4) is written once against `cal::Device`. `cal/tv_device.*` talks to `com.webos.service.pqcontroller` (luna-send as root; no pairing). Patterns and the 3D LUT go over the second-screen socket, because on the owner's TV patterns sent by luna-send did not appear. The TV asks once to allow Bloob.
+  - **The meter** is the Spyder probe app's Argyll `spotread` (AGPL, never bundled), with DisplayCAL's "LG TV 55G2 (i1 Pro 2)" `.ccss` (on the TV only, `calibration/argyll/lg-55g2.ccss`).
+  - **Before a calibration:** it saves the Expert 1 settings (`expert1-settings.json`, kept until Undo) and the readable tables.
+  - **After:** it checks the result outside calibration mode. A failed or stopped run is undone automatically.
+  - **TV profile:** about 3,900 readings, for a few hours.
+
+  Proven:
+  - `build-host/cal_tests` reaches the pass marks on the simulated G2 (also as ARM under qemu), at 140 nits too.
+  - `tools/fake-tv/fake_tv.py` (a stand-in `luna-send`, socket and terminal `spotread`) runs `check` and `test` (7/7) end to end. Stop on `sdr` ends the run and undoes it (factory tables, saved settings and light back). The screen shows a running `sdr` on the desktop. A full stand-in `sdr` run, Undo from the screen, and starting a run from the screen (`BLOOB_HOST_EXEC=1`) are being checked.
+
+  On the TV (29 October 2026, `cal-check.sh` and `bloob-cal check` over SSH):
+  - OLED55G26LA, chip W22O, firmware 23.25.55.
+  - The 1D LUT and 3×3 matrix are readable; the 3D LUT is not (so Undo uses LG's factory reset).
+  - The meter session works.
+  - Patterns sent by luna-send never appeared, hence the socket.
+
+  TV pass: `native/TV-TEST.md` §18. HDR10 and Dolby Vision are proven on the simulator only and not yet on the screen.
 - **Design (2.0, Glass):** the visual system, with materials, tokens, type, focus, motion, states, the spoken interface and per-screen layouts, is in `native/DESIGN.md`. The tokens live in `native/src/theme.h`, the type scale, label roles and components in `ui.cpp`, and the frost bake in `images.cpp`.
 - **Rendering and playback:**
   - The TV's SDL2 provides the window and remote. Bloob draws with its own renderer: Inter via stb_truetype with oversampling and gamma, exact-size anti-aliased shapes, and artwork via stb_image scaled on worker threads, on a 1920×1080 offscreen canvas.
@@ -195,7 +201,7 @@ The owner chose native. `native/` is a C++ webOS app (`com.muhib.bloob`, "Bloob 
   - watch progress and settings.
   If the bus will not start the service, the app runs it directly with the TV's Node and stops it on exit.
 - **Build and test scripts:**
-  - `native/scripts/build.sh`: tests, cross-build, ABI guards (no GLIBCXX, and since 2.4 no glibc symbol newer than GLIBC_2.4), service staging, IPK with fixed modes (`native/artifacts/com.muhib.bloob_3.2.1_arm.ipk`).
+  - `native/scripts/build.sh`: tests, cross-build, ABI guards (no GLIBCXX, and since 2.4 no glibc symbol newer than GLIBC_2.4), service staging, IPK with fixed modes (`native/artifacts/com.muhib.bloob_3.3.0_arm.ipk`).
   - `native/scripts/tv-inspect.sh`: reads the runtime inspector snapshot `/tmp/bloob-state.json` from the TV, read-only.
   - `native/scripts/ui-tour.sh`: drives the whole app on the desktop through the acceptance task, plus quick-menu, Home and pipeline-lost events, against the real service with fixture sources.
   - `native/scripts/ui-snapshots.sh`: covers player states.

@@ -68,8 +68,10 @@ def pq(payload, write):
     else:
         if not s["session"]:
             reply = {"returnValue": False, "errorText": "not in calibration mode"}
-        elif s["session"] == "expert1":
+        elif s["session"] == "expert1" and os.environ.get("FAKE_TV_PROTECT_EXPERT1"):
             reply = {"returnValue": False, "errorText": "the fake TV refuses writes to expert1 (the test must not touch it)"}
+        elif cmd == "BACKLIGHT_UI_DATA":
+            s["backlight"] = decode_u16(payload["data"])[0]
         elif cmd == "1D_DPG_DATA":
             if payload.get("dataOpt") == 2:
                 s["lut1d"] = None
@@ -79,9 +81,11 @@ def pq(payload, write):
         elif cmd in ("BT709_3D_LUT_DATA", "BT2020_3D_LUT_DATA"):
             if payload.get("dataOpt") == 2:
                 s["swap"] = False
+                s["lut3d"] = None
             else:
                 v = decode_u16(payload["data"])
                 s["swap"] = v[3] == 0 and v[4] == 128  # node (r=1,g=0,b=0) became green
+                s["lut3d"] = None if s["swap"] else v
     save(s)
     return reply
 
@@ -96,7 +100,12 @@ def luna(argv):
     elif uri.endswith("getSystemSettings"):
         r = {"returnValue": True, "settings": {"pictureMode": s["mode"], "backlight": s["backlight"], "contrast": 85}}
     elif uri.endswith("setSystemSettings"):
-        s["mode"] = payload["settings"]["pictureMode"]
+        st = payload["settings"]
+        if "pictureMode" in st:
+            s["mode"] = st["pictureMode"]
+        if "backlight" in st:
+            s["backlight"] = int(st["backlight"])
+        s.setdefault("settings_set", []).append(st)
         save(s)
         r = {"returnValue": True}
     else:
@@ -113,6 +122,21 @@ def colour():
     v = [min(max((c - 64) / 876, 0), 1) for c in code]
     if s["swap"]:
         v = [v[1], v[0], v[2]]
+    elif s.get("lut3d"):
+        # Trilinear between the 33-point table's nodes, as a TV blends them.
+        t3 = s["lut3d"]
+        f = [min(max(c, 0.0), 1.0) * 32 for c in v]
+        i0 = [min(int(x), 31) for x in f]
+        w = [f[k] - i0[k] for k in range(3)]
+        acc = [0.0, 0.0, 0.0]
+        for dz in (0, 1):
+            for dy in (0, 1):
+                for dx in (0, 1):
+                    wt = (w[0] if dx else 1 - w[0]) * (w[1] if dy else 1 - w[1]) * (w[2] if dz else 1 - w[2])
+                    i = (((i0[2] + dz) * 33 + i0[1] + dy) * 33 + i0[0] + dx) * 3
+                    for k in range(3):
+                        acc[k] += wt * (1.0 if t3[i + k] >= 4095 else t3[i + k] / 4096.0)
+        v = acc
     t = s["lut1d"] or FACTORY_1D
     v = [t[c][min(int(v[c] * 1023 + 0.5), 1023)] / 32767 for c in range(3)]
     lin = [x ** 2.4 for x in v]

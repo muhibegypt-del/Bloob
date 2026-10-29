@@ -6,6 +6,8 @@
 
 namespace cal {
 
+std::function<void(const std::string &)> g_log_hook;
+
 static bool agree(const Vec3 &a, const Vec3 &b) {
   double y = std::max(a.y, b.y);
   if (y > 5) {

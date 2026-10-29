@@ -302,3 +302,14 @@ Connect the WF-1000XM5 earbuds to the TV first (*Sound out* → Bluetooth). Bloo
 
 Previews to hear before installing (phone and the same earbuds): `build-host/hp_preview <dir> <film>` writes a 7.1 speaker walk and the film excerpt through each room, plus the TV's plain downmix for comparison.
 9. **Bluetooth quality (SBC).** `native/scripts/bt-sbc.sh`, copied to the TV and run as root with the earbuds playing: no argument shows the SBC settings the TV and earbuds agreed; `max` raises the bitpool to the earbuds' maximum; `xq` asks for SBC XQ (dual channel, bitpool 47 per channel, about 600 kb/s). Nothing is written to the TV; reconnecting the earbuds undoes it. Compare by ear and note which you keep.
+
+## 18. New in 3.3: Calibrate
+
+Settings → **Calibrate** (near the bottom, above About). It needs the Spyder5 plugged into the TV and hung flat in the middle of the screen, the Spyder probe app still installed (Bloob uses its copy of Argyll's `spotread` and LG's signed test manifest), and the 55G2 correction at `/media/internal/com.muhib.bloob/calibration/argyll/lg-55g2.ccss`. Bloob starts `bin/bloob-cal` as root through the Homebrew Channel; it runs on if Bloob is closed and writes `/media/internal/com.muhib.bloob/calibration/status.json`, which the screen shows. Its full output is in `calibration/last-run.log`.
+
+1. **Check** (about 3 minutes, changes nothing). The first time, the TV asks to allow Bloob: press OK. A white square appears in the middle of a black screen. The screen afterwards shows ten white readings: the spread (steadiness) should be under 1%, and `1019 is …x 940` says whether SDR patterns are limited range (about 1.0×) or full range (about 1.2×). If no square appears, the pattern route is wrong: note it and stop.
+2. **Test on Expert 2** (about 10 minutes). The TV switches to Expert 2; red darkens on purpose; at the end Expert 2 is back to factory and the TV back in Expert 1. Expect *7 passed, 0 failed*. The order line says whether the 3D LUT acts before the 1D LUT (expected).
+3. **Calibrate Expert 1** (OK twice; a few hours, about 3,900 readings). Leave the room as it is when you watch (the lamp on is fine; no light on the screen itself). The screen shows the squares the whole time. Back in Bloob afterwards, Calibrate shows *Grey before → after · Colour before → after* and *As you watch it*. Note all four numbers. Watch a few familiar films.
+4. **Stop** during a run: the run ends within a reading or two, Expert 1 goes back to factory and your settings, and the screen says *stopped*.
+5. **Undo calibration** (OK twice): Expert 1 back to LG's factory tables and the settings saved before the first calibration (`calibration/expert1-settings.json`).
+6. If anything looks wrong, copy `calibration/status.json` and `calibration/last-run.log`. They hold no keys (the TV pairing key is in `calibration/ssap-key.json`, mode 600; don't share that one).

@@ -6,6 +6,7 @@
 // - Only the commands and picture modes on the allow-list can be sent.
 // - Leaving (normally, on error or on Ctrl-C) always ends calibration mode and turns
 //   the patterns off.
+#include <functional>
 #include <set>
 #include <string>
 
@@ -55,10 +56,15 @@ class TvDevice : public Device {
   // Picture settings through the settings service.
   bool read_picture(Json *settings);
   bool set_picture_mode(const std::string &mode);
+  // Several picture settings at once, as a JSON object (Undo puts the saved ones back).
+  bool set_picture_settings(const std::string &settings_json);
   void set_light_cache(int v) { light_ = v; }
   // Ends calibration mode and turns patterns off (idempotent).
   void finish();
   const std::string &last_error() const { return error_; }
+  long readings() const { return readings_; }
+  // Called after every meter reading (progress for the status file).
+  std::function<void(long)> on_reading;
 
  private:
   bool pq(const std::string &command, const std::string &fields, bool write = true);
@@ -70,6 +76,9 @@ class TvDevice : public Device {
   Ssap ssap_;
   bool in_session_ = false;
   bool patterns_on_ = false;
+  bool showing_ = false;
+  Patch shown_;
+  long readings_ = 0;
   int light_ = -1;
   std::string error_;
 };

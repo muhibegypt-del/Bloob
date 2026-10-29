@@ -21,7 +21,10 @@ struct HdrRun {
   HdrResult &res;
   Mat3 to_xyz = rgb_to_xyz(kBt2020);
 
-  void log(const std::string &s) { res.log.push_back(s); }
+  void log(const std::string &s) {
+    res.log.push_back(s);
+    if (g_log_hook) g_log_hook(s);
+  }
 
   Vec3 target(Vec3 signal) const { return to_xyz * Vec3{pq_eotf(signal.x), pq_eotf(signal.y), pq_eotf(signal.z)}; }
 
@@ -276,7 +279,10 @@ std::string dolby_config(int picture_mode, double tmax, double tmin, double gamm
 DolbyResult run_dolby(Device &dev, const DolbyOptions &options) {
   DolbyResult res;
   Measurer meter(dev);
-  auto log = [&](const std::string &s) { res.log.push_back(s); };
+  auto log = [&](const std::string &s) {
+    res.log.push_back(s);
+    if (g_log_hook) g_log_hook(s);
+  };
   auto fail = [&](const std::string &why) {
     if (res.error.empty()) res.error = why;
     res.readings = meter.readings();

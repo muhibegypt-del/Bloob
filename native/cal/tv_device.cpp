@@ -157,23 +157,38 @@ bool TvDevice::show(const Patch &p) {
 
 bool TvDevice::patterns_off() {
   patterns_on_ = false;
+  showing_ = false;
   return pq("PTN_CTRL", ",\"enable\":\"false\",\"numOfBox\":0,\"ptnType\":0");
 }
 
 bool TvDevice::measure(const Patch &p, Vec3 *XYZ) {
   if (g_stop) return false;
-  if (!show(p)) return false;
-  std::this_thread::sleep_for(std::chrono::milliseconds(400));
+  // A repeat reading of the square already on screen needs no redraw. A new square
+  // first gets a second of full-screen 18% grey (Calman's OLED pattern insertion),
+  // which keeps the panel's average level, and its power limiter, steady.
+  bool same = showing_ && p.r == shown_.r && p.g == shown_.g && p.b == shown_.b;
+  if (!same) {
+    if (showing_ && cfg_.grey_between) {
+      int g = cfg_.family == Family::DolbyVision ? 184 : 64 + 158;
+      if (pq("PTN_SINGLE_WINBOX_ATTR", ",\"fillR\":" + std::to_string(g) + ",\"fillG\":" + std::to_string(g) + ",\"fillB\":" + std::to_string(g) +
+                                           ",\"winId\":0,\"width\":3840,\"height\":2160,\"startX\":0,\"startY\":0") &&
+          pq("PTN_CTRL", ",\"enable\":\"true\",\"numOfBox\":1,\"ptnType\":0"))
+        std::this_thread::sleep_for(std::chrono::milliseconds(getenv("BLOOB_CAL_FAST") ? 0 : 800));
+    }
+    if (!show(p)) {
+      showing_ = false;
+      return false;
+    }
+    shown_ = p;
+    showing_ = true;
+    std::this_thread::sleep_for(std::chrono::milliseconds(getenv("BLOOB_CAL_FAST") ? 0 : 400));  // desktop tests only
+  }
   std::string err;
   bool ok = meter_.read(XYZ, &err);
   if (!ok) error_ = err;
-  if (ok && cfg_.grey_between) {
-    // Full-screen 18% grey for a second keeps the panel's average level steady.
-    int g = cfg_.family == Family::DolbyVision ? 184 : 64 + 158;
-    if (pq("PTN_SINGLE_WINBOX_ATTR", ",\"fillR\":" + std::to_string(g) + ",\"fillG\":" + std::to_string(g) + ",\"fillB\":" + std::to_string(g) +
-                                         ",\"winId\":0,\"width\":3840,\"height\":2160,\"startX\":0,\"startY\":0") &&
-        pq("PTN_CTRL", ",\"enable\":\"true\",\"numOfBox\":1,\"ptnType\":0"))
-      std::this_thread::sleep_for(std::chrono::seconds(1));
+  if (ok) {
+    readings_++;
+    if (on_reading) on_reading(readings_);
   }
   return ok && !g_stop;
 }
@@ -246,6 +261,16 @@ bool TvDevice::set_picture_mode(const std::string &mode) {
     return false;
   if (!r["returnValue"].as_bool()) {
     error_ = "picture mode refused: " + Json::stringify(r).substr(0, 200);
+    return false;
+  }
+  return true;
+}
+
+bool TvDevice::set_picture_settings(const std::string &settings_json) {
+  Json r;
+  if (!luna("luna://com.webos.settingsservice/setSystemSettings", "{\"category\":\"picture\",\"settings\":" + settings_json + "}", &r)) return false;
+  if (!r["returnValue"].as_bool()) {
+    error_ = "settings refused: " + Json::stringify(r).substr(0, 200);
     return false;
   }
   return true;

@@ -1,6 +1,6 @@
 # Bloob Calibration: technical plan (29 October 2026, revision 4)
 
-One run, no questions: SDR, then HDR10, then Dolby Vision, on the owner's LG OLED55G2 (α9 Gen 5, webOS 9.2.2) with a Datacolor Spyder5. Planned as if engineering time were free; the order is set by risk and evidence. **The calibration brain is built and proven on a simulated G2 (section 0); nothing has run on the TV, and the TV-side bridge, meter helper, carrier clips and screen are still to build.** Revision 2 replaced the first draft, which named commands but not their formats and assumed things bscpylgtv's own guides contradict. Revision 3 checks the plan against how Calman, the professional tool, calibrates these TVs, and against known LG firmware faults. Revision 4 records what building and testing the procedure taught. Section 13 lists what each revision changed.
+One run, no questions: SDR, then HDR10, then Dolby Vision, on the owner's LG OLED55G2 (α9 Gen 5, webOS 9.2.2) with a Datacolor Spyder5. Planned as if engineering time were free; the order is set by risk and evidence. **Built into Bloob 3.3.0 as Settings → Calibrate (SDR, Expert 1, 140 nits); proven on the simulated G2 and against a stand-in TV; read-only checks done on the owner's TV, the first calibration not yet. HDR10 and Dolby Vision are proven on the simulator only (they also need the carrier clips).** Revision 2 replaced the first draft, which named commands but not their formats and assumed things bscpylgtv's own guides contradict. Revision 3 checks the plan against how Calman, the professional tool, calibrates these TVs, and against known LG firmware faults. Revision 4 records what building and testing the procedure taught. Section 13 lists what each revision changed.
 
 Evidence labels:
 - **[probe]**: the owner's Spyder USB Probe 0.6.1 (`org.codex.spyderprobe`), unpacked and read on 27 October 2026.
@@ -12,7 +12,11 @@ Evidence labels:
 - **[plan]**: a design decision.
 - **[unknown]**: settled by the named experiment (section 11) before anything depends on it.
 
-## 0. Status: proven on the virtual G2 (29 October 2026)
+## 0. Status
+
+**In Bloob (3.3.0, 29 October 2026).** Settings → Calibrate runs `bin/bloob-cal` (check, test, sdr 140, undo) as root through the Homebrew Channel and shows its status file. This replaces the service orchestrator, meter helper and JS clients planned in section 3: the C++ procedure drives the TV and the meter itself (`cal/tv_device.*`, `cal/meter.*`, `cal/ssap.*`), so there is one implementation, the one tested on the simulator. The SDR target is the owner's choice: **Expert 1** (the mode watched in) at **140 cd/m²** (a small lamp on). The TV profile (`SdrOptions::tv_profile`) uses about 3,900 readings and passes the section 1 marks on the virtual G2 at 140 nits.
+
+### Proven on the virtual G2 (29 October 2026)
 
 The whole procedure (SDR, HDR10, Dolby Vision) is written once in C++ (`native/cal/`) against an abstract device, and runs end to end against the virtual G2 in `native/tests/cal_test.cpp` (`build-host/cal_tests`). The same code cross-compiles with the webOS NDK and passes the same tests as ARM code (qemu, static build), with identical results.
 
@@ -68,7 +72,7 @@ At an estimated 1.5–3 s per Spyder5 reading, the readings above mean about 3�
 
 | Mode | Picture mode | Target | Pass, on the verification set (never on calibration patches) |
 | --- | --- | --- | --- |
-| SDR | Expert (Bright room) `expert1`, the mode the owner watches in [tv] | Rec.709 primaries, D65, BT.1886 (or 2.4 power), white 100 cd/m² unless the owner chooses otherwise | Grey ΔE2000 average ≤ 0.5, maximum ≤ 1.0; colour average ≤ 1.0, maximum ≤ 2.0 |
+| SDR | Expert (Bright room) `expert1`, the mode the owner watches in [tv] | Rec.709 primaries, D65, BT.1886, white **140 cd/m²** (the owner's choice: a small lamp on) | Grey ΔE2000 average ≤ 0.5, maximum ≤ 1.0; colour average ≤ 1.0, maximum ≤ 2.0 |
 | HDR10 | Cinema `hdr_cinema` | PQ (ST 2084) to the measured peak, D65 grey, colour by a matrix LUT; LG tone mapping set from the measured peak | Grey ΔE ITP (BT.2124) average ≤ 2 up to 90% of peak; colour ΔE ITP average ≤ 3 inside the panel's gamut; monotonic highlights up to 1000 cd/m² mastering |
 | Dolby Vision | Cinema (Dark) `dolby_cinema_dark` | Grey to gamma 2.2 between the panel's black and peak, at D65 (Calman's method); Dolby's mapping fed the measured peak, black and primaries | Grey ΔE2000 average ≤ 1.0 relative to the measured peak; configured peak within 3% of the peak measured after the grey fix; black no higher than before |
 

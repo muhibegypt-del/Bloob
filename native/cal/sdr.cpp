@@ -117,7 +117,10 @@ struct Run {
   Lut3D lut3d = Lut3D::unity();
   int raises_ = 0;
 
-  void log(const std::string &s) { res.log.push_back(s); }
+  void log(const std::string &s) {
+    res.log.push_back(s);
+    if (g_log_hook) g_log_hook(s);
+  }
 
   bool measure_set(const std::vector<Probe> &set, std::vector<Vec3> *out, int min_reads = 2) {
     out->resize(set.size());
@@ -204,6 +207,9 @@ struct Run {
     GreySpec g;
     for (int k = 1; k <= 32; k++) g.codes.push_back(code_limited(std::pow(k / 32.0, 1.5)));
     g.passes = opt.grey_passes;
+    g.jac_every = opt.jac_every;
+    g.jac_reads = opt.jac_reads;
+    g.grey_reads = opt.grey_reads;
     g.signal = signal_limited;
     g.target = [this](int code) { return xyY(kD65x, kD65y, opt.target.eotf(signal_limited(code))); };
     Vec3 white = opt.target.white();
@@ -403,7 +409,7 @@ struct Run {
       }
       for (size_t i = 0; i < vset.size(); i++) samples.push_back({lut3d.eval(vset[i].signal), vxyz[i], 1});
       std::uniform_int_distribution<size_t> pick(0, set.size() - 1);
-      for (int i = 0; i < 100; i++) {
+      for (int i = 0; i < opt.loop_samples; i++) {
         const Probe &p = set[pick(rng)];
         Vec3 x;
         if (!meter.read(p.patch, &x)) return false;

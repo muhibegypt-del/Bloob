@@ -225,6 +225,21 @@ static void test_sdr() {
   }
 }
 
+// The profile the TV runs (fewer readings, since a Spyder5 takes seconds per reading),
+// at the owner's 140 nits: still within the pass marks, in a bounded number of readings.
+static void test_sdr_tv_profile() {
+  for (int k = 0; k < 2; k++) {
+    VirtualTv tv(k ? panel_hard() : panel_g2(), SimMode::Sdr, 51 + k);
+    SdrOptions o = SdrOptions::tv_profile();
+    o.target.Lw = 140;
+    SdrResult r = run_sdr(tv, o);
+    report(k ? "TV profile, hard panel, 140 nits" : "TV profile, G2, 140 nits", r);
+    meets_pass_marks(r);
+    CHECK(r.readings < 6000);  // about 3,900 on the G2; the hard panel needs more grey passes
+    CHECK(tv.bad_uploads() == 0);
+  }
+}
+
 // A harsher meter than any colorimeter should be (independent 0.2% noise on X, Y and Z):
 // the result must degrade gracefully, not fall apart.
 static void test_sdr_harsh_meter() {
@@ -307,6 +322,7 @@ int main() {
   test_model();
   test_sdr();
   test_sdr_harsh_meter();
+  test_sdr_tv_profile();
   test_hdr10();
   test_dolby();
   if (failures) std::printf("%d calibration check(s) failed\n", failures);
