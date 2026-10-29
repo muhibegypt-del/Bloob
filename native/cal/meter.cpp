@@ -186,8 +186,12 @@ bool Meter::read(Vec3 *XYZ, std::string *error) {
     return false;
   }
   std::string seen;
-  if (!wait_for("Result is XYZ:", 60000, &seen) || !parse_spotread(seen.substr(seen.rfind("Result is XYZ:")), XYZ)) {
-    *error = "spotread gave no reading" + (seen.empty() ? std::string() : ": " + seen.substr(seen.size() > 300 ? seen.size() - 300 : 0));
+  if (!wait_for("Result is XYZ:", 45000, &seen) || !parse_spotread(seen.substr(seen.rfind("Result is XYZ:")), XYZ)) {
+    // Say what spotread said instead, so a stuck meter is never silent.
+    std::string tail = seen.empty() ? buf_ : seen;
+    for (char &c : tail)
+      if (c == '\r' || c == '\n') c = ' ';
+    *error = "spotread gave no reading within 45 s; it said: \"" + tail.substr(tail.size() > 300 ? tail.size() - 300 : 0) + "\"";
     return false;
   }
   // Ready for the next key.

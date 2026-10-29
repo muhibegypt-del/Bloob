@@ -107,10 +107,15 @@ bool TvDevice::pq(const std::string &command, const std::string &fields, bool wr
   if (!write) payload = "{\"command\":\"" + command + "\"}";
   Json reply;
   bool sent;
-  if (payload.size() < 100000) {
+  // Patterns go over the second-screen socket, as the Spyder probe drew them: on this TV a
+  // pattern sent by luna-send did not appear (29 October 2026), most likely because it
+  // lasts only while the client that set it is connected. Large tables go there too.
+  bool socket = payload.size() >= 100000 || (command.rfind("PTN_", 0) == 0 && !getenv("BLOOB_PATTERNS_LUNA"));
+  auto t0 = std::chrono::steady_clock::now();
+  if (!socket) {
     sent = luna(std::string(kPq) + (write ? "setExternalPqData" : "getExternalPqData"), payload, &reply);
   } else {
-    // Too large for one luna-send argument: the second-screen socket (the TV asks once).
+    // The second-screen socket (the TV asks once to allow Bloob).
     if (!ssap_.connected() && !ssap_.connect(cfg_.manifest, cfg_.key_file, &error_)) return false;
     sent = ssap_.request(std::string("ssap://externalpq/") + (write ? "setExternalPqData" : "getExternalPqData"), payload, &reply, &error_);
   }
@@ -121,7 +126,9 @@ bool TvDevice::pq(const std::string &command, const std::string &fields, bool wr
     error_ = command + " refused: " + Json::stringify(reply).substr(0, 300);
     return false;
   }
-  if (cfg_.verbose) std::printf("    [tv] %s ok\n", command.c_str());
+  if (cfg_.verbose)
+    std::printf("    [tv] %s ok (%s, %lld ms)\n", command.c_str(), socket ? "socket" : "luna-send",
+                static_cast<long long>(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count()));
   return true;
 }
 

@@ -62,10 +62,15 @@ static bool read_avg(TvDevice &tv, const Patch &p, int n, Reading *out, double *
   std::vector<Vec3> v;
   for (int i = 0; i < n && !g_stop; i++) {
     Vec3 x;
+    auto t0 = std::chrono::steady_clock::now();
     if (!tv.measure(p, &x)) {
       std::printf("    reading failed: %s\n", tv.last_error().c_str());
       return false;
     }
+    double cx, cy;
+    chromaticity(x, &cx, &cy);
+    std::printf("    %d/%d  code %d,%d,%d  Y %.3f  x %.4f  y %.4f  (%.1f s)\n", i + 1, n, p.r, p.g, p.b, x.y, cx, cy,
+                std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count());
     v.push_back(x);
   }
   if (v.empty()) return false;
@@ -125,6 +130,7 @@ static int cmd_check() {
   tables(tv);
   if (!meter_up(tv)) return 1;
   std::printf("== Readings (keep the meter still and the room dark)\n");
+  std::printf("  Showing a white square in the middle of the screen. If the TV asks to allow Bloob, press OK.\n");
   Reading w, hi;
   double spread = 0;
   auto t0 = std::chrono::steady_clock::now();
