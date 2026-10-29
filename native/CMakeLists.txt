@@ -30,6 +30,13 @@ add_library(bloob_cal STATIC cal/colour.cpp cal/lut.cpp cal/measure.cpp cal/mode
 target_include_directories(bloob_cal PUBLIC cal)
 # Optimised even in Debug: the tests run whole calibrations on the virtual G2.
 target_compile_options(bloob_cal PRIVATE -O2)
+# bloob-cal: the calibration runner on the TV (root, over SSH): luna-send and the
+# second-screen socket to the TV, Argyll's spotread for the meter (tools/bloob_cal.cpp).
+add_executable(bloob-cal tools/bloob_cal.cpp cal/tv_device.cpp cal/ssap.cpp cal/meter.cpp)
+target_link_libraries(bloob-cal PRIVATE bloob_cal buna_core)
+if (CMAKE_CROSSCOMPILING)
+  target_link_options(bloob-cal PRIVATE -static-libstdc++ -static-libgcc -Wl,--as-needed)
+endif ()
 
 # The playback engine's demuxer and audio converter (3.0) and Headphones mode
 # (3.2: binaural.cpp, headphones.cpp), on Bloob's own

@@ -177,7 +177,7 @@ The owner chose native. `native/` is a C++ webOS app (`com.muhib.bloob`, "Bloob 
     - The owner watches SDR in `expert1`, so that is the SDR mode calibrated. `expert2` is the spare for experiments.
     - The calibration service is `com.webos.service.pqcontroller`; it answers `luna-send` from root, so no pairing is needed. The 1D LUT getter returned 3072 values.
     - No meter correction was on the TV yet. The correction is DisplayCAL's "LG TV 55G2 (i1 Pro 2)" `.ccss`, at `/media/internal/com.muhib.bloob/calibration/argyll/lg-55g2.ccss`, on the TV only. A Spyder5 needs no Datacolor data for a `.ccss`.
-    - Next read-only step: `native/scripts/cal-meter-check.sh`, with the Spyder5 on the screen. It runs the table getters, patterns, real meter noise and the SDR range test.
+    - **Runner:** `native/artifacts/bloob-cal` (ARM, run as root over SSH; source `tools/bloob_cal.cpp`). `check` is read-only (getters, meter, noise, range). `test` is the Expert 2 write/order/reset test, which always restores Expert 2 and the owner's mode. It passes 7 of 7 against `tools/fake-tv/fake_tv.py`. Next: `sdr` on `expert1`.
   - **Queue:** it follows real Dolby Vision for profile 7.
 - **Design (2.0, Glass):** the visual system, with materials, tokens, type, focus, motion, states, the spoken interface and per-screen layouts, is in `native/DESIGN.md`. The tokens live in `native/src/theme.h`, the type scale, label roles and components in `ui.cpp`, and the frost bake in `images.cpp`.
 - **Rendering and playback:**

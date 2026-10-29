@@ -446,6 +446,19 @@ The full run, failures included, runs against the simulator (section 10).
 
 ## 11. Bring-up on the TV
 
+**Runner (29 October 2026):** `bloob-cal` (`tools/bloob_cal.cpp`, with `cal/tv_device.*`, `cal/ssap.*` and `cal/meter.*`) runs on the TV as root over SSH. The ARM build is `native/artifacts/bloob-cal`: GLIBC 2.4, no C++ runtime needed.
+- **`bloob-cal check`** is read-only. It covers C0.4 and C1.2: the table getters, the meter session, ten white readings (steadiness and seconds per reading) and the 940/1019 range test.
+- **`bloob-cal test`** is C2.1–C2.3 plus the reset check, on `expert2` only. It switches to Expert 2 and saves its 1D LUT under `backups/`, then runs the checks:
+  1. a neutral 1D LUT is accepted;
+  2. halving red darkens red;
+  3. the pipeline order, from a 3D LUT that swaps red and green plus a 1D LUT that blanks red. The 3D LUT goes over the socket, so the TV asks once to allow Bloob.
+  4. A factory reset brings Expert 2 back to its "before" readings.
+  5. The 1D getter after the reset matches the saved table.
+
+  Then it returns to the owner's picture mode. If stopped (Ctrl-C or a dropped SSH session), it still resets Expert 2, ends calibration mode, turns the patterns off and returns to the owner's mode.
+- **Proven on the desktop** against `tools/fake-tv/fake_tv.py`, a stand-in `luna-send`, second-screen socket and terminal `spotread`. Both the host build and the ARM build (qemu, static) pass 7 of 7. The stand-in refuses any write to `expert1`.
+
+
 Each step is one command the owner runs, with a pass criterion. Each step must pass before the next one starts.
 
 | Step | Writes | What happens | Passes when |
