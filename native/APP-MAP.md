@@ -313,7 +313,7 @@ How the app should *behave* (continuity, place, async work, component states) is
 | *(1.2)* Rows: preferred audio, subtitles language, autoplay next episode, Reduce motion, Disconnect AllDebrid (OK twice), About (version, credits, licences) (G4, U8) | Desktop |
 | *(1.2)* Diagnostics shows the effects tier, the last `[perf]` window and the network type | Desktop |
 | *(2.0)* Glass rows with switches; *Reduce transparency* and *Increase contrast* saved by the service; About and Diagnostics in the tvOS type (G6) | Desktop |
-| *(3.3)* **Calibrate** (`src/calibrate.cpp`): Check, Test on Expert 2, Calibrate Expert 1 (140 nits), Undo, Stop; starts `bin/bloob-cal` as root through the Homebrew Channel and shows its status file (CALIBRATION-PLAN.md) | Desktop, against `tools/fake-tv` |
+| *(3.3)* **Calibrate** (`src/calibrate.cpp`): Check, Test on Expert 2, Calibrate Expert 1 (140 nits; Quick, close to Calman, since 3.3.1), Calibrate Expert 1 thorough, Undo, Stop; starts `bin/bloob-cal` as root through the Homebrew Channel and shows its status file (CALIBRATION-PLAN.md) | Desktop, against `tools/fake-tv` |
 
 **Gaps:**
 - No subtitle language.

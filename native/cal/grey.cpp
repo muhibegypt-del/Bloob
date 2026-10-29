@@ -21,7 +21,7 @@ GreyOutcome solve_grey(Device &dev, Measurer &meter, const GreySpec &spec, const
   std::vector<bool> haveJ(n, false);
   std::vector<Vec3> prev_o(n), prev_m(n), j_at(n);
   Lut1D lut = start, best = start;
-  double best_score = 1e300;
+  double best_score = 1e300, best_top = 0;
   int stale = 0;
   for (int pass = 0; pass < spec.passes; pass++) {
     std::vector<Vec3> m(n);
@@ -61,10 +61,12 @@ GreyOutcome solve_grey(Device &dev, Measurer &meter, const GreySpec &spec, const
     if (score < best_score - 0.01) {
       best_score = score;
       best = lut;
+      best_top = m[n - 1].y;
       stale = 0;
     } else if (pass > 0 && ++stale >= 3) {
       break;  // stopped improving
     }
+    if (pass > 0 && best_score < spec.done_below) break;  // good enough
 
     // Sensitivities go stale as the outputs move (the panel's slope changes with
     // drive), so they are measured again when a level has moved more than 3%.
@@ -194,6 +196,16 @@ GreyOutcome solve_grey(Device &dev, Measurer &meter, const GreySpec &spec, const
     }
     lut = next;
     if (!dev.upload_1d(lut) || !meter.rebase()) return out;
+  }
+  // The pass-0 reach estimate rests on sensitivities, which a noisy meter can misjudge.
+  // If even the best table left white short, say so: the caller raises light and starts again.
+  double want_top = spec.target(spec.codes[n - 1]).y;
+  if (stop_if_unreachable && best_top < 0.97 * want_top) {
+    out.ok = true;
+    out.lut = start;
+    out.score = best_score;
+    out.reach = best_top / want_top;
+    return out;
   }
   if (!dev.upload_1d(best) || !meter.rebase()) return out;
   out.ok = true;

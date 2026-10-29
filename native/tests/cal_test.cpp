@@ -240,6 +240,35 @@ static void test_sdr_tv_profile() {
   }
 }
 
+// Quick (close to Calman's AutoCal): a third of the readings. The G2 must still meet the
+// pass marks; the deliberately hard panel and a harsh meter get the harsh-meter marks.
+static void test_sdr_quick() {
+  for (int k = 0; k < 3; k++) {
+    PanelSpec s = k == 1 ? panel_hard() : panel_g2();
+    if (k == 2) {
+      s.noise = 0.0005;
+      s.chroma_noise = 0.002;
+    }
+    VirtualTv tv(s, SimMode::Sdr, 61 + k);
+    SdrOptions o = SdrOptions::quick();
+    o.target.Lw = 140;
+    SdrResult r = run_sdr(tv, o);
+    report(k == 0 ? "quick, G2, 140 nits" : k == 1 ? "quick, hard panel" : "quick, harsh meter", r);
+    CHECK(tv.bad_uploads() == 0);
+    if (k == 0) {
+      meets_pass_marks(r);
+      CHECK(r.readings < 1800);
+    } else {
+      CHECK(r.ok);
+      CHECK(r.final.grey_avg <= 0.7);
+      CHECK(r.final.grey_max <= 2.0);
+      CHECK(r.final.colour_avg <= 1.0);
+      CHECK(r.final.colour_max <= 2.0);
+      CHECK(r.readings < 2800);
+    }
+  }
+}
+
 // A harsher meter than any colorimeter should be (independent 0.2% noise on X, Y and Z):
 // the result must degrade gracefully, not fall apart.
 static void test_sdr_harsh_meter() {
@@ -323,6 +352,7 @@ int main() {
   test_sdr();
   test_sdr_harsh_meter();
   test_sdr_tv_profile();
+  test_sdr_quick();
   test_hdr10();
   test_dolby();
   if (failures) std::printf("%d calibration check(s) failed\n", failures);

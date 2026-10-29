@@ -163,7 +163,7 @@ The owner chose native. `native/` is a C++ webOS app (`com.muhib.bloob`, "Bloob 
 - **3.3.0 Calibrate (29 October 2026, built, not yet run from Bloob on the TV).** Settings → **Calibrate** (`src/calibrate.cpp`). Its rows:
   - **Check** (read-only);
   - **Test on Expert 2** (writes, then puts Expert 2 back);
-  - **Calibrate Expert 1** (the owner's SDR mode, **140 nits**: "a small lamp on in the corner");
+  - **Calibrate Expert 1** (the owner's SDR mode, **140 nits**: "a small lamp on in the corner"; Quick since 3.3.1) and **Calibrate Expert 1, thorough**;
   - **Undo**, and **Stop** while a run is going.
 
   How it works:
@@ -172,7 +172,7 @@ The owner chose native. `native/` is a C++ webOS app (`com.muhib.bloob`, "Bloob 
   - **The meter** is the Spyder probe app's Argyll `spotread` (AGPL, never bundled), with DisplayCAL's "LG TV 55G2 (i1 Pro 2)" `.ccss` (on the TV only, `calibration/argyll/lg-55g2.ccss`).
   - **Before a calibration:** it saves the Expert 1 settings (`expert1-settings.json`, kept until Undo) and the readable tables.
   - **After:** it checks the result outside calibration mode. A failed or stopped run is undone automatically.
-  - **TV profile:** about 3,900 readings, for a few hours.
+  - **Quick (3.3.1, the default):** close to Calman's AutoCal for LG (about 80 minutes with an i1 Display Pro, per TFTCentral): one reading per patch, 26 grey levels, grey stops once good, one colour pass; about 1,400 readings, 1 to 1½ hours. *Thorough* is the 3.3.0 profile: about 3,900 readings, 3 to 4 hours. The grey stage now raises light again if its best table leaves white more than 3% short.
 
   Proven:
   - `build-host/cal_tests` reaches the pass marks on the simulated G2 (also as ARM under qemu), at 140 nits too.
@@ -201,7 +201,7 @@ The owner chose native. `native/` is a C++ webOS app (`com.muhib.bloob`, "Bloob 
   - watch progress and settings.
   If the bus will not start the service, the app runs it directly with the TV's Node and stops it on exit.
 - **Build and test scripts:**
-  - `native/scripts/build.sh`: tests, cross-build, ABI guards (no GLIBCXX, and since 2.4 no glibc symbol newer than GLIBC_2.4), service staging, IPK with fixed modes (`native/artifacts/com.muhib.bloob_3.3.0_arm.ipk`).
+  - `native/scripts/build.sh`: tests, cross-build, ABI guards (no GLIBCXX, and since 2.4 no glibc symbol newer than GLIBC_2.4), service staging, IPK with fixed modes (`native/artifacts/com.muhib.bloob_3.3.1_arm.ipk`).
   - `native/scripts/tv-inspect.sh`: reads the runtime inspector snapshot `/tmp/bloob-state.json` from the TV, read-only.
   - `native/scripts/ui-tour.sh`: drives the whole app on the desktop through the acceptance task, plus quick-menu, Home and pipeline-lost events, against the real service with fixture sources.
   - `native/scripts/ui-snapshots.sh`: covers player states.

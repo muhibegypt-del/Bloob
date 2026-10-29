@@ -402,7 +402,7 @@ static bool viewing_check(TvDevice &tv, const SdrTarget &t, Stats *s) {
   return true;
 }
 
-static int cmd_sdr(double nits) {
+static int cmd_sdr(double nits, bool quick) {
   TvDevice tv(config("expert1"));
   Json pic;
   if (!tv.read_picture(&pic)) {
@@ -432,12 +432,13 @@ static int cmd_sdr(double nits) {
   };
   g_log_hook = [](const std::string &line) { out("  %s\n", line.c_str()); };
 
-  out("== Calibrating (leave the meter on the screen; this takes a few hours)\n");
+  out(quick ? "== Calibrating, quick (leave the meter on the screen; about an hour)\n"
+            : "== Calibrating, thorough (leave the meter on the screen; this takes a few hours)\n");
   if (!tv.set_calibration_mode(true)) {
     out("Calibration mode refused: %s\n", tv.last_error().c_str());
     return 1;
   }
-  SdrOptions o = SdrOptions::tv_profile();
+  SdrOptions o = quick ? SdrOptions::quick() : SdrOptions::tv_profile();
   o.target.Lw = nits;
   auto t0 = std::chrono::steady_clock::now();
   SdrResult r = run_sdr(tv, o);
@@ -470,9 +471,9 @@ static int cmd_sdr(double nits) {
   out("  Before: grey %.2f, colour %.2f dE.  After: grey %.2f, colour %.2f dE (worst %.2f / %.2f).\n", r.baseline.grey_avg, r.baseline.colour_avg,
       r.final.grey_avg, r.final.colour_avg, r.final.grey_max, r.final.colour_max);
   if (viewed) out("  As you watch it: grey %.2f, colour %.2f dE.\n", view.grey_avg, view.colour_avg);
-  char extra[160];
-  std::snprintf(extra, sizeof extra, ",\"light\":%d,\"readings\":%ld,\"minutes\":%.0f,\"nits\":%.0f,\"order\":\"%s\"", r.light, tv.readings(), minutes, nits,
-                r.lut1d_first ? "1D then 3D" : "3D then 1D");
+  char extra[200];
+  std::snprintf(extra, sizeof extra, ",\"light\":%d,\"readings\":%ld,\"minutes\":%.0f,\"nits\":%.0f,\"order\":\"%s\",\"profile\":\"%s\"", r.light, tv.readings(), minutes,
+                nits, r.lut1d_first ? "1D then 3D" : "3D then 1D", quick ? "quick" : "thorough");
   g_status.result = "{\"ok\":true,\"before\":" + stats_json(r.baseline) + ",\"after\":" + stats_json(r.final) +
                     (viewed ? ",\"viewing\":" + stats_json(view) : std::string()) + extra + "}";
   return 0;
@@ -511,7 +512,7 @@ int main(int argc, char **argv) {
     return 1;
   }
   if (cmd != "check" && cmd != "test" && cmd != "sdr" && cmd != "undo") {
-    out("usage: bloob-cal check | test | sdr [nits] | undo\n");
+    out("usage: bloob-cal check | test | sdr [nits] [quick|thorough] | undo\n");
     return 1;
   }
   mkdir(data_dir().c_str(), 0755);
@@ -523,12 +524,14 @@ int main(int argc, char **argv) {
   { std::ofstream(pidfile) << getpid(); }
   g_status.path = env_or("BLOOB_CAL_STATUS", data_dir() + "/status.json");
   g_status.action = cmd;
-  g_status.expected = cmd == "check" ? 13 : cmd == "test" ? 24 : cmd == "sdr" ? 4200 : 0;
+  // Quick is the default for sdr: close to Calman's AutoCal, about a third of the readings.
+  bool quick = !(argc > 3 && std::string(argv[3]) == "thorough");
+  g_status.expected = cmd == "check" ? 13 : cmd == "test" ? 24 : cmd == "sdr" ? (quick ? 1500 : 4200) : 0;
   g_status.write();
   int rc = 0;
   if (cmd == "check") rc = cmd_check();
   else if (cmd == "test") rc = cmd_test();
-  else if (cmd == "sdr") rc = cmd_sdr(argc > 2 ? std::max(80.0, std::min(250.0, std::atof(argv[2]))) : 140.0);
+  else if (cmd == "sdr") rc = cmd_sdr(argc > 2 ? std::max(80.0, std::min(250.0, std::atof(argv[2]))) : 140.0, quick);
   else rc = cmd_undo();
   g_status.state = g_stop ? "stopped" : rc == 0 ? "done" : "failed";
   if (cmd == "test") g_status.result = "{\"ok\":" + std::string(rc == 0 ? "true" : "false") + ",\"passed\":" + std::to_string(pass_count) +

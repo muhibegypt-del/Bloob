@@ -21,6 +21,7 @@ struct GreySpec {
   int jac_every = 1;     // measure sensitivities at every Nth level; the others borrow, scaled
   int jac_reads = 3;     // readings per sensitivity patch
   int grey_reads = 3;    // readings per grey level
+  double done_below = 0; // stop as soon as a pass scores below this (0: run every pass)
 };
 
 struct GreyOutcome {
@@ -31,7 +32,8 @@ struct GreyOutcome {
 };
 
 // Starts from `start` (already uploaded). With `stop_if_unreachable`, returns after
-// the first pass when the top target is out of reach, so the caller can add light.
+// the first pass when the top target is out of reach, or at the end if the best table
+// still left white more than 3% short, so the caller can add light.
 GreyOutcome solve_grey(Device &dev, Measurer &meter, const GreySpec &spec, const Lut1D &start, bool stop_if_unreachable,
                        std::vector<std::string> *log);
 

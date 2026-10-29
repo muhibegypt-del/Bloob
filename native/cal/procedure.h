@@ -45,6 +45,9 @@ struct SdrOptions {
   int grid = 9;              // characterisation grid per axis
   int loop_samples = 100;    // extra random cube samples per closed-loop pass
   int jac_every = 1, jac_reads = 3, grey_reads = 3;  // grey-stage reading budget (grey.h)
+  int grey_levels = 32;      // grey steps the 1D LUT is solved at
+  double grey_done = 0;      // grey stage stops once its score is below this (0: every pass)
+  bool single_reads = false; // one reading per patch (Measurer::set_single)
   unsigned seed = 7;
   // Fewer readings for the real TV, where a Spyder5 takes seconds per reading.
   static SdrOptions tv_profile() {
@@ -56,6 +59,21 @@ struct SdrOptions {
     o.jac_every = 2;
     o.jac_reads = 2;
     o.grey_reads = 2;
+    return o;
+  }
+  // Close to Calman's AutoCal for LG (26 grey steps, then one colour characterisation,
+  // each patch read once; grey stops once it is good): 1,300 to 1,700 readings.
+  static SdrOptions quick() {
+    SdrOptions o = tv_profile();
+    o.grey_levels = 26;
+    o.grey_passes = 8;
+    o.grey_done = 0.3;
+    o.colour_passes = 1;
+    o.loop_samples = 0;
+    o.jac_every = 3;
+    o.jac_reads = 1;
+    o.grey_reads = 2;  // grey levels go straight into the 1D LUT: noise there shows
+    o.single_reads = true;
     return o;
   }
 };

@@ -48,11 +48,11 @@ class CalibrateScreen : public Screen {
   CalibrateScreen() { poll(); }
   const char *name() const override { return "calibrate"; }
 
-  enum class Row { Check, Test, Calibrate, Undo, Stop };
+  enum class Row { Check, Test, Calibrate, Thorough, Undo, Stop };
 
   std::vector<Row> rows() const {
     if (running()) return {Row::Stop};
-    return {Row::Check, Row::Test, Row::Calibrate, Row::Undo};
+    return {Row::Check, Row::Test, Row::Calibrate, Row::Thorough, Row::Undo};
   }
 
   std::string spoken() const override {
@@ -74,13 +74,14 @@ class CalibrateScreen : public Screen {
       case Key::Ok:
         if (repeat) return true;
         // Calibrate and Undo change the picture for good: OK twice.
-        if ((r == Row::Calibrate || r == Row::Undo) && !confirm_) {
+        if ((r == Row::Calibrate || r == Row::Thorough || r == Row::Undo) && !confirm_) {
           confirm_ = true;
           return true;
         }
         confirm_ = false;
         if (r == Row::Stop) stop();
-        else start(r == Row::Check ? "check" : r == Row::Test ? "test" : r == Row::Calibrate ? "sdr" : "undo");
+        else if (r == Row::Calibrate || r == Row::Thorough) start("sdr", std::to_string(kNits) + (r == Row::Thorough ? " thorough" : " quick"));
+        else start(r == Row::Check ? "check" : r == Row::Test ? "test" : "undo");
         return true;
       default: return true;
     }
@@ -130,6 +131,7 @@ class CalibrateScreen : public Screen {
       case Row::Check: return "Check";
       case Row::Test: return "Test on Expert 2";
       case Row::Calibrate: return "Calibrate Expert 1";
+      case Row::Thorough: return "Calibrate Expert 1, thorough";
       case Row::Undo: return "Undo calibration";
       case Row::Stop: return "Stop";
     }
@@ -139,7 +141,8 @@ class CalibrateScreen : public Screen {
     switch (r) {
       case Row::Check: return "About 3 minutes. Reads test squares; changes nothing";
       case Row::Test: return "About 10 minutes. Changes Expert 2, then puts it back";
-      case Row::Calibrate: return "A few hours. Saves your settings; undone if stopped";
+      case Row::Calibrate: return "1 to 1½ hours, like Calman. Saves your settings; undone if stopped";
+      case Row::Thorough: return "3 to 4 hours. Reads everything more often, for the last bit";
       case Row::Undo: return "Expert 1 back to factory and your saved settings";
       case Row::Stop: return "Stops safely and puts back anything half-done";
     }
@@ -162,12 +165,12 @@ class CalibrateScreen : public Screen {
     if (ok) status_ = s;
   }
 
-  void start(const std::string &action) {
+  void start(const std::string &action, const std::string &args = "") {
     std::string bin = std::getenv("BLOOB_CAL_BIN") ? std::getenv("BLOOB_CAL_BIN") : ctx().dir + "/bin/bloob-cal";
     std::string dir = cal_dir();
-    // Fixed words only: the action comes from this screen's own list, the target is a number.
-    std::string cmd = "mkdir -p '" + dir + "' && cd '" + dir + "' && '" + bin + "' " + action +
-                      (action == "sdr" ? " " + std::to_string(kNits) : "") + " </dev/null >'" + dir + "/last-run.log' 2>&1 &";
+    // Fixed words only: the action and its arguments come from this screen's own list.
+    std::string cmd = "mkdir -p '" + dir + "' && cd '" + dir + "' && '" + bin + "' " + action + (args.empty() ? "" : " " + args) +
+                      " </dev/null >'" + dir + "/last-run.log' 2>&1 &";
     logf("calibrate", "start %s", action.c_str());
     started_ = action;
     Luna::instance().call(kExec, "{\"command\":" + Json::quote(cmd) + "}", [](const std::string &reply) {

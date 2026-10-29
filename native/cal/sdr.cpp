@@ -122,7 +122,7 @@ struct Run {
     if (g_log_hook) g_log_hook(s);
   }
 
-  bool measure_set(const std::vector<Probe> &set, std::vector<Vec3> *out, int min_reads = 2) {
+  bool measure_set(const std::vector<Probe> &set, std::vector<Vec3> *out, int min_reads = 0) {
     out->resize(set.size());
     for (size_t i = 0; i < set.size(); i++)
       if (!meter.read(set[i].patch, &(*out)[i], min_reads)) return false;
@@ -152,7 +152,7 @@ struct Run {
   bool verify(int variant, Stats *s) {
     auto set = verification_set(variant, opt.seed);
     std::vector<Vec3> xyz;
-    if (!measure_set(set, &xyz, 3)) return false;
+    if (!measure_set(set, &xyz, opt.single_reads ? 0 : 3)) return false;
     *s = score(set, xyz);
     return true;
   }
@@ -205,11 +205,12 @@ struct Run {
   // least one step, so it cannot oscillate) and the grey stage starts again.
   bool grey_stage() {
     GreySpec g;
-    for (int k = 1; k <= 32; k++) g.codes.push_back(code_limited(std::pow(k / 32.0, 1.5)));
+    for (int k = 1; k <= opt.grey_levels; k++) g.codes.push_back(code_limited(std::pow(k / double(opt.grey_levels), 1.5)));
     g.passes = opt.grey_passes;
     g.jac_every = opt.jac_every;
     g.jac_reads = opt.jac_reads;
     g.grey_reads = opt.grey_reads;
+    g.done_below = opt.grey_done;
     g.signal = signal_limited;
     g.target = [this](int code) { return xyY(kD65x, kD65y, opt.target.eotf(signal_limited(code))); };
     Vec3 white = opt.target.white();
@@ -428,6 +429,7 @@ struct Run {
 SdrResult run_sdr(Device &dev, const SdrOptions &options) {
   SdrResult res;
   Run run{dev, Measurer(dev), options, res};
+  run.meter.set_single(options.single_reads);
   auto fail = [&](const std::string &why) {
     if (res.error.empty()) res.error = why;
     res.readings = run.meter.readings();

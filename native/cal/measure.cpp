@@ -38,8 +38,8 @@ bool Measurer::agreed(const Patch &p, Vec3 *XYZ, int min_reads) {
     if (!dev_.measure(p, &r)) return false;
     raw_count_++;
     got.push_back(r);
-    size_t need = static_cast<size_t>(std::max(r.y < 0.5 ? 4 : 2, min_reads));
-    if (got.size() >= need && agree(got[got.size() - 2], got.back())) break;
+    size_t need = static_cast<size_t>(std::max(single_ ? (r.y < 0.5 ? 2 : 1) : (r.y < 0.5 ? 4 : 2), min_reads));
+    if (got.size() >= need && (got.size() == 1 || agree(got[got.size() - 2], got.back()))) break;
     if (i == limit - 1) noisy_++;
   }
   *XYZ = median(got);
