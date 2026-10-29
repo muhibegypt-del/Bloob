@@ -152,7 +152,7 @@ struct Run {
   bool verify(int variant, Stats *s) {
     auto set = verification_set(variant, opt.seed);
     std::vector<Vec3> xyz;
-    if (!measure_set(set, &xyz, opt.single_reads ? 0 : 3)) return false;
+    if (!measure_set(set, &xyz, 3)) return false;  // before and after: the median of three, quick or not
     *s = score(set, xyz);
     return true;
   }

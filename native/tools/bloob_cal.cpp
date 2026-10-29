@@ -432,7 +432,7 @@ static int cmd_sdr(double nits, bool quick) {
   };
   g_log_hook = [](const std::string &line) { out("  %s\n", line.c_str()); };
 
-  out(quick ? "== Calibrating, quick (leave the meter on the screen; about an hour)\n"
+  out(quick ? "== Calibrating, quick (leave the meter on the screen; about 1½ to 2 hours)\n"
             : "== Calibrating, thorough (leave the meter on the screen; this takes a few hours)\n");
   if (!tv.set_calibration_mode(true)) {
     out("Calibration mode refused: %s\n", tv.last_error().c_str());
@@ -526,7 +526,7 @@ int main(int argc, char **argv) {
   g_status.action = cmd;
   // Quick is the default for sdr: close to Calman's AutoCal, about a third of the readings.
   bool quick = !(argc > 3 && std::string(argv[3]) == "thorough");
-  g_status.expected = cmd == "check" ? 13 : cmd == "test" ? 24 : cmd == "sdr" ? (quick ? 1500 : 4200) : 0;
+  g_status.expected = cmd == "check" ? 13 : cmd == "test" ? 24 : cmd == "sdr" ? (quick ? 1950 : 4200) : 0;
   g_status.write();
   int rc = 0;
   if (cmd == "check") rc = cmd_check();

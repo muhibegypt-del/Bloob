@@ -141,7 +141,7 @@ class CalibrateScreen : public Screen {
     switch (r) {
       case Row::Check: return "About 3 minutes. Reads test squares; changes nothing";
       case Row::Test: return "About 10 minutes. Changes Expert 2, then puts it back";
-      case Row::Calibrate: return "1 to 1½ hours, like Calman. Saves your settings; undone if stopped";
+      case Row::Calibrate: return "1½ to 2 hours, like Calman. Saves your settings; undone if stopped";
       case Row::Thorough: return "3 to 4 hours. Reads everything more often, for the last bit";
       case Row::Undo: return "Expert 1 back to factory and your saved settings";
       case Row::Stop: return "Stops safely and puts back anything half-done";

@@ -62,11 +62,12 @@ struct SdrOptions {
     return o;
   }
   // Close to Calman's AutoCal for LG (26 grey steps, then one colour characterisation,
-  // each patch read once; grey stops once it is good): 1,300 to 1,700 readings.
+  // each patch read once, but the before/after checks and the drift sentinel three times;
+  // grey stops once it is good): about 1,900 readings, half the thorough run.
   static SdrOptions quick() {
     SdrOptions o = tv_profile();
     o.grey_levels = 26;
-    o.grey_passes = 8;
+    o.grey_passes = 12;  // most panels stop at 3 or 4 (grey_done); a hard one keeps improving
     o.grey_done = 0.3;
     o.colour_passes = 1;
     o.loop_samples = 0;

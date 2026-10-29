@@ -172,7 +172,7 @@ The owner chose native. `native/` is a C++ webOS app (`com.muhib.bloob`, "Bloob 
   - **The meter** is the Spyder probe app's Argyll `spotread` (AGPL, never bundled), with DisplayCAL's "LG TV 55G2 (i1 Pro 2)" `.ccss` (on the TV only, `calibration/argyll/lg-55g2.ccss`).
   - **Before a calibration:** it saves the Expert 1 settings (`expert1-settings.json`, kept until Undo) and the readable tables.
   - **After:** it checks the result outside calibration mode. A failed or stopped run is undone automatically.
-  - **Quick (3.3.1, the default):** close to Calman's AutoCal for LG (about 80 minutes with an i1 Display Pro, per TFTCentral): one reading per patch, 26 grey levels, grey stops once good, one colour pass; about 1,400 readings, 1 to 1½ hours. *Thorough* is the 3.3.0 profile: about 3,900 readings, 3 to 4 hours. The grey stage now raises light again if its best table leaves white more than 3% short.
+  - **Quick (3.3.1, settled in 3.3.2; the default):** close to Calman's AutoCal for LG (about 80 minutes with an i1 Display Pro, per TFTCentral): one reading per patch, 26 grey levels, grey stops once good, one colour pass; the before/after checks and the drift sentinel still read three times; about 1,900 readings, 1½ to 2 hours (estimated; not yet timed on the TV). *Thorough* is the 3.3.0 profile, unchanged: about 3,900 readings, 3 to 4 hours. Twelve simulated runs per panel put the two level: G2 12/12 within the marks for both, worst grey 0.67 against 0.64; hard panel 11/12 against 10/12; harsh meter 5/12 against 6/12. Found on the way: a one-reading drift sentinel rescaled 20 readings at a time (grey outliers up to 9.8 ΔE), and the grey stage now raises light again if its best table leaves white more than 3% short.
 
   Proven:
   - `build-host/cal_tests` reaches the pass marks on the simulated G2 (also as ARM under qemu), at 140 nits too.
@@ -201,7 +201,7 @@ The owner chose native. `native/` is a C++ webOS app (`com.muhib.bloob`, "Bloob 
   - watch progress and settings.
   If the bus will not start the service, the app runs it directly with the TV's Node and stops it on exit.
 - **Build and test scripts:**
-  - `native/scripts/build.sh`: tests, cross-build, ABI guards (no GLIBCXX, and since 2.4 no glibc symbol newer than GLIBC_2.4), service staging, IPK with fixed modes (`native/artifacts/com.muhib.bloob_3.3.1_arm.ipk`).
+  - `native/scripts/build.sh`: tests, cross-build, ABI guards (no GLIBCXX, and since 2.4 no glibc symbol newer than GLIBC_2.4), service staging, IPK with fixed modes (`native/artifacts/com.muhib.bloob_3.3.2_arm.ipk`).
   - `native/scripts/tv-inspect.sh`: reads the runtime inspector snapshot `/tmp/bloob-state.json` from the TV, read-only.
   - `native/scripts/ui-tour.sh`: drives the whole app on the desktop through the acceptance task, plus quick-menu, Home and pipeline-lost events, against the real service with fixture sources.
   - `native/scripts/ui-snapshots.sh`: covers player states.

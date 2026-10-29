@@ -52,7 +52,8 @@ bool Measurer::agreed(const Patch &p, Vec3 *XYZ, int min_reads) {
 bool Measurer::rebase() {
   if (ref_y_ > 0 && last_y_ > 0) carried_ *= ref_y_ / last_y_;
   Vec3 w;
-  if (!agreed(sentinel_, &w)) return false;
+  // The sentinel scales every reading after it: in single mode it still takes three.
+  if (!agreed(sentinel_, &w, single_ ? 3 : 0)) return false;
   ref_y_ = last_y_ = w.y;
   factor_ = carried_;
   since_ = 0;
@@ -62,7 +63,7 @@ bool Measurer::rebase() {
 bool Measurer::read(const Patch &p, Vec3 *XYZ, int min_reads) {
   if (ref_y_ > 0 && ++since_ >= 20) {
     Vec3 w;
-    if (!agreed(sentinel_, &w)) return false;
+    if (!agreed(sentinel_, &w, single_ ? 3 : 0)) return false;
     if (last_y_ > 0 && std::fabs(w.y / last_y_ - 1) > 0.015) jumps_++;
     last_y_ = w.y;
     factor_ = carried_ * ref_y_ / std::max(w.y, 1e-9);
