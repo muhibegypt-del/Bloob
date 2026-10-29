@@ -176,7 +176,7 @@ The owner chose native. `native/` is a C++ webOS app (`com.muhib.bloob`, "Bloob 
 
   Proven:
   - `build-host/cal_tests` reaches the pass marks on the simulated G2 (also as ARM under qemu), at 140 nits too.
-  - `tools/fake-tv/fake_tv.py` (a stand-in `luna-send`, socket and terminal `spotread`) runs `check` and `test` (7/7) end to end. Stop on `sdr` ends the run and undoes it (factory tables, saved settings and light back). The screen shows a running `sdr` on the desktop. A full stand-in `sdr` run, Undo from the screen, and starting a run from the screen (`BLOOB_HOST_EXEC=1`) are being checked.
+  - `tools/fake-tv/fake_tv.py` (a stand-in `luna-send`, socket and terminal `spotread`) runs `check` and `test` (7/7) end to end. Stop on `sdr` ends the run and undoes it (factory tables, saved settings and light back). A full stand-in `sdr` run started from the screen (`BLOOB_HOST_EXEC=1`) finished in 2,964 readings: grey 2.19 → 0.03 and colour 0.99 → 0.04 ΔE, 0.02/0.04 as watched, with the `.cube` saved. Undo pressed on the screen then put the factory tables and the saved light back. The stand-in panel is simple, so these numbers prove the plumbing, not the G2's result.
 
   On the TV (29 October 2026, `cal-check.sh` and `bloob-cal check` over SSH):
   - OLED55G26LA, chip W22O, firmware 23.25.55.

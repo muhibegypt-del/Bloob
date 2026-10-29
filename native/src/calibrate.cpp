@@ -226,13 +226,13 @@ class CalibrateScreen : public Screen {
     if (!live && result.is_object()) {
       if (action == "sdr" && result["ok"].as_bool()) {
         char b[200];
-        std::snprintf(b, sizeof b, "Grey %.1f \xE2\x86\x92 %.1f  \xC2\xB7  Colour %.1f \xE2\x86\x92 %.1f  (\xCE\x94" "E, lower is better)",
+        std::snprintf(b, sizeof b, "Grey %.2f \xE2\x86\x92 %.2f  \xC2\xB7  Colour %.2f \xE2\x86\x92 %.2f  (\xCE\x94" "E, lower is better)",
                       result["before"]["grey_avg"].as_number(), result["after"]["grey_avg"].as_number(), result["before"]["colour_avg"].as_number(),
                       result["after"]["colour_avg"].as_number());
         text(Text::BodySemi, b, x, y, label(Label::Primary), w);
         y += 54;
         if (result["viewing"].is_object()) {
-          std::snprintf(b, sizeof b, "As you watch it: grey %.1f, colour %.1f", result["viewing"]["grey_avg"].as_number(), result["viewing"]["colour_avg"].as_number());
+          std::snprintf(b, sizeof b, "As you watch it: grey %.2f, colour %.2f", result["viewing"]["grey_avg"].as_number(), result["viewing"]["colour_avg"].as_number());
           text(Text::Callout, b, x, y, label(Label::Secondary), w);
           y += 48;
         }
