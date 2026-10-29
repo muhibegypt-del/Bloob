@@ -10,6 +10,7 @@ SDK=${WEBOS_SDK:-/opt/arm-webos-linux-gnueabi_sdk-buildroot}
 cmake -S . -B build-host -DCMAKE_BUILD_TYPE=Debug >/dev/null
 cmake --build build-host -j"$(nproc)" >/dev/null
 ./build-host/native_tests
+./build-host/cal_tests | tail -1
 
 cmake -S . -B build-webos -DCMAKE_TOOLCHAIN_FILE="$SDK/share/buildroot/toolchainfile.cmake" -DCMAKE_BUILD_TYPE=Release >/dev/null
 cmake --build build-webos -j"$(nproc)"

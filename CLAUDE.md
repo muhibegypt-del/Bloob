@@ -160,7 +160,21 @@ The owner chose native. `native/` is a C++ webOS app (`com.muhib.bloob`, "Bloob 
   - **Player:** Audio panel rows *Room* and *Lip-sync* (Left/Right; applied 900 ms after the last change); info-panel row *Headphones*. Settings rows: Headphones, Surround room, Headphone volume boost, Night listening, Earbud correction, Headphone lip-sync (all saved by the service: `headphones`, `headphoneRoom`, `headphoneBoost`, `headphoneNight`, `headphoneEq`, `headphoneLeadMs`).
   - **Measured on the desktop:** one chain renders 50–85× faster than real time. Previews come out at about −14 LUFS with a −0.9 dBFS peak; the plain downmix is about 13 dB quieter. `tools/hp_preview.cpp` (`build-host/hp_preview <dir> [film]`) writes WAV previews. Tests are in `tests/headphones_test.cpp` and the demux test.
   - **Not yet:** Atmos heights (Cavern's E-AC-3 JOC; truehdd for TrueHD), lip-sync measured on the TV, and the phone/LDAC route. TV pass: `native/TV-TEST.md` §17; the IPK is `native/artifacts/com.muhib.bloob_3.2.1_arm.ipk`.
-- **Calibration (planned 27 October 2026, nothing built).** One run, no questions: SDR (`expert2`), HDR10 (`hdr_cinema`) and Dolby Vision (`dolby_cinema_dark`) with the owner's Spyder5 and Argyll `spotread` (called on the TV, never bundled: AGPL), patterns from the TV's own generator, LUTs and tone mapping written through LG's calibration API (as documented by bscpylgtv). `native/CALIBRATION-PLAN.md` (revision 2) is the buildable plan: the exact `externalpq` messages and LUT formats from bscpylgtv's source, files and interfaces, a root `bloob-meter` helper holding one `spotread` session, the solver maths, per-mode command sequences, safety (allow-list, `CAL_END` on every path, never worse, Undo), tests against a simulated G2, read-only-first TV bring-up C0–C6 with pass criteria, and work packages W1–W10. HDR10 changes grey only (bscpylgtv's method); HDR colour by 3D LUT is an experiment. It follows real Dolby Vision for profile 7 in the build queue.
+- **Calibration (brain built and proven on a simulated G2, 29 October 2026; nothing on the TV yet).** One run, no questions: SDR (`expert2`), HDR10 (`hdr_cinema`) and Dolby Vision (`dolby_cinema_dark`).
+  - **Equipment:** the owner's Spyder5 with Argyll `spotread`, called on the TV and never bundled (AGPL), and patterns from the TV's own generator.
+  - **Tables:** LUTs and tone mapping are written through LG's calibration API, with the exact `externalpq` formats taken from bscpylgtv's source.
+  - **Plan:** `native/CALIBRATION-PLAN.md`, revision 4. It holds the targets, the TV interface, measurement rules, solver, per-mode sequences (checked against Calman's LG method), safety, the TV bring-up steps C0–C6 and work packages W1–W10.
+  - **Built:** `native/cal/`, written once against `cal::Device`:
+    - colour science and LG's table formats (unity tables byte-identical to bscpylgtv's);
+    - a WOLED panel model;
+    - the reading rules;
+    - the shared grey solver;
+    - the SDR, HDR10 and Dolby Vision procedures;
+    - the virtual G2.
+  - **Proven:** `build-host/cal_tests` (7 s, also run by `build.sh`) reaches the pass marks from 2.5–7.6 ΔE starts: SDR grey about 0.2 and colour 0.1–0.2; HDR10 grey 0.18 and colour 0.81 ΔE ITP; Dolby Vision grey 0.14. Fault cases are caught, including firmware that ignores the 3D LUT, a reversed pipeline, dimming, no USB stick and no pass-through. The same tests pass as ARM code under qemu (static build).
+  - **Next (W3b–W8):** the `bloob-cal` bridge, `bloob-meter`, `cal-tv.js`/`cal-meter.js`/`calibrate.js`, carrier clips and the Calibrate screen.
+  - **TV:** `native/scripts/cal-check.sh` is the read-only first step (C0).
+  - **Queue:** it follows real Dolby Vision for profile 7.
 - **Design (2.0, Glass):** the visual system, with materials, tokens, type, focus, motion, states, the spoken interface and per-screen layouts, is in `native/DESIGN.md`. The tokens live in `native/src/theme.h`, the type scale, label roles and components in `ui.cpp`, and the frost bake in `images.cpp`.
 - **Rendering and playback:**
   - The TV's SDL2 provides the window and remote. Bloob draws with its own renderer: Inter via stb_truetype with oversampling and gamma, exact-size anti-aliased shapes, and artwork via stb_image scaled on worker threads, on a 1920×1080 offscreen canvas.

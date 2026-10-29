@@ -1,21 +1,75 @@
-# Bloob Calibration: technical plan (27 October 2026, revision 2)
+# Bloob Calibration: technical plan (29 October 2026, revision 4)
 
-One run, no questions: SDR, then HDR10, then Dolby Vision, on the owner's LG OLED55G2 (α9 Gen 5, webOS 9.2.2) with a Datacolor Spyder5. Planned as if engineering time were free; the order is set by risk and evidence. **Nothing here is built.** Revision 2 replaces the first draft, which named commands but not their formats, assumed things bscpylgtv's own guides contradict, and could not have been followed without guessing. Section 13 lists what changed.
+One run, no questions: SDR, then HDR10, then Dolby Vision, on the owner's LG OLED55G2 (α9 Gen 5, webOS 9.2.2) with a Datacolor Spyder5. Planned as if engineering time were free; the order is set by risk and evidence. **The calibration brain is built and proven on a simulated G2 (section 0); nothing has run on the TV, and the TV-side bridge, meter helper, carrier clips and screen are still to build.** Revision 2 replaced the first draft, which named commands but not their formats and assumed things bscpylgtv's own guides contradict. Revision 3 checks the plan against how Calman, the professional tool, calibrates these TVs, and against known LG firmware faults. Revision 4 records what building and testing the procedure taught. Section 13 lists what each revision changed.
 
 Evidence labels:
 - **[probe]**: the owner's Spyder USB Probe 0.6.1 (`org.codex.spyderprobe`), unpacked and read on 27 October 2026.
 - **[bsc]**: bscpylgtv source and guides (MIT, github.com/chros73/bscpylgtv), read on 27 October 2026. Its calibration code was tested by its authors on 2018 α7/α9 and 2019/2021/2022 α9; its preset scripts name "a G2 (2022) running webOS v9 (2024)".
+- **[calman]**: Portrait Displays' published LG AutoCal guides (their 2022 list includes the G2), and TFTCentral's LG OLED AutoCal guide, read on 29 October 2026.
+- **[argyll]**: Argyll CMS documentation for `spotread` and `oeminst`, read on 29 October 2026.
 - **[owner]**: the owner's report.
 - **[plan]**: a design decision.
 - **[unknown]**: settled by the named experiment (section 11) before anything depends on it.
+
+## 0. Status: proven on the virtual G2 (29 October 2026)
+
+The whole procedure (SDR, HDR10, Dolby Vision) is written once in C++ (`native/cal/`) against an abstract device, and runs end to end against the virtual G2 in `native/tests/cal_test.cpp` (`build-host/cal_tests`). The same code cross-compiles with the webOS NDK and passes the same tests as ARM code (qemu, static build), with identical results.
+
+| Run on the virtual G2 | Grey ΔE avg / max | Colour ΔE avg / max | Readings |
+| --- | --- | --- | --- |
+| SDR, G2 (100 cd/m², BT.1886) | 0.19 / 0.40 | 0.14 / 0.30 | 6,537 |
+| SDR, hard panel (gammas 2.05–2.55, crushed blacks, noisier meter) | 0.25 / 0.81 | 0.19 / 0.69 | 8,290 |
+| SDR, panel dimming while measured (about 7% over the run) | 0.19 / 0.53 | 0.07 / 0.20 | 7,119 |
+| SDR, 1D LUT before the 3D LUT (detected, 3D-only method) | 0.21 / 0.75 | 0.07 / 0.20 | 6,286 |
+| SDR, 140 cd/m², gamma 2.2 | 0.16 / 0.39 | 0.07 / 0.17 | 6,572 |
+| SDR, a harsher meter than a colorimeter should be | 0.29 / 0.72 | 0.10 / 0.31 | 6,864 |
+| HDR10 (ΔE ITP), matrix LUT kept | 0.18 / 0.36 | 0.81 / 1.78 (from 1.58 / 3.64 without it) | 2,110 |
+| Dolby Vision (ΔE2000 to gamma 2.2 at Tmax) | 0.14 / 0.48 | — | 2,019 |
+
+Every run starts 2.5–7.6 ΔE off. The fault cases behave as designed:
+- **Firmware that ignores the 3D LUT** is caught by the activation check, undone and named.
+- **A Dolby Vision ramp that isn't passed through** stops the Dolby Vision grey fix with the reason.
+- **No USB stick** skips the Dolby Vision configuration and says so.
+- **A 1D upload before the configuration** is impossible: the simulator refuses the pop-up afterwards, as bscpylgtv says the TV does.
+
+**What the virtual G2 models:**
+- **The panel:** a WOLED white sub-pixel that makes colours non-additive, per-channel gammas with ripple, and an off-D65 native white.
+- **The factory:** an HDR gamut conversion made for a nominal P3 panel, a Dolby Vision factory table, and LG's tone mapping outside calibration mode.
+- **The tables:** quantised exactly as the TV stores them.
+- **The meter:** shared plus per-channel noise and a floor near black.
+- **The faults above.**
+
+**What it does not model, and the TV must settle:**
+- the real meter's noise (C0.4 measures it, and the simulator is re-run with it);
+- the real LG pipeline's internals beyond order and quantisation;
+- LG's real tone-mapping curve;
+- the real Dolby Vision mapping;
+- warm-up and the room.
+
+At an estimated 1.5–3 s per Spyder5 reading, the readings above mean about 3–5 hours for SDR and 1–2 hours each for HDR10 and Dolby Vision.
+
+**Learned by building it (now in the method):**
+1. **Grey sensitivities need central differences.** On WOLED greys, lowering one channel also dims the white sub-pixel and raising it does not. One-sided steps misled the solver badly, worst at peak white.
+2. **Reachable white.** If the panel cannot make the target white at D65 at the chosen OLED light (its native white is bluish and red runs out first), chasing it drives the top of the grey scale off colour.
+   - The grey stage now measures how much is reachable and raises light first: only up, by at least a step, so it cannot oscillate.
+   - Light starts at the smallest step with enough headroom; the 1D LUT trims white to the exact target.
+3. **Sensitivities go stale** as outputs move on a badly-off panel. They are measured again when a level has moved more than 3%, corrected between passes by a conservative Broyden update, and later steps are smoothed across neighbouring levels so meter noise doesn't leak into the table.
+4. **Gamut mapping near white** must be able to give up a little lightness, not only chroma: near-white colours sit at the panel's brightness ceiling.
+5. **The HDR matrix LUT on WOLED.**
+   - It must be measured on P3 primaries inside the BT.2020 container; pure BT.2020 primaries are clipped by the factory.
+   - It must fade out towards grey by saturation (1 − min/max), because the primaries add up but the greys, carried by the white sub-pixel, do not.
+   - Without both, it made colour worse (the gate correctly threw it out).
+6. **Dolby Vision order.** Factory reset, not a unity upload, before the measurements and the configuration. Tmax comes from the factory white (already near D65), and the peak is checked again after the grey fix.
+7. **Drift normalisation must carry across table changes:** dimming doesn't stop because a table changed.
+8. **The black check compares against the target too:** rising towards gamma 2.2 is the fix, rising past it is raised black.
 
 ## 1. Goal and pass marks
 
 | Mode | Picture mode | Target | Pass, on the verification set (never on calibration patches) |
 | --- | --- | --- | --- |
 | SDR | Expert (Dark) `expert2` | Rec.709 primaries, D65, BT.1886 (or 2.4 power), white 100 cd/m² unless the owner chooses otherwise | Grey ΔE2000 average ≤ 0.5, maximum ≤ 1.0; colour average ≤ 1.0, maximum ≤ 2.0 |
-| HDR10 | Cinema `hdr_cinema` | PQ (ST 2084) to the measured peak, D65 grey; LG tone mapping set from the measured peak | Grey ΔE ITP (BT.2124) average ≤ 2 up to 90% of peak; monotonic highlights up to 1000 cd/m² mastering |
-| Dolby Vision | Cinema (Dark) `dolby_cinema_dark` | Dolby's mapping fed the panel's real peak and primaries; grey corrected to D65 | Grey chromaticity within 0.003 Δu′v′ of D65 from 5% to 100%; black no higher than before |
+| HDR10 | Cinema `hdr_cinema` | PQ (ST 2084) to the measured peak, D65 grey, colour by a matrix LUT; LG tone mapping set from the measured peak | Grey ΔE ITP (BT.2124) average ≤ 2 up to 90% of peak; colour ΔE ITP average ≤ 3 inside the panel's gamut; monotonic highlights up to 1000 cd/m² mastering |
+| Dolby Vision | Cinema (Dark) `dolby_cinema_dark` | Grey to gamma 2.2 between the panel's black and peak, at D65 (Calman's method); Dolby's mapping fed the measured peak, black and primaries | Grey ΔE2000 average ≤ 1.0 relative to the measured peak; configured peak within 3% of the peak measured after the grey fix; black no higher than before |
 
 ΔE2000 is computed relative to the target white; ΔE ITP uses BT.2124 (ΔE = 720·√(ΔI² + ΔT² + ΔP²), T = 0.5·Ct). The owner's previous tool reached about 0.8 ΔE on white balance [owner]; that is the figure to beat.
 
@@ -92,6 +146,10 @@ Evidence labels:
 - `spotread` is Argyll CMS 2.0.1 for ARM, with its X11 libraries in `libs/`. It runs as `LD_LIBRARY_PATH=<base>/libs /lib/ld-linux.so.3 <base>/spotread -e -O -x` through the Homebrew Channel's `exec`, as root.
 - The result line is `Result is XYZ: X Y Z, Yxy: Y x y`.
 - The probe detects the meter by USB ID `085c:0500` in `/sys/bus/usb/devices`.
+- **Meter data [argyll].**
+  - A Spyder5 needs Datacolor's calibration data before Argyll can apply any correction file. `oeminst` extracts it from Datacolor's own installer into `spyd4cal.bin`, and installs `.ccss` files.
+  - Argyll looks for both under `$XDG_DATA_HOME/ArgyllCMS` (by default `$HOME/.local/share/ArgyllCMS`). Through the Homebrew Channel, Bloob doesn't control `HOME`, so `bloob-meter` sets `HOME` and `XDG_DATA_HOME` itself, to `<data>/calibration/argyll/`.
+  - The owner copies two files there once: `spyd4cal.bin` (made by `oeminst` on the PC) and a WOLED `.ccss`. Neither goes into Git or Bloob's package, because Datacolor's data is not redistributable [argyll].
 - `exec` returns only when the command finishes, so it cannot hold an interactive `spotread` session open. That is why section 4.2 has its own helper.
 
 ## 3. Architecture and files
@@ -100,17 +158,20 @@ Evidence labels:
 | --- | --- | --- |
 | Colour science | `native/cal/colour.{h,cpp}` | XYZ, xy, u′v′, CIELAB, ΔE2000, PQ, BT.1886, ICtCp, ΔE ITP, Rec.709/BT.2020 matrices, Bradford |
 | LUT formats | `native/cal/lut.{h,cpp}` | Encode and decode LG's 1D and 3D LUTs (section 2.2), `.cube`, Argyll `.cal`; unity tables |
-| Panel model | `native/cal/model.{h,cpp}` | Forward model from device RGB to XYZ, fitted to readings (section 6.2) |
-| Solver | `native/cal/solve.{h,cpp}` | Grey-scale and colour inversion, gamut mapping, smoothing, prediction |
-| Solver tool | `native/tools/bloob_cal.cpp` → `bloob-cal` | JSON in, LUT files and predictions out; run by the service |
+| Panel model | `native/cal/model.{h,cpp}` **(built)** | Forward model from device RGB to XYZ: tone curves and matrix, plus a lattice-regression residual with cross-validated smoothing (section 6.2) |
+| Reading rules | `native/cal/measure.{h,cpp}` **(built)** | Agreement, near-black repeats, sentinel drift normalisation carried across table changes (4.3) |
+| Grey solve | `native/cal/grey.{h,cpp}` **(built)** | Shared by all three modes (6.3, and section 0 for what building it taught) |
+| Procedure | `native/cal/sdr.cpp`, `native/cal/hdr.{h,cpp}`, `procedure.h` **(built)** | Section 7, written once against `cal::Device` (`device.h`) |
+| Virtual G2 | `native/cal/sim.{h,cpp}` **(built)** | The simulator the procedure is proven on (section 0, section 10) |
+| Calibration program | `native/tools/bloob_cal.cpp` → `bloob-cal` | Runs the procedure on the TV. Its `cal::Device` is a JSON-lines bridge over stdin/stdout to the service, which talks to the TV and the meter. One procedure, tested on the simulator, runs unchanged on the TV |
 | Meter helper | `native/tools/bloob_meter.cpp` → `bloob-meter` | Root helper holding one `spotread` session (section 4.2) |
 | TV client | `tv-app/service/cal-tv.js` | Transport (luna, or ssap), the command allow-list, encoding, getters, iTPG |
 | Meter client | `tv-app/service/cal-meter.js` | Starts and talks to `bloob-meter`; the reading rules of section 5 |
-| Orchestrator | `tv-app/service/calibrate.js` | The state machine (section 7), checkpoints, timing; routes `/api/calibrate/{state,start,cancel,undo,history,report}` |
+| Orchestrator | `tv-app/service/calibrate.js` | Starts `bloob-cal`, executes its device requests through `cal-tv.js` and `cal-meter.js`, checkpoints, timing; routes `/api/calibrate/{state,start,cancel,undo,history,report}` |
 | Store | `tv-app/service/cal-store.js` | `<data>/calibration/`: backups, runs, raw readings (JSON lines), the meter correction, the key |
 | Screen | `native/src/calibrate.cpp` | Settings → Calibrate: first-time setup, progress, report, Undo |
 | Carrier clips | `native/package/cal/{hdr10,dv81}.mkv`, made by `native/scripts/make-carriers.sh` | Switch the TV into HDR10 or Dolby Vision (section 8.2) |
-| Simulator | `tv-app/tests/service/cal-sim.mjs`, `native/tests/cal_sim.{h,cpp}` | The virtual G2 (section 10) |
+| Service simulator | `tv-app/tests/service/cal-sim.mjs` | A stand-in for the TV's `externalpq` interface, to test `cal-tv.js` and the bridge |
 
 **Rules for these parts [plan]:**
 - **Service files are flat**, because `stage-service.mjs` copies only top-level `*.js` files. They contain no `?.` or `??`, for the TV's Node.
@@ -139,7 +200,8 @@ Evidence labels:
   | `{"op":"quit"}` | the helper exits |
 
 - **Lifetime:** it exits by itself after 10 minutes without a request.
-- **Command line:** `spotread -e -x [-X ccss]`, without `-O`, so the instrument is initialised once. Each `read` sends a key and parses `Result is XYZ:`.
+- **Command line:** `spotread -e -x -X <file>.ccss`, without `-O`, so the instrument is initialised once [argyll]. Each `read` sends a key and parses `Result is XYZ:`.
+- **Refresh mode:** C0.4 compares refresh and non-refresh mode (`-Y r`, `-Y n`) and keeps the one with the smaller spread on this panel.
 - **[unknown U5]** whether `spotread` behaves in a pseudo-terminal on this build (C0.4).
 - **Fallback:** one `spotread -O` per reading, as the probe does. It is correct, but every reading pays the meter's start-up time.
 
@@ -153,7 +215,8 @@ Evidence labels:
 - **Near black (Y < 0.5 cd/m²):** at least 4 readings, the median is kept, and the spread becomes the sample's weight in every fit (weight ∝ 1/variance).
 - **Sentinel:** the patch-size white is measured every 20 patches. Drift beyond 0.5% rescales the readings between two sentinels linearly. Drift beyond 1.5% means that block is measured again.
   - LG's static-image dimming is the expected cause. Bloob keeps the picture changing, and the user setting *Adjust logo brightness* is switched off for the run. Bloob never touches the service menu.
-- **Window:** 10% of the screen area, centred, on a black background, fixed for the whole run.
+- **Window:** 10% of the screen area, centred, on a black background, fixed for the whole run. This is Calman's OLED window [calman].
+- **Grey between patches [calman].** Calman's OLED default inserts a full-screen pattern between measurements, so the panel's average level, and with it the power limiter, stays steady. Bloob shows full-screen 18% grey for 1 s after each reading, before the next patch. The sentinel checks that it works.
   - HDR peak is read on that same 10% window, because full-field white is limited by the panel's power management.
   - The black background code is 64 (limited range) or 0 (full range), matching the mode.
 - **Placement check at the start:**
@@ -212,10 +275,14 @@ Codes are 10-bit; *L(p)* is the limited-range code for fraction *p*: 64 + round(
 4. **Keep the grey axis identity** if the 1D LUT handles grey (section 7.2), so the two tables never fight.
 5. **Quantise:** 12-bit values, written as section 2.2 specifies.
 
-### 6.5 Prediction gate
+### 6.5 Prediction gate and activation check
 
 - Before any write, the solver predicts the verification set (V) through the model and the new tables.
 - If the prediction is worse than the bypass baseline, nothing is written and the run reports why.
+- **Activation check, after every upload.** Portrait Displays reports LG firmware (33.10.30 and later, on 2025 sets) that accepts an uploaded 3D LUT without error and never switches it on [calman].
+  - Every upload is followed by two probe patches (a saturated colour and a mid grey), measured before and after.
+  - If the change the solver predicted doesn't appear within noise, the run stops, restores that mode and says the firmware ignored the table.
+  - The same check runs again after `CAL_END`, in the viewing state.
 
 ## 7. The run
 
@@ -236,7 +303,7 @@ Codes are 10-bit; *L(p)* is the limited-range code for fraction *p*: 64 + round(
 4. **Pipeline order test (once, C2.3):** does the 1D LUT act before or after the 3D LUT? This decides the method below.
    - **If 1D acts after 3D** (expected: "DPG" sits on the panel side): the 1D LUT carries grey and white balance, and the 3D LUT carries colour with its grey axis identity.
    - **If not:** the 3D LUT carries everything and the 1D LUT stays unity. This is the method bscpylgtv's SDR guide uses.
-5. **Light:** binary search on `BACKLIGHT_UI_DATA` (0–100) until 100% white is within 1% of the target.
+5. **Light:** binary search on `BACKLIGHT_UI_DATA` (0–100) until 100% white is within 1% of the target. The grey fix can lower white a little, because the 1D LUT pulls the strongest channel down to balance it (Calman has a step for this [calman]). So light is searched again at the end of step 7, and step 7's last pass is repeated if it moved.
 6. **Warm-up** (4.3).
 7. **Grey:** sets G and G±, then section 6.3 passes.
 8. **Colour:**
@@ -257,38 +324,57 @@ Codes are 10-bit; *L(p)* is the limited-range code for fraction *p*: 64 + round(
 ### 7.4 HDR10 (`hdr_cinema`)
 
 1. Engine plays `hdr10.mkv` on loop. Confirm `getStatus` reports HDR10.
-2. `pictureMode: hdr_cinema`, `CAL_START hdr_cinema`, then a unity 1D LUT (bscpylgtv's HDR10 bypass).
-3. **Peak:** 10% window at code 940; then step down until readings rise again with the code, which finds the panel's clip point. Peak = the highest Y before the clip.
-4. **Grey:** set H through section 6.3, in ITP, up to 90% of peak. 1D LUT only: bscpylgtv's HDR10 method corrects white balance and leaves the 3D LUT alone [bsc guide].
-5. **Tone mapping:** `1D_TONEMAP_PARAM` = [measured peak, 1000, 75, 4000, 60, 10000, 50]. The roll-offs are the guide's worked example; LG does not document what they mean.
-6. `CAL_END`. Colour gamut back to `auto`, as the guide does.
-7. **Verification outside calibration mode** (tone mapping now active):
+2. `pictureMode: hdr_cinema`, then `CAL_START hdr_cinema`. Set contrast 100 and brightness 50 (Calman's HDR 1D LUT step needs these defaults [calman]). Then bypass: a unity 1D LUT and both 3D LUTs unity.
+3. **Peak:** on the 10% window, raise the PQ code from the 500 cd/m² level up to 940 until the readings stop rising. That is the panel's clip point. Peak = the highest luminance reached.
+4. **Grey:** set H through section 6.3, in ITP, up to 90% of peak, by the 1D LUT. Calman uses 20 points [calman]; set H has 21.
+5. **Colour by matrix LUT [calman].** Calman's only HDR colour method on these TVs is a *Matrix LUT*: a 3D LUT built from 3×3 matrix maths and five patches.
+   - Measure white, red, green and blue at 50% PQ stimulus, with cyan, magenta and yellow as checks.
+   - Compute the 3×3 matrix, in linear light, that takes BT.2020 signal colours to the panel's measured primaries, normalised so white maps to white.
+   - Bake it into the BT.2020 3D LUT: each node is PQ-decoded, multiplied, clipped to the panel's gamut along constant hue, and PQ-encoded again. The grey axis stays identity, so it cannot disturb step 4.
+   - Gate and activation check (6.5), then upload `BT2020_3D_LUT_DATA`.
+   - bscpylgtv's own HDR10 guide stops at white balance [bsc guide], so this step is kept only if verification (step 8) shows colour improved and grey did not get worse. Otherwise the BT.2020 slot goes back to unity.
+6. **Tone mapping:** `1D_TONEMAP_PARAM` = [measured peak, 1000, 75, 4000, 60, 10000, 50]. The roll-offs are bscpylgtv's worked example; LG does not document what they mean.
+7. `CAL_END`. Colour gamut: `auto` if the BT.2020 slot is unity (as bscpylgtv's guide does); otherwise the setting C4 proves keeps the table in charge.
+8. **Verification outside calibration mode** (tone mapping now active):
    - grey ΔE ITP up to 90% of peak;
-   - codes for 600, 700, 800, 900 and 1000 cd/m² must measure strictly increasing (no clipped highlights in 1000 cd/m² masters).
-   - Failure restores the mode.
-8. **Optional experiment X1:** a BT.2020 3D LUT for HDR colour. Adopted only if it improves the colour verification average by at least 1 ΔE ITP with no colour worse by more than 0.5. Off by default until proven on this TV.
+   - colour ΔE ITP on 25/50/75% saturations of the six colours inside the panel's gamut;
+   - codes for 600, 700, 800, 900 and 1000 cd/m² must measure strictly increasing (no clipped highlights in 1000 cd/m² masters);
+   - failure restores the mode.
+9. **Experiment X1 (later):** a full measured BT.2020 3D LUT, as in SDR, instead of the matrix. Adopted only if it beats the matrix LUT by at least 1 ΔE ITP on the colour verification average, with no colour worse by more than 0.5. Off until proven on this TV.
 
 ### 7.5 Dolby Vision (`dolby_cinema_dark`, picture-mode number 2)
 
-1. **Configuration first, because a later 1D LUT disables it:**
-   - If a USB stick is present (the owner's choice in first-time setup), write `DolbyVision_UserDisplayConfiguration.txt` to its root in the 2019 format:
+Calman's method [calman] has two parts:
+- the 1D LUT corrects grey to gamma 2.2 and D65;
+- a configuration file then gives Dolby's mapping the measured white, black, red, green and blue.
 
-     ```
-     # Dolby Vision User Display Configuration File
-     [PictureMode = 2]
-     Tmax = <measured peak, 4 decimals>
-     Tmin = <measured black, at least 0.0001>
-     Tgamma = 2.2
-     TPrimaries = xr yr xg yg xb yb 0.3127 0.3290
-     ```
+bscpylgtv adds an ordering rule [bsc]: once a 1D LUT is uploaded to a Dolby Vision mode, the USB pop-up that loads the configuration is disabled. So Bloob measures first, writes the configuration second and corrects grey third.
 
-     Lines end with CRLF. Primaries come from 7.3, peak and black from 7.4.
-   - Play `dv81.mkv`; the TV offers its update pop-up and the owner presses OK. This is the run's only interaction, and only with a stick present. Without one, the step is skipped and the report says so.
+1. Engine plays `dv81.mkv` on loop. Confirm `getStatus` reports Dolby Vision. Then `pictureMode: dolby_cinema_dark`, `CAL_START`, and a unity 1D LUT.
+2. **Pass-through check (U7).** iTPG in full range (0–1023). Measure a 21-step grey ramp.
+   - If the ramp follows a power curve between black and peak, the patches reach the panel without Dolby's mapping in the way, which is what the 1D LUT needs.
+   - If it doesn't, the Dolby Vision grey fix is skipped and the report says why.
+3. **Measure** white, black, red, green and blue (full-range codes, 10% window) with the unity 1D LUT.
+4. **Predict the peak after the fix.** The 1D LUT lowers the strongest channel to balance white, which lowers the peak. The model predicts by how much, and Tmax is set to the predicted peak.
+5. **Configuration.** If a USB stick is present (chosen in first-time setup), write `DolbyVision_UserDisplayConfiguration.txt` to its root in the 2019 format:
+
+   ```
+   # Dolby Vision User Display Configuration File
+   [PictureMode = 2]
+   Tmax = <predicted peak, 4 decimals>
+   Tmin = <measured black, at least 0.0001>
+   Tgamma = 2.2
+   TPrimaries = xr yr xg yg xb yb 0.3127 0.3290
+   ```
+
+   - Lines end with CRLF.
+   - `CAL_END`, then play `dv81.mkv`. The TV offers its update pop-up and the owner presses OK. This is the run's only interaction, and only with a stick present.
+   - Without a stick, the step is skipped and the report says so.
    - Bloob never sends `DOLBY_CFG_DATA`, which bscpylgtv advises against on 2020 and later models.
-2. Engine plays `dv81.mkv` on loop. Confirm `getStatus` reports Dolby Vision. `pictureMode: dolby_cinema_dark`, `CAL_START`, then a unity 1D LUT.
-3. iTPG in full range (0–1023). Grey: set G in full-range codes, white balance only (6.1), through section 6.3.
-4. **Black check:** the 5% and lower steps must not rise above their uncorrected values. If they do, the first entries of each 1D curve are pulled down until they stop rising (bscpylgtv's raised-black fix).
-5. `CAL_END`. Colour gamut `native`, as the guide does. Verify grey outside calibration mode.
+6. **Grey:** `CAL_START` again. Set G in full-range codes, through section 6.3, to gamma 2.2 between Tmin and Tmax at D65. Then the activation check.
+7. **Black check:** the 5% and lower steps must not rise above their uncorrected values. If they do, the first entries of each 1D curve are pulled down until they stop rising (bscpylgtv's raised-black fix).
+8. **Peak check.** Measure the peak again. If it differs from the configured Tmax by more than 3%, Bloob offers one repeat: reset that mode's 1D LUT, load a corrected configuration (one more OK press), then upload the 1D LUT again.
+9. `CAL_END`. Colour gamut `native`, as bscpylgtv's guide does. Verify grey outside calibration mode.
 
 ### 7.6 Finish
 
@@ -346,11 +432,11 @@ The full run, failures included, runs against the simulator (section 10).
 
 | Test | Where | Asserts |
 | --- | --- | --- |
-| Colour science | `native/tests/cal_test.cpp` | ΔE2000 against Sharma's 34 published pairs; PQ, BT.1886 and ICtCp round trips; ΔE ITP against BT.2124 examples |
-| LUT formats | `cal_test.cpp`, `tv-app/tests/service/cal-tv.test.mjs` | Unity 1D and 3D tables byte-identical to bscpylgtv's (`unity_lut_1d`, `unity_lut_3d`); `.cube`/`.cal` round trips; base64 payloads match fixtures made with bscpylgtv |
+| Colour science | `native/tests/cal_test.cpp` **(built)** | ΔE2000 against Sharma's 34 published pairs; PQ against known levels (100, 1000, 10000 cd/m²) and round trips; BT.1886; Rec.709 white and red luminance; ICtCp neutral on D65 greys. To add: ΔE ITP against BT.2124's worked examples |
+| LUT formats | `cal_test.cpp` **(built)**, `tv-app/tests/service/cal-tv.test.mjs` | Unity 1D and 3D tables byte-identical to bscpylgtv's (`unity_lut_1d`, `unity_lut_3d`, by FNV-1a checksum); node order (red fastest); 12-bit round trips within one code; tetrahedral interpolation exact on unity; base64 |
 | Allow-list | `cal-tv.test.mjs` | Every forbidden command and mode is refused before sending |
-| Model | `cal_test.cpp` | On a synthetic WOLED (white sub-pixel, non-additive), the fitted model predicts held-out patches within 0.5 ΔE2000 |
-| Solver | `cal_test.cpp` | On synthetic panels with known errors (wrong white, gamma 2.2 instead of 2.4, oversaturated green), the solved tables bring set V within the pass marks of section 1; the solver never writes NaN, non-monotonic curves or out-of-range values |
+| Model | `cal_test.cpp` **(built)** | On the virtual G2 (white sub-pixel, non-additive), the fitted model predicts 150 colours it was not fitted on to 0.05 ΔE2000 average, 0.2 worst (asserted: under 0.6 and 2.0); inversion |
+| Procedure | `cal_test.cpp` **(built)** | Every run in section 0, asserted against the section 1 pass marks on the final verification set, plus the fault cases. The simulator counts every upload with a NaN, a value outside [0, 1] or a falling 1D curve; the runs assert none |
 | Meter rules | `tv-app/tests/service/cal-meter.test.mjs` | Agreement, near-black weighting, sentinel rescaling and re-measure, placement and stray-light warnings, all against a scripted fake meter |
 | Whole run | `tv-app/tests/service/calibrate.test.mjs` with `cal-sim.mjs` | The virtual G2 enforces the rules of 2.2 (sessions, mode families, ranges, `CAL_START` side effects, the disabled Dolby Vision pop-up after a 1D upload). Runs: clean; meter slips; foreground app changes; service restart mid-run (asserts `CAL_END` comes first, then resume); verification worse than baseline (asserts restore); getters broken (asserts factory reset is used) |
 | Replay | `calibrate.test.mjs` | Real runs' `readings.jsonl` (no personal data in them) re-solved whenever the solver changes |
@@ -362,15 +448,15 @@ Each step is one command the owner runs, with a pass criterion. Each step must p
 | Step | Writes | What happens | Passes when |
 | --- | --- | --- | --- |
 | C0.1 | Nothing | Read the model name, firmware and the target modes' picture settings | Model is OLED55G2 |
-| C0.2 | Nothing | Find Argyll's Spyder data and a WOLED `.ccss` | Both found, or the owner is told exactly what to add **(U4)** |
+| C0.2 | Nothing | Find `spyd4cal.bin` and a WOLED `.ccss` (section 2.4) | Both found, or the owner is told exactly what to copy where **(U4)** |
 | C0.3 | Nothing | Try `getExternalPqData GET_1D_DPG_DATA` by luna as root; else pair over ssap (the TV asks once) | A reply with `dataCount` 3072 **(U1, U2)** |
-| C0.4 | Nothing | Start `bloob-meter`, 10 readings of the current screen | Readings agree within 1% **(U5)** |
+| C0.4 | Nothing | Start `bloob-meter`, 10 readings of the current screen, in refresh and non-refresh mode | Readings agree within 1%; the steadier mode is kept **(U5)** |
 | C1.1 | Nothing | iTPG patches in SDR | Each colour appears where expected |
 | C1.2 | Nothing | Measure SDR codes 940 and 1000, then 64 and 0 | Equal pairs mean limited range **(U3)** |
 | C1.3 | Nothing | Play `hdr10.mkv`, check `getStatus`, draw one patch | HDR10 reported and patch visible **(U6)** |
-| C1.4 | Nothing | Same with `dv81.mkv` | Dolby Vision reported and patch visible **(U6)** |
+| C1.4 | Nothing | Same with `dv81.mkv`, then a 21-step full-range grey ramp | Dolby Vision reported, patch visible **(U6)**; the ramp shows whether patches pass through Dolby's mapping **(U7)** |
 | C2.1 | `expert1` only | `CAL_START expert1`, then a unity 1D LUT, then `CAL_END` | Measured greys unchanged within noise |
-| C2.2 | `expert1` only | A 1D LUT that halves red, then a factory reset of `expert1` | Red drops, then returns within noise; the getter matches what was written |
+| C2.2 | `expert1` only | A 1D LUT that halves red, then a factory reset of `expert1` | Red drops, then returns within noise; the getter matches what was written; the activation check (6.5) catches the change |
 | C2.3 | `expert1` only | Pipeline order: a 3D LUT that swaps red and green, plus a 1D LUT that zeroes red; measure input red | The colour seen shows which stage acts last |
 | C2.4 | `expert1` only | After `CAL_END`, try each colour gamut setting with a non-unity 3D LUT uploaded | Shows which setting keeps the LUT in charge |
 | C3 | `expert2` | Full SDR, report, Undo, run again | Pass marks met; Undo returns to the C0.1 readings |
@@ -382,9 +468,10 @@ Each step is one command the owner runs, with a pass criterion. Each step must p
 
 | # | Package | Done when |
 | --- | --- | --- |
-| W1 | Colour science and LUT formats | The `cal_test` colour and format tests pass |
-| W2 | Panel model, solver, `bloob-cal` | The solver tests pass on all synthetic panels |
-| W3 | Simulator | Rules of 2.2 enforced; used by W4 and W5 |
+| W1 | Colour science and LUT formats | **Done:** Sharma's 34 pairs, PQ values, unity tables byte-identical to bscpylgtv's |
+| W2 | Panel model, procedure for all three modes | **Done:** section 0's runs pass the section 1 marks, on the desktop and as ARM code |
+| W3 | Virtual G2 | **Done:** the panel, factory and fault models of section 0 |
+| W3b | `bloob-cal` and its JSON-lines device bridge | The procedure runs through the bridge against a scripted service |
 | W4 | `cal-tv.js` with allow-list and both transports | `cal-tv.test.mjs` passes against the simulator |
 | W5 | `bloob-meter` and `cal-meter.js` | `cal-meter.test.mjs` passes; desktop run with a fake `spotread` |
 | W6 | `calibrate.js` and `cal-store.js` | The whole-run tests pass, interruption cases included |
@@ -404,3 +491,14 @@ The build queue puts calibration after real Dolby Vision for profile 7 remuxes. 
 5. **The pipeline order** of the 1D and 3D LUTs was assumed. It is now measured (C2.3), and the method follows the result.
 6. **The Dolby Vision configuration** format and picture-mode number are now exact. Primaries come from a measurement step (7.3).
 7. **SDR iTPG range, transport and getters** are now named unknowns with the experiments that settle them.
+
+**Revision 3 (29 October 2026),** after checking Calman's LG AutoCal guides, TFTCentral's guide, Argyll's documentation and LG firmware reports:
+
+1. **Dolby Vision grey** now goes to gamma 2.2 and D65, as Calman does, instead of white balance only. The configuration is built from measured white, black, red, green and blue, with Tmax predicted for after the grey fix and checked afterwards (7.5).
+2. **HDR10 colour** now uses Calman's matrix LUT (five patches, 3×3 maths baked into the BT.2020 3D LUT, grey axis identity), kept only on measured improvement. A full measured HDR 3D LUT stays an experiment.
+3. **HDR10 settings:** contrast 100 and brightness 50 for the 1D LUT step, as Calman requires.
+4. **Grey between patches:** a full-screen 18% grey after each reading, Calman's OLED default, keeps the power limiter steady.
+5. **Activation check** after every upload, because some LG firmware accepts a 3D LUT without switching it on.
+6. **Light re-check** after the grey fix, which can lower white.
+7. **Meter data:** where `spyd4cal.bin` and the `.ccss` go, and why `bloob-meter` sets `HOME` itself. Refresh mode is chosen by measurement.
+8. **Pass-through check** for Dolby Vision patches (new unknown U7).

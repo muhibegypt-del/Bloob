@@ -24,6 +24,13 @@ find_package(Threads REQUIRED)
 target_link_libraries(buna_core PUBLIC Threads::Threads)
 target_include_directories(buna_core PUBLIC src)
 
+# Calibration (CALIBRATION-PLAN.md): colour science, LG's tables, the panel
+# model, the procedure, and the virtual G2 it is tested on. No dependencies.
+add_library(bloob_cal STATIC cal/colour.cpp cal/lut.cpp cal/measure.cpp cal/model.cpp cal/grey.cpp cal/sdr.cpp cal/hdr.cpp cal/sim.cpp)
+target_include_directories(bloob_cal PUBLIC cal)
+# Optimised even in Debug: the tests run whole calibrations on the virtual G2.
+target_compile_options(bloob_cal PRIVATE -O2)
+
 # The playback engine's demuxer and audio converter (3.0) and Headphones mode
 # (3.2: binaural.cpp, headphones.cpp), on Bloob's own
 # static FFmpeg (scripts/build-ffmpeg-libs.sh arm|host, into build-ffmpeg/).
@@ -102,4 +109,8 @@ else ()
   add_executable(native_tests tests/session_test.cpp tests/play_test.cpp tests/runtime_test.cpp tests/demux_test.cpp tests/headphones_test.cpp)
   target_link_libraries(native_tests PRIVATE buna_core buna_demux)
   add_test(NAME native_tests COMMAND native_tests)
+  add_executable(cal_tests tests/cal_test.cpp)
+  target_link_libraries(cal_tests PRIVATE bloob_cal)
+  target_compile_options(cal_tests PRIVATE -O2)
+  add_test(NAME cal_tests COMMAND cal_tests)
 endif ()
