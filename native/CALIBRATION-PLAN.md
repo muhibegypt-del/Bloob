@@ -8,6 +8,7 @@ Evidence labels:
 - **[calman]**: Portrait Displays' published LG AutoCal guides (their 2022 list includes the G2), and TFTCentral's LG OLED AutoCal guide, read on 29 October 2026.
 - **[argyll]**: Argyll CMS documentation for `spotread` and `oeminst`, read on 29 October 2026.
 - **[owner]**: the owner's report.
+- **[tv]**: read on the owner's TV with `cal-check.sh`, 29 October 2026.
 - **[plan]**: a design decision.
 - **[unknown]**: settled by the named experiment (section 11) before anything depends on it.
 
@@ -67,7 +68,7 @@ At an estimated 1.5–3 s per Spyder5 reading, the readings above mean about 3�
 
 | Mode | Picture mode | Target | Pass, on the verification set (never on calibration patches) |
 | --- | --- | --- | --- |
-| SDR | Expert (Dark) `expert2` | Rec.709 primaries, D65, BT.1886 (or 2.4 power), white 100 cd/m² unless the owner chooses otherwise | Grey ΔE2000 average ≤ 0.5, maximum ≤ 1.0; colour average ≤ 1.0, maximum ≤ 2.0 |
+| SDR | Expert (Bright room) `expert1`, the mode the owner watches in [tv] | Rec.709 primaries, D65, BT.1886 (or 2.4 power), white 100 cd/m² unless the owner chooses otherwise | Grey ΔE2000 average ≤ 0.5, maximum ≤ 1.0; colour average ≤ 1.0, maximum ≤ 2.0 |
 | HDR10 | Cinema `hdr_cinema` | PQ (ST 2084) to the measured peak, D65 grey, colour by a matrix LUT; LG tone mapping set from the measured peak | Grey ΔE ITP (BT.2124) average ≤ 2 up to 90% of peak; colour ΔE ITP average ≤ 3 inside the panel's gamut; monotonic highlights up to 1000 cd/m² mastering |
 | Dolby Vision | Cinema (Dark) `dolby_cinema_dark` | Grey to gamma 2.2 between the panel's black and peak, at D65 (Calman's method); Dolby's mapping fed the measured peak, black and primaries | Grey ΔE2000 average ≤ 1.0 relative to the measured peak; configured peak within 3% of the peak measured after the grey fix; black no higher than before |
 
@@ -80,7 +81,7 @@ At an estimated 1.5–3 s per Spyder5 reading, the readings above mean about 3�
 - **Calibration and pattern commands** go to `ssap://externalpq/setExternalPqData`; reads go to `ssap://externalpq/getExternalPqData`. Both are sent over the TV's second-screen socket `ws://127.0.0.1:3000`, after registering with LG's signed test manifest [bsc, probe].
   - The probe registers with `{type:"register", payload:{"client-key", forcePairing:false, manifest, pairingType:"PROMPT"}}`. It uses the gateway's own `ws` module (`/usr/palm/services/com.webos.service.secondscreen.gateway/node_modules/ws`), read-only, and stores its key with mode 600 [probe].
   - Bloob does the same with its own key file, `<data>/calibration/ssap-key.json` (mode 600, never logged, never in Git). It reads the manifest from the probe app's `itpg_manifest.json` at run time, so LG's signature is never committed.
-  - **[unknown U1]** Bloob is root through the Homebrew Channel. If the bus service behind `externalpq` answers `luna-send` directly, no pairing is needed. Experiment C0.3 tries it first.
+  - **Settled (U1) [tv]: no pairing is needed.** On this TV the bus service behind `externalpq` is **`com.webos.service.pqcontroller`**, and it answers `luna-send` from root: `getExternalPqData` `GET_1D_DPG_DATA` returned `returnValue true`, `dataCount 3072`, `unsigned integer16`, outside calibration mode. `com.webos.service.externalpq` does not exist. So Bloob sends every calibration and pattern command as `luna://com.webos.service.pqcontroller/setExternalPqData` (and `getExternalPqData`) through the Homebrew Channel, with the same JSON. The ssap route above stays as the fallback.
 - **Picture settings** use `luna://com.webos.settingsservice/getSystemSettings` and `setSystemSettings` with `category:"picture"`. Changing the picture mode uses `{"pictureMode": …}`, which bscpylgtv's `set_system_picture_mode` states needs webOS 9 (the owner has 9.2.2). Bloob's service already holds a `webos-service` handle (`server.js`), and root commands go through `luna://org.webosbrew.hbchannel.service/exec`, as the probe and `main.cpp` already do.
 
 ### 2.2 Calibration messages [bsc `webos_client.py`, `cal_commands.py`]
@@ -96,7 +97,7 @@ At an estimated 1.5–3 s per Spyder5 reading, the readings above mean about 3�
 
   `dataOpt` is 0 to apply, 1 to apply and save, 2 to reset to factory. A reset sends empty data with `dataOpt: 2`.
 - **Session commands:**
-  - Start: `{"command":"CAL_START","profileNo":0,"programID":1,"picMode":"expert2"}`.
+  - Start: `{"command":"CAL_START","profileNo":0,"programID":1,"picMode":"expert1"}`.
   - End: `{"command":"CAL_END","profileNo":0,"programID":1}`.
 - **Write commands:**
 
@@ -146,10 +147,11 @@ At an estimated 1.5–3 s per Spyder5 reading, the readings above mean about 3�
 - `spotread` is Argyll CMS 2.0.1 for ARM, with its X11 libraries in `libs/`. It runs as `LD_LIBRARY_PATH=<base>/libs /lib/ld-linux.so.3 <base>/spotread -e -O -x` through the Homebrew Channel's `exec`, as root.
 - The result line is `Result is XYZ: X Y Z, Yxy: Y x y`.
 - The probe detects the meter by USB ID `085c:0500` in `/sys/bus/usb/devices`.
-- **Meter data [argyll].**
-  - A Spyder5 needs Datacolor's calibration data before Argyll can apply any correction file. `oeminst` extracts it from Datacolor's own installer into `spyd4cal.bin`, and installs `.ccss` files.
-  - Argyll looks for both under `$XDG_DATA_HOME/ArgyllCMS` (by default `$HOME/.local/share/ArgyllCMS`). Through the Homebrew Channel, Bloob doesn't control `HOME`, so `bloob-meter` sets `HOME` and `XDG_DATA_HOME` itself, to `<data>/calibration/argyll/`.
-  - The owner copies two files there once: `spyd4cal.bin` (made by `oeminst` on the PC) and a WOLED `.ccss`. Neither goes into Git or Bloob's package, because Datacolor's data is not redistributable [argyll].
+- **Meter data [argyll, corrected 29 October 2026].**
+  - Argyll's instrument notes say a Spyder5 can use a `.ccss` spectral correction **without** Datacolor's calibration data ("You can use CCSS files as an alternative"). Datacolor's data (`spyd4cal.bin`, made by `oeminst`) only adds LCD display types, none for OLED, so Bloob doesn't need it.
+  - The correction: DisplayCAL's colorimeter-corrections database has **"LG TV 55G2 (i1 Pro 2)"**, measured on the owner's exact model with an i1 Pro 2 spectrometer. Its header reads Argyll `ccxxmake`, technology `LED WOLED`, refresh display, 109 bands from 370 to 730 nm, 4 sets (checked 29 October 2026).
+  - It is passed straight to `spotread` as `-X <file>`, so no Argyll data folder or `HOME` is involved.
+  - The owner downloads it once on the TV, to `/media/internal/com.muhib.bloob/calibration/argyll/lg-55g2.ccss`. It stays on the TV: never in Git or Bloob's package.
 - `exec` returns only when the command finishes, so it cannot hold an interactive `spotread` session open. That is why section 4.2 has its own helper.
 
 ## 3. Architecture and files
@@ -184,9 +186,10 @@ At an estimated 1.5–3 s per Spyder5 reading, the readings above mean about 3�
 ### 4.1 Correction for the meter
 
 - A Spyder5 reads a WOLED panel's white noticeably wrong without a spectral correction. This is the largest single error source, so it comes before any algorithm.
-- Argyll uses a CCSS correction with a Spyder5 only after `oeminst` has installed the Spyder's calibration data from Datacolor's installer.
-- **First-run step:** Bloob checks for Argyll's Spyder data and for a WOLED `.ccss`, and passes it to `spotread` as `-X <file>`.
-- Without the correction, Calibrate offers a measure-only report and does not write anything. **[unknown U4]**: where the owner's copy is, settled by C0.2.
+- **The correction (U4, settled):** the LG 55G2 `.ccss` of section 2.4, passed as `-X <file>`. No Datacolor data is needed.
+- **First-run step:** Bloob checks the file is there and is a WOLED CCSS.
+- Without the correction, Calibrate offers a measure-only report and does not write anything.
+- `cal-meter-check.sh` also measures white without the correction, so the report can show how far the uncorrected meter is off.
 
 ### 4.2 `bloob-meter` (root helper)
 
@@ -295,10 +298,10 @@ Codes are 10-bit; *L(p)* is the limited-range code for fraction *p*: 64 + round(
    - the getters' 1D LUT, 3D LUT and matrices, wherever the getters work. Their checksums are compared with a second read; disagreement means that backup is marked unreliable, and Undo uses the factory reset for that mode.
 4. **Measurement settings:** energy saving, AI picture and brightness, dynamic contrast, peak brightness, logo brightness, the screensaver and auto power-off are recorded and switched off for the run. All are restored at the end, and on cancel or failure.
 
-### 7.2 SDR (`expert2`)
+### 7.2 SDR (`expert1`)
 
-1. Bloob is in the foreground, showing a black page. Set `pictureMode: expert2` and confirm it was applied.
-2. `CAL_START` `expert2`, then contrast 85, brightness 50 and colour 50 (bscpylgtv's defaults).
+1. Bloob is in the foreground, showing a black page. Set `pictureMode: expert1` and confirm it was applied.
+2. `CAL_START` `expert1`, then contrast 85, brightness 50 and colour 50 (bscpylgtv's defaults; the owner's current values too [tv]).
 3. **Bypass:** both enable flags off, matrices identity, both 3D LUTs unity, 1D LUT unity.
 4. **Pipeline order test (once, C2.3):** does the 1D LUT act before or after the 3D LUT? This decides the method below.
    - **If 1D acts after 3D** (expected: "DPG" sits on the panel side): the 1D LUT carries grey and white balance, and the 3D LUT carries colour with its grey axis identity.
@@ -409,7 +412,7 @@ All patches come from the iTPG (2.3) drawn over Bloob's own black page, so the b
 ### 9.1 Rules
 
 1. **Command allow-list in `cal-tv.js`:**
-   - Allowed: exactly the commands in 2.2 and 2.3, and only with `picMode` in {expert1, expert2, hdr_cinema, dolby_cinema_dark}. `expert1` is used only for the C2 round-trip test.
+   - Allowed: exactly the commands in 2.2 and 2.3, and only with `picMode` in {expert1, expert2, hdr_cinema, dolby_cinema_dark}. `expert2`, which the owner doesn't use, is used only for the C2 experiments.
    - Everything else throws before it reaches the socket. That includes `DOLBY_CFG_DATA`, the service menu, `setConfigs` and any other luna write.
 2. **Data checks** before each send: shape, type, range, monotonic 1D curves, and no NaN.
 3. **Always close.** Every path that opens a session ends with `CAL_END`: success, error, cancel, timeout, and service restart (9.2).
@@ -447,19 +450,19 @@ Each step is one command the owner runs, with a pass criterion. Each step must p
 
 | Step | Writes | What happens | Passes when |
 | --- | --- | --- | --- |
-| C0.1 | Nothing | Read the model name, firmware and the target modes' picture settings | Model is OLED55G2 |
-| C0.2 | Nothing | Find `spyd4cal.bin` and a WOLED `.ccss` (section 2.4) | Both found, or the owner is told exactly what to copy where **(U4)** |
-| C0.3 | Nothing | Try `getExternalPqData GET_1D_DPG_DATA` by luna as root; else pair over ssap (the TV asks once) | A reply with `dataCount` 3072 **(U1, U2)** |
-| C0.4 | Nothing | Start `bloob-meter`, 10 readings of the current screen, in refresh and non-refresh mode | Readings agree within 1%; the steadier mode is kept **(U5)** |
+| C0.1 | Nothing | Read the model name, firmware and the target modes' picture settings | **Passed 29 Oct [tv]: OLED55G26LA, chip W22O (33-point 3D LUT, 2019 Dolby Vision format), firmware 23.25.55 (webOSTV 7.0 base); SDR in `expert1`, OLED light 28, contrast 85, brightness 50, colour 50, gamma `high1`, colour temperature −50, gamut `auto`, energy saving off** |
+| C0.2 | Nothing | Find the WOLED `.ccss` (section 2.4) | **29 Oct: none on the TV; the 55G2 correction identified (U4)** |
+| C0.3 | Nothing | Try `getExternalPqData GET_1D_DPG_DATA` by luna as root; else pair over ssap (the TV asks once) | **Passed 29 Oct [tv]: `com.webos.service.pqcontroller` answered from root with 3072 values (U1 settled; U2 for the 1D getter)**. The 3D LUT and matrix getters are in `cal-meter-check.sh` |
+| C0.4 | Nothing | `cal-meter-check.sh`: ten one-shot readings of a white 10% window, with and without the correction | The spread gives the real meter noise for the simulator; readings agree within 1%. The pseudo-terminal session (U5) follows with `bloob-meter` |
 | C1.1 | Nothing | iTPG patches in SDR | Each colour appears where expected |
-| C1.2 | Nothing | Measure SDR codes 940 and 1000, then 64 and 0 | Equal pairs mean limited range **(U3)** |
+| C1.2 | Nothing | `cal-meter-check.sh`: SDR codes 940 and 1019 | About equal: limited range; about 1.2×: full range **(U3)** |
 | C1.3 | Nothing | Play `hdr10.mkv`, check `getStatus`, draw one patch | HDR10 reported and patch visible **(U6)** |
 | C1.4 | Nothing | Same with `dv81.mkv`, then a 21-step full-range grey ramp | Dolby Vision reported, patch visible **(U6)**; the ramp shows whether patches pass through Dolby's mapping **(U7)** |
-| C2.1 | `expert1` only | `CAL_START expert1`, then a unity 1D LUT, then `CAL_END` | Measured greys unchanged within noise |
-| C2.2 | `expert1` only | A 1D LUT that halves red, then a factory reset of `expert1` | Red drops, then returns within noise; the getter matches what was written; the activation check (6.5) catches the change |
-| C2.3 | `expert1` only | Pipeline order: a 3D LUT that swaps red and green, plus a 1D LUT that zeroes red; measure input red | The colour seen shows which stage acts last |
-| C2.4 | `expert1` only | After `CAL_END`, try each colour gamut setting with a non-unity 3D LUT uploaded | Shows which setting keeps the LUT in charge |
-| C3 | `expert2` | Full SDR, report, Undo, run again | Pass marks met; Undo returns to the C0.1 readings |
+| C2.1 | `expert2` only | `CAL_START expert2`, then a unity 1D LUT, then `CAL_END` | Measured greys unchanged within noise |
+| C2.2 | `expert2` only | A 1D LUT that halves red, then a factory reset of `expert2` | Red drops, then returns within noise; the getter matches what was written; the activation check (6.5) catches the change |
+| C2.3 | `expert2` only | Pipeline order: a 3D LUT that swaps red and green, plus a 1D LUT that zeroes red; measure input red | The colour seen shows which stage acts last |
+| C2.4 | `expert2` only | After `CAL_END`, try each colour gamut setting with a non-unity 3D LUT uploaded | Shows which setting keeps the LUT in charge |
+| C3 | `expert1` | Full SDR, report, Undo, run again | Pass marks met; Undo returns to the C0.1 readings |
 | C4 | `hdr_cinema` | Full HDR10 | Pass marks met |
 | C5 | `dolby_cinema_dark` | USB configuration, then grey | Pass marks met; the pop-up appeared before the 1D upload |
 | C6 | All three | The one-button run, end to end | Section 1 met with no interaction beyond the optional pop-up |
@@ -500,5 +503,5 @@ The build queue puts calibration after real Dolby Vision for profile 7 remuxes. 
 4. **Grey between patches:** a full-screen 18% grey after each reading, Calman's OLED default, keeps the power limiter steady.
 5. **Activation check** after every upload, because some LG firmware accepts a 3D LUT without switching it on.
 6. **Light re-check** after the grey fix, which can lower white.
-7. **Meter data:** where `spyd4cal.bin` and the `.ccss` go, and why `bloob-meter` sets `HOME` itself. Refresh mode is chosen by measurement.
+7. **Meter data:** where the `.ccss` goes. (Revision 4, after the TV reading: no Datacolor data is needed, and the 55G2 correction exists.) Refresh mode is chosen by measurement.
 8. **Pass-through check** for Dolby Vision patches (new unknown U7).

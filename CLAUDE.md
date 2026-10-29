@@ -173,7 +173,11 @@ The owner chose native. `native/` is a C++ webOS app (`com.muhib.bloob`, "Bloob 
     - the virtual G2.
   - **Proven:** `build-host/cal_tests` (7 s, also run by `build.sh`) reaches the pass marks from 2.5–7.6 ΔE starts: SDR grey about 0.2 and colour 0.1–0.2; HDR10 grey 0.18 and colour 0.81 ΔE ITP; Dolby Vision grey 0.14. Fault cases are caught, including firmware that ignores the 3D LUT, a reversed pipeline, dimming, no USB stick and no pass-through. The same tests pass as ARM code under qemu (static build).
   - **Next (W3b–W8):** the `bloob-cal` bridge, `bloob-meter`, `cal-tv.js`/`cal-meter.js`/`calibrate.js`, carrier clips and the Calibrate screen.
-  - **TV:** `native/scripts/cal-check.sh` is the read-only first step (C0).
+  - **TV, 29 October 2026 (`cal-check.sh`, read-only):** OLED55G26LA, chip W22O, firmware 23.25.55 (`getCurrentSWInformation` reports webOSTV 7.0).
+    - The owner watches SDR in `expert1`, so that is the SDR mode calibrated. `expert2` is the spare for experiments.
+    - The calibration service is `com.webos.service.pqcontroller`; it answers `luna-send` from root, so no pairing is needed. The 1D LUT getter returned 3072 values.
+    - No meter correction was on the TV yet. The correction is DisplayCAL's "LG TV 55G2 (i1 Pro 2)" `.ccss`, at `/media/internal/com.muhib.bloob/calibration/argyll/lg-55g2.ccss`, on the TV only. A Spyder5 needs no Datacolor data for a `.ccss`.
+    - Next read-only step: `native/scripts/cal-meter-check.sh`, with the Spyder5 on the screen. It runs the table getters, patterns, real meter noise and the SDR range test.
   - **Queue:** it follows real Dolby Vision for profile 7.
 - **Design (2.0, Glass):** the visual system, with materials, tokens, type, focus, motion, states, the spoken interface and per-screen layouts, is in `native/DESIGN.md`. The tokens live in `native/src/theme.h`, the type scale, label roles and components in `ui.cpp`, and the frost bake in `images.cpp`.
 - **Rendering and playback:**
