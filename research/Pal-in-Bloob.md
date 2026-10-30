@@ -192,3 +192,36 @@ bloob-cal serve (root)  ──events──>  pal.js (Bloob service)  ──HTTPS
 | T4 | `pal.js`: the loop, caching, cost meter and cap, conversation rebuilt from the journal; key from `keys.json` | Desktop against the stand-in TV with the real API (a few dollars, with the owner's approval) |
 | T5 | Settings → Pal → SDR calibration; Pal's line on the card; meter-centring check | Desktop tour, then the TV |
 | T6 | First Pal run on the TV | The report: result, minutes, turns and cost |
+
+## 9. SDR grey, the simple flow, and Pal's goal (owner, 30 October 2026)
+
+The owner's own test: HCFR greys at 0–100% in 5% steps, the PDF given to a language model, a 1D LUT made from the deviations. Pal's first job is that flow, hands-off: report → Claude → 1D LUT → push → confirm loaded → after report.
+
+### The goal (the contract Pal works to)
+
+Measured as ΔE2000 relative to the target white (Rec.709 D65, BT.1886, the chosen white), at 21 grey levels:
+
+| Rule | Value |
+| --- | --- |
+| Levels that count | 10–100%. 0% isn't scored (OLED black reads 0). 5% (about 0.1 cd/m² at 140 nits) is reported but not scored, because it is below what the Spyder5 reads reliably |
+| **Goal** | Average ≤ **0.5**, and **every** counted level ≤ **1.0**. White luminance within 2% of target |
+| Why that number | `CALIBRATION-PLAN.md` §1's SDR mark; a community report puts LG AutoCal at 0.3–0.4 average, worst under 1; the owner's previous tool reached about 0.8. Around 1 is commonly treated as the smallest grey difference a trained eye can see |
+| Floor | No counted level ends worse than **before** by more than the meter's repeatability. If Pal can't beat the starting point, it puts the starting point back |
+| Stop | When the goal is met; or when what's left is within the meter's repeatability (measured, three reads of white and of 50% at the start); or after **3 passes** |
+| Staying within | Every run starts with a 21-level report (about 5 minutes). If it is within the goal, nothing is written. A monthly recheck uses the same report |
+
+The numbers are what the Spyder5, with its G2 correction file, reads. The report says so.
+
+### A second pass: diagnose first, then keep or clear
+
+Pal reads the after report and finds out why before acting:
+
+| What the after report shows | Likely cause | What Pal does |
+| --- | --- | --- |
+| Readback differs from what was sent | The table didn't load | Clear to the start, push again; if it fails twice, stop and undo |
+| Every level moved the same way, white included | White itself moved (light, the meter shifted, the panel warming) | Re-read white and 50% to see whether it is the meter or the panel; re-centre or wait; then clear and redo |
+| Better, but some levels over- or under-shot | The WOLED white sub-pixel: colours interact | Keep the correction and refine from the after report, with smaller steps at those levels |
+| Better, but the dark levels wander | Meter noise | More reads there; don't chase what's within repeatability |
+| Worse than before anywhere | The correction was wrong | Clear to the start, redo with the cause named in the report |
+
+Clearing helps only when something went wrong. When the first pass helped, starting again from scratch would reach the same place, so Pal keeps it and refines.
