@@ -280,6 +280,8 @@ Every item is read back from the TV or measured, never assumed. If one fails, `p
 
 ### The magenta flash: a located suspect
 
+**Update (owner, 30 October 2026):** an LG pipeline transition. Changing a pattern gives a brief pink or green flicker before it settles, so the pattern delay should be 1.5–2.0 s; Bloob waited 0.4 s. See `research/LG-calibration-best-practices.md` B1. The fix is a 2.0 s delay before the first reading of a new patch. The analysis below stays as background.
+
 The evidence:
 - In the `bloob-cal patterns` test (30 October), the routes that drew **one** box showed it on **magenta** ("green on magenta", "yellow on magenta"). The routes that drew a black background box as well showed it on black.
 - Between squares, `TvDevice::measure` inserts 0.8 s of full-screen 18% grey (Calman's OLED pattern insertion), and that insertion is drawn as **one** box (`numOfBox: 1`).
