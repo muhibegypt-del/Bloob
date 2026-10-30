@@ -218,10 +218,10 @@ Pal reads the after report and finds out why before acting:
 
 | What the after report shows | Likely cause | What Pal does |
 | --- | --- | --- |
-| Readback differs from what was sent | The table didn't load | Clear to the start, push again; if it fails twice, stop and undo |
-| Every level moved the same way, white included | White itself moved (light, the meter shifted, the panel warming) | Re-read white and 50% to see whether it is the meter or the panel; re-centre or wait; then clear and redo |
+| Readback differs from what was sent | The table didn't load | Push the same table again; if it fails twice, stop and undo |
+| Every level moved the same way, white included | White itself moved (light, the meter shifted, the panel warming) | Re-read white and 50% to see whether it is the meter or the panel; re-centre or wait; then measure again with the same table |
 | Better, but some levels over- or under-shot | The WOLED white sub-pixel: colours interact | Keep the correction and refine from the after report, with smaller steps at those levels |
 | Better, but the dark levels wander | Meter noise | More reads there; don't chase what's within repeatability |
 | Worse than before anywhere | The correction was wrong | Clear to the start, redo with the cause named in the report |
 
-Clearing helps only when something went wrong. When the first pass helped, starting again from scratch would reach the same place, so Pal keeps it and refines.
+**The default is to build on the table in the TV:** read it back, measure the screen with it loaded, and add the correction for what is still off to that table (new table = table in the TV + correction). Each pass is a better version of the last one. Clearing back to the starting table happens only when a pass made a level worse than before.
