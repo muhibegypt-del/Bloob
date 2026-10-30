@@ -1,94 +1,75 @@
-# Pal moonshot
+# Pal at ISF level
 
-Written 30 October 2026, in answer to the owner: "an absolute moonshot to improve Pal; no limitations, unlimited budget, but a solid foundational offering, no gimmicks." Builds on `research/Pal-in-Bloob.md`. Design proposal only.
+Rewritten 30 October 2026. The owner rejected the first moonshot as gimmicks and asked the real question: **how does Pal do everything an ISF calibrator does on this TV?** Design proposal; nothing here is built.
 
-**North star:** Pal stops being an event that leaves a table behind. It becomes a measured, maintained, end-to-end colour truth for this TV, this room and this viewer, with every claim carrying its uncertainty.
+## 1. What an ISF calibrator delivers on an LG G2
 
-## 1. A physical twin of this one panel, and experiments chosen by information
+1. **Consultation.** The room, when and what you watch, and which sources. On LG this decides two modes: *Expert (Bright room)* for day and *Expert (Dark room)* for night, which are ISF's day/night pair. Then the HDR10 and Dolby Vision modes.
+2. **Set-up.** At least 30 minutes of warm-up; the meter placed flat and centred; the source chain checked (signal format, range, black-level matching).
+3. **Basic controls.** Brightness (black level), contrast (white clipping), colour, tint and sharpness at their neutral values. All processing off: motion, noise reduction, smooth gradation, dynamic anything, energy saving. Real Cinema on and Just Scan, so there is no overscan.
+4. **Readings before.**
+5. **White balance and greyscale.** Two-point, then multi-point, to the chosen gamma for each mode. Usually 2.2 or BT.1886 at a brighter level by day; BT.1886/2.4 at about 100 cd/m² by night.
+6. **Colour.** CMS, or on LG the AutoCal 1D and 3D LUTs.
+7. **HDR10 and Dolby Vision.** PQ tracking, tone mapping and peak; the Dolby Vision configuration file.
+8. **Verification.** Readings after: greys, ColorChecker, saturation and luminance sweeps, near-black and clipping. Then a viewing check with the owner on known reference material.
+9. **Hand-over.** A report and a settings record, the modes left calibrated, and advice on when to check again.
 
-- **Model.** A physics-grounded model of this G2, fitted from its own measurements, with uncertainty on every parameter:
-  - WRGB mixing (how LG adds the white sub-pixel as level rises);
-  - near-black behaviour;
-  - ABL as a function of window size, APL and time;
-  - warm-up and thermal drift;
-  - per-channel ageing.
-- **Use.** The correction is optimised on the twin, and the TV is used only to test it.
-- **Readings.** Each next reading is the one expected to remove the most uncertainty from what matters (Bayesian experimental design). Readings go to where the panel is unknown, not to a fixed 26-level ramp. Expected effect: far fewer readings for a better result, and a run that knows its own confidence.
-- **Builds on:** the virtual G2 that already exists, the Jacobian probes, and the simulator fleet. The fleet becomes panels sampled from the real panel's posterior, so every code change is tested against thousands of plausible versions of *this* TV.
+## 2. Pal today against that list
 
-## 2. Spectral truth instead of tristimulus guesses
+| Step | Pal (3.3.8) |
+| --- | --- |
+| 1 Consultation | Gap: one mode (Expert 1), one target fixed in code (140 cd/m², BT.1886) |
+| 2 Set-up | Part: the meter is checked; no warm-up, no stability gate. The chain is checked only through LG's own generator |
+| 3 Basic controls | Part: processing off (3.3.3), Calman's start values (3.3.7). Black level and clipping are read but not acted on; sharpness, motion, noise reduction, Real Cinema and Just Scan are not touched |
+| 4 Before | Have |
+| 5 Greyscale | Have: 1D LUT, 26 levels |
+| 6 Colour | Have: 3D LUT |
+| 7 HDR | Simulator only; carrier clips not made |
+| 8 Verification | Part: held-out readings; no sweeps reported, no viewing check |
+| 9 Hand-over | Gap: a log, no report |
 
-- **Instruments.** A reference spectroradiometer (CS-2000 or CR-300 class) measures each sub-pixel's spectrum on this panel once. The Spyder5 stays as the fast meter, with a correction made on this TV instead of another G2.
-- **Meter.** The meter itself is characterised: linearity, near-black noise, temperature drift.
-- **Uncertainty.** Every result is propagated to a ΔE with a confidence interval (GUM). Pass or fail is a statistical decision, not a threshold on one noisy number.
-- **Observers.** Spectra let any observer be computed later (section 6) without measuring again.
+The maths is at professional level. The missing pieces are the steps around it, and they are what makes a calibrator an ISF calibrator.
 
-## 3. An imaging colorimeter: the whole screen at once
+## 3. What Pal must gain
 
-A calibrated luminance and colour camera (ProMetric class) sees every pixel at once:
-- uniformity and banding;
-- ABL at every window size;
-- confirmation that the pattern drawn is the pattern meant, which removes the "squares never appeared" class of failure;
-- the magenta flashes, logged.
+- **P-ISF1: Consultation and two modes.**
+  - Pal asks about the room, viewing times and sources, measures the light level where you sit if the meter can, and writes the manifest: Day = Expert 1 and Night = Expert 2, each with its target, plus HDR.
+  - Test moves off Expert 2, because Expert 2 becomes the Night calibration: either Test runs once before Expert 2 is calibrated, or it uses a mode the owner doesn't use.
+- **P-ISF2: Set-up gate.**
+  - Warm-up, with a moving mid-grey pattern rather than a static one.
+  - A stability test: white measured until its drift over five minutes falls inside the meter's repeatability.
+  - Then the meter's own repeatability, which later decides when to stop.
+- **P-ISF3: Basic controls, measured.**
+  - *Black:* the near-black codes (64, 65, 66, 68, 72…) must rise from the first step above black; neither crushed nor lifted.
+  - *White:* 940 must reach peak and stay below clipping in its range (3.3.7 measured clipping above 940).
+  - Every neutral setting (sharpness, motion, noise reduction, gradation, Real Cinema, Just Scan, HDMI black level) is set from an allow-list and read back.
+- **P-ISF4: Constant-APL patterns.** The patch sits on a grey background, so the screen's average light stays the same from patch to patch and OLED dimming doesn't enter the readings. Calman uses patterns like this on OLED; LG's generator already supports the background box.
+- **P-ISF5: Verification through the real source.** An ISF calibrator checks with a test disc in the real player. Bloob does the same:
+  - pattern clips (PLUGE, clipping, grey steps, colour bars, near-black, saturation sweeps) play through Bloob's own players, the engine and LG's player;
+  - the meter reads them;
+  - the result is compared with LG's generator.
 
-It is a measuring instrument, not a webcam guess.
+  This proves films get the calibration, and catches a range or matrix fault in Bloob's own path.
+- **P-ISF6: HDR10 and Dolby Vision.** The plan as written: carrier clips, PQ tracking to the measured peak, tone mapping, and the Dolby Vision configuration on USB.
+- **P-ISF7: The viewing check.** Bloob plays short reference clips (skin, a dark scene, a bright scene, a grey ramp). Pal asks plain questions with the remote (crushed? tinted? banding?) and acts on the answers or explains them. The meter can't see these; the calibrator's eyes are part of the job.
+- **P-ISF8: Hand-over report.**
+  - Before and after for every mode: greys, gamma, ColorChecker, sweeps, near-black, clipping.
+  - Every setting and table changed.
+  - The meter and its correction file.
+  - What the panel can't reach.
+  - When to check again: ISF practice is periodic, and OLED compensation cycles move the panel.
+- **P-ISF9: The playbook.** What an ISF calibrator knows is written as Pal's procedure for each step: the LG G2's specifics, what "good" means at each step, tolerances, and what to do when a step fails. Pal follows it and reasons with it; the solver and the gate stay as they are (`research/Pal-in-Bloob.md` §4).
 
-## 4. The whole chain, because Bloob owns the player
+## 4. The one thing Pal can't equal
 
-No calibrator controls playback; Bloob does, so the calibration can extend past the TV's LUT:
-- **The engine checks every film's signalling:** primaries, transfer, matrix, range, and mastering metadata against what the TV reports engaging (`videooutput/getStatus`). It catches mis-flagged files (wrong matrix, wrong range, HDR10 base instead of Dolby Vision) and corrects or reports them.
-- **A per-film record:** played in the calibrated profile, the signal it arrived as, and what the TV did with it.
-- **Bloob's own interface** is drawn in calibrated colour too.
+An ISF calibrator brings a reference meter: a colorimeter profiled with a spectroradiometer on this panel. Pal has a Spyder5 with a correction measured on another G2. Pal can match the **process** and the **precision** (repeatable, verified, documented). The **absolute accuracy** is the meter's, and the report says so. The only route to full parity is profiling the Spyder5 once against a reference instrument on this TV.
 
-The result is a guarantee about films as watched, not about test patches.
+## 5. Order
 
-## 5. The room as part of the target, by the standards' own terms
-
-- **Measure the room:** ambient illuminance and spectrum, and the screen's reflectance at your seat.
-- **Use the real black.** BT.1886 is written in terms of the screen's black level. On OLED, a zero black makes BT.1886 collapse into a pure 2.4 power curve, which darkens shadows in a lit room. Pal uses the *effective* black (panel plus reflected room light), which is the honest answer to the open BT.1886-or-2.2 question.
-- **Profiles for measured conditions,** such as dark room and lamp on. Bloob switches between them from a measured ambient reading, with each profile verified in the condition it is for. This is not an auto-brightness feature.
-
-## 6. Calibrate for the viewer: observer metamerism
-
-- **The problem.** WOLED's narrow-band primaries make "D65" look different from one person to another: a reading that matches perfectly can still look tinted to a particular viewer. Reference OLED monitors offer a white-point offset for this reason, and the CIE 2006/2015 physiological observer and individual-observer models (Asano and Fairchild) describe it.
-- **Pal's offer:**
-  - **Reference profile:** the standard observer, which is what content is mastered to.
-  - **Personal profile:** a short, properly designed matching task with the remote (forced choice, staircases) estimates your own colour matching. White and grey are then corrected to match D65 as you see it.
-
-Both profiles are reported, and the choice is yours.
-
-## 7. Calibration as a maintained state
-
-- **Monthly health check.** A 60-second read of white, three greys and black, done while you're away, after LG's panel compensation has run.
-- **Drift model.** Pal tracks drift against the twin and forecasts when the picture will leave tolerance.
-- **Targeted recalibration.** It recalibrates only what moved, warm-started from the twin, in minutes rather than hours.
-- **History.** Every past state can be restored, and every change is signed and logged.
-
-## 8. Perception as the last check, done as science
-
-Below about 0.05 cd/m² a Spyder5 can't settle what you will see. So the final check includes short psychophysics tests from the couch, with the remote:
-- near-black step visibility at your distance;
-- gradient banding;
-- the grey that looks neutral.
-
-Each uses forced choice with a proper statistical test, never "does this look good?".
-
-## 9. Foundations underneath all of it
-
-- **A formal TV model.** Every quirk learnt (generator needs video, CAL_START sets Warm 50 and Wide, no 3D readback) is written as a state-machine specification. The stand-in TV is generated from that specification, and every write is proven reversible against it.
-- **Pal's decisions are replayable.** Same readings, same journal, same tables. A run can be re-simulated exactly to explain or audit it.
-- **The engine stays deterministic and tested.** Pal plans; the twin and solver compute; the gate refuses anything unsafe.
-
-## Not in this moonshot (gimmicks)
-
-- AI "enhancement" or a house look.
-- A personality or voice.
-- Several agents debating.
-- A crowd-sourced panel database that replaces measuring this panel.
-- Anything that changes the picture without a measurement behind it.
-
-## If only three
-
-1. **The twin with information-driven measurement (1):** better results from fewer readings, and honest confidence.
-2. **The whole chain (4):** only Bloob can do it, and it is the step from "the TV is calibrated" to "the film you watch is right".
-3. **Maintenance (7):** an OLED changes, and a calibration that isn't kept is a snapshot.
+| Step | Gives |
+| --- | --- |
+| 1 | P-ISF2, P-ISF3, P-ISF4 and P-ISF8 inside today's Quick: a run an ISF calibrator would recognise, with a report |
+| 2 | P-ISF1: Day and Night |
+| 3 | P-ISF5: verification through Bloob's players |
+| 4 | Pal (`research/Pal-in-Bloob.md` P1–P4) running these steps by the playbook (P-ISF9), with the viewing check (P-ISF7) |
+| 5 | P-ISF6: HDR10, then Dolby Vision |
