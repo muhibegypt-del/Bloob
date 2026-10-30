@@ -205,6 +205,61 @@ static bool squares_visible(TvDevice &tv) {
   return false;
 }
 
+// Which way of drawing LG's test squares works on this TV? Changes nothing: each way draws
+// a box of its own colour for 10 s and says what the TV answered; the owner says which
+// colours appeared. Calibration mode (way 5) changes colour temperature and gamut on its
+// own, so both are read first and put back.
+static int cmd_patterns() {
+  struct Way {
+    const char *colour;
+    Patch patch;
+    bool socket, background, calibration;
+    const char *how;
+  };
+  const Way ways[] = {
+      {"RED", {940, 64, 64}, true, true, false, "second-screen socket, box on a black screen (Bloob's way)"},
+      {"GREEN", {64, 940, 64}, true, false, false, "second-screen socket, box alone over what is on screen"},
+      {"BLUE", {64, 64, 940}, false, true, false, "luna-send, box on a black screen"},
+      {"YELLOW", {940, 940, 64}, false, false, false, "luna-send, box alone over what is on screen"},
+      {"WHITE", {940, 940, 940}, true, true, true, "second-screen socket, inside calibration mode (Expert 1)"},
+  };
+  TvDevice tv(config("expert1"));
+  Json pic;
+  if (tv.read_picture(&pic)) out("== Picture now: %s\n", Json::stringify(pic).c_str());
+  out("== Watch the middle of the screen. Each step shows one coloured box for 10 seconds.\n");
+  out("   Note which colours you see. If the TV asks to allow Bloob, press OK.\n");
+  int n = 0;
+  for (const Way &w : ways) {
+    if (g_stop) break;
+    n++;
+    out("== Step %d: %s box (%s)\n", n, w.colour, w.how);
+    if (w.socket) unsetenv("BLOOB_PATTERNS_LUNA");
+    else setenv("BLOOB_PATTERNS_LUNA", "1", 1);
+    Json before;
+    bool have_before = false;
+    if (w.calibration) {
+      have_before = tv.read_settings("picture", {"colorTemperature", "colorGamut"}, &before);
+      if (!tv.set_picture_mode("expert1") || !tv.set_calibration_mode(true)) {
+        out("  calibration mode refused: %s\n", tv.last_error().c_str());
+        continue;
+      }
+    }
+    bool ok = tv.show_box(w.patch, w.background);
+    out("  %s\n", ok ? "The TV accepted it." : ("The TV refused it: " + tv.last_error()).c_str());
+    for (int i = 0; i < 10 && !g_stop; i++) sleep(1);
+    if (!tv.patterns_off()) out("  turning it off: %s\n", tv.last_error().c_str());
+    if (w.calibration) {
+      tv.set_calibration_mode(false);
+      if (have_before && !tv.set_picture_settings(Json::stringify(before))) out("  putting colour temperature and gamut back: %s\n", tv.last_error().c_str());
+    }
+    sleep(2);
+  }
+  unsetenv("BLOOB_PATTERNS_LUNA");
+  tv.finish();
+  out("Done. Nothing was changed. Which colours did you see: red, green, blue, yellow, white?\n");
+  return 0;
+}
+
 static int cmd_check() {
   TvDevice tv(config("expert1"));
   Json pic;
@@ -638,8 +693,8 @@ int main(int argc, char **argv) {
     out("Run bloob-cal on the TV as root.\n");
     return 1;
   }
-  if (cmd != "check" && cmd != "test" && cmd != "sdr" && cmd != "undo") {
-    out("usage: bloob-cal check | test | sdr [nits] [quick|thorough] | undo\n");
+  if (cmd != "check" && cmd != "test" && cmd != "sdr" && cmd != "undo" && cmd != "patterns") {
+    out("usage: bloob-cal check | test | sdr [nits] [quick|thorough] | undo | patterns\n");
     return 1;
   }
   mkdir(data_dir().c_str(), 0755);
@@ -667,6 +722,7 @@ int main(int argc, char **argv) {
   g_status.write();
   int rc = 0;
   if (cmd == "check") rc = cmd_check();
+  else if (cmd == "patterns") rc = cmd_patterns();
   else if (cmd == "test") rc = cmd_test();
   else if (cmd == "sdr") rc = cmd_sdr(argc > 2 ? std::max(80.0, std::min(250.0, std::atof(argv[2]))) : 140.0, quick);
   else rc = cmd_undo();

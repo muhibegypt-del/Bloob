@@ -18,6 +18,8 @@ Evidence labels:
 
 **First run from Bloob (3.3.3, 30 October 2026, owner).** Check showed no squares: the meter read Bloob's own page (18.1 cd/m² at x 0.347 y 0.543, then 1.7 cd/m²). Deduction, to be confirmed: LG's pattern generator draws in the video plane, which Bloob's opaque page covers, as it covers nothing during films only because the player is transparent. 3.3.4 makes the Calibrate screen see-through while a run goes (one card in the bottom left) and checks that a bright, neutral white square reaches the meter before any run changes anything.
 
+**3.3.4 on the TV (owner, 30 October 2026).** Still no squares; the first pattern command failed with "500 Application error" from the second-screen socket. `bloob-cal patterns` (3.3.5, read-only) tries every route, each in its own colour, so the owner's report of which colours appeared settles C1.1 and the transport.
+
 ### Proven on the virtual G2 (29 October 2026)
 
 The whole procedure (SDR, HDR10, Dolby Vision) is written once in C++ (`native/cal/`) against an abstract device, and runs end to end against the virtual G2 in `native/tests/cal_test.cpp` (`build-host/cal_tests`). The same code cross-compiles with the webOS NDK and passes the same tests as ARM code (qemu, static build), with identical results.

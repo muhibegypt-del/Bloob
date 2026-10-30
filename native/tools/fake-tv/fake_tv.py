@@ -249,6 +249,9 @@ def ws_client(conn):
                 send({"type": "response", "id": m["id"], "payload": {"pairingType": "PROMPT"}})
             send({"type": "registered", "id": m["id"], "payload": {"client-key": "fake-key-0001"}})
         elif m["type"] == "request":
+            if os.environ.get("FAKE_TV_SSAP_500") and m["payload"].get("command", "").startswith("PTN_"):
+                send({"type": "error", "id": m["id"], "error": "500 Application error", "payload": {}})  # as the owner's TV answered
+                continue
             write = m["uri"].endswith("setExternalPqData")
             send({"type": "response", "id": m["id"], "payload": pq(m["payload"], write)})
 

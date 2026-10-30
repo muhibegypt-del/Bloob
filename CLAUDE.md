@@ -190,6 +190,8 @@ The owner chose native. `native/` is a C++ webOS app (`com.muhib.bloob`, "Bloob 
   - Before Check, Test and Calibrate, `squares_visible` needs white ≥ 30 cd/m², near neutral and ten times black; otherwise the run stops and changes nothing.
   - A meter session that stops answering is restarted once.
 
+  With 3.3.4 (owner, 30 October 2026): still no squares, and the reading failed with "500 Application error", the second-screen socket's own error for the pattern command (3.3.3's same commands were accepted). Root cause not yet known; candidates: the generator draws only while video plays, its state went bad after the earlier failed run (bscpylgtv: the iTPG "can be broken in many different ways"), or a layer covers it. **3.3.5:** `bloob-cal patterns` (read-only) draws a box of a different colour for 10 s by each route (socket with background, socket overlay, luna-send with background, luna-send overlay, socket inside calibration mode, with colour temperature and gamut put back) and prints the TV's answers; a socket error is retried once on a fresh connection and reported with the command and the route.
+
   TV pass: `native/TV-TEST.md` §18. HDR10 and Dolby Vision are proven on the simulator only and not yet on the screen.
 - **Design (2.0, Glass):** the visual system, with materials, tokens, type, focus, motion, states, the spoken interface and per-screen layouts, is in `native/DESIGN.md`. The tokens live in `native/src/theme.h`, the type scale, label roles and components in `ui.cpp`, and the frost bake in `images.cpp`.
 - **Rendering and playback:**
@@ -207,7 +209,7 @@ The owner chose native. `native/` is a C++ webOS app (`com.muhib.bloob`, "Bloob 
   - watch progress and settings.
   If the bus will not start the service, the app runs it directly with the TV's Node and stops it on exit.
 - **Build and test scripts:**
-  - `native/scripts/build.sh`: tests, cross-build, ABI guards (no GLIBCXX, and since 2.4 no glibc symbol newer than GLIBC_2.4), service staging, IPK with fixed modes (`native/artifacts/com.muhib.bloob_3.3.4_arm.ipk`).
+  - `native/scripts/build.sh`: tests, cross-build, ABI guards (no GLIBCXX, and since 2.4 no glibc symbol newer than GLIBC_2.4), service staging, IPK with fixed modes (`native/artifacts/com.muhib.bloob_3.3.5_arm.ipk`).
   - `native/scripts/tv-inspect.sh`: reads the runtime inspector snapshot `/tmp/bloob-state.json` from the TV, read-only.
   - `native/scripts/ui-tour.sh`: drives the whole app on the desktop through the acceptance task, plus quick-menu, Home and pipeline-lost events, against the real service with fixture sources.
   - `native/scripts/ui-snapshots.sh`: covers player states.

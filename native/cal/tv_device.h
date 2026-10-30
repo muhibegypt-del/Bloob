@@ -54,6 +54,9 @@ class TvDevice : public Device {
   // Read-only: a getter (GET_1D_DPG_DATA, GET_3D_LUT_DATA, GET_3BY3_GAMUT_DATA…).
   bool get_table(const std::string &command, Json *reply);
   bool patterns_off();
+  // One box in the middle (the 10% window), over a full-screen black background or on
+  // its own over whatever is on screen (bscpylgtv's "overlay"). For bloob-cal patterns.
+  bool show_box(const Patch &p, bool background);
   // Picture settings through the settings service.
   bool read_picture(Json *settings);
   bool set_picture_mode(const std::string &mode);

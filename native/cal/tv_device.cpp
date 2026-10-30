@@ -116,8 +116,20 @@ bool TvDevice::pq(const std::string &command, const std::string &fields, bool wr
     sent = luna(std::string(kPq) + (write ? "setExternalPqData" : "getExternalPqData"), payload, &reply);
   } else {
     // The second-screen socket (the TV asks once to allow Bloob).
-    if (!ssap_.connected() && !ssap_.connect(cfg_.manifest, cfg_.key_file, &error_)) return false;
-    sent = ssap_.request(std::string("ssap://externalpq/") + (write ? "setExternalPqData" : "getExternalPqData"), payload, &reply, &error_);
+    std::string uri = std::string("ssap://externalpq/") + (write ? "setExternalPqData" : "getExternalPqData");
+    if (!ssap_.connected() && !ssap_.connect(cfg_.manifest, cfg_.key_file, &error_)) {
+      error_ = command + " over the second-screen socket: " + error_;
+      return false;
+    }
+    sent = ssap_.request(uri, payload, &reply, &error_);
+    if (!sent) {
+      // The TV's own error (on the owner's TV, "500 Application error"): once more on a
+      // fresh connection, in case the session went bad, then say which command and route.
+      std::string first = error_;
+      ssap_.close();
+      sent = ssap_.connect(cfg_.manifest, cfg_.key_file, &error_) && ssap_.request(uri, payload, &reply, &error_);
+      if (!sent) error_ = command + " over the second-screen socket: " + first + (first == error_ ? "" : "; again: " + error_);
+    }
   }
   if (!sent) return false;
   if (!reply["returnValue"].as_bool()) {
@@ -141,7 +153,9 @@ bool TvDevice::get_table(const std::string &command, Json *reply) {
 }
 
 // The 10% window on a black background (Calman's OLED window), in the mode's range.
-bool TvDevice::show(const Patch &p) {
+bool TvDevice::show(const Patch &p) { return show_box(p, true); }
+
+bool TvDevice::show_box(const Patch &p, bool background) {
   static const int W = 1214, H = 683, X = 1313, Y = 738;
   int black = cfg_.family == Family::DolbyVision ? 0 : 64;
   auto box = [&](int id, int r, int g, int b, int w, int h, int x, int y) {
@@ -149,8 +163,8 @@ bool TvDevice::show(const Patch &p) {
                                             ",\"winId\":" + std::to_string(id) + ",\"width\":" + std::to_string(w) + ",\"height\":" +
                                             std::to_string(h) + ",\"startX\":" + std::to_string(x) + ",\"startY\":" + std::to_string(y));
   };
-  if (!box(0, black, black, black, 3840, 2160, 0, 0) || !box(1, p.r, p.g, p.b, W, H, X, Y)) return false;
-  if (!pq("PTN_CTRL", ",\"enable\":\"true\",\"numOfBox\":2,\"ptnType\":0")) return false;
+  if (background ? !box(0, black, black, black, 3840, 2160, 0, 0) || !box(1, p.r, p.g, p.b, W, H, X, Y) : !box(0, p.r, p.g, p.b, W, H, X, Y)) return false;
+  if (!pq("PTN_CTRL", std::string(",\"enable\":\"true\",\"numOfBox\":") + (background ? "2" : "1") + ",\"ptnType\":0")) return false;
   patterns_on_ = true;
   return true;
 }
