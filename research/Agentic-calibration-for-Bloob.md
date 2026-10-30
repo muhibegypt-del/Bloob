@@ -70,6 +70,8 @@ Owner ──talks──> Calibrate screen (Bloob) <──narration── Agent l
 
 ## 5. Order of work, and how we will know [P]
 
+Superseded by the owner's **Pal** design: see `research/Pal-in-Bloob.md`, steps P0–P6.
+
 | Step | What | Proves |
 | --- | --- | --- |
 | A0 | Claude Code on the owner's PC with SSH to the TV; I drive `bloob-cal` by hand as the agent | Which tools and observations matter, at no build cost |

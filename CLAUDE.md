@@ -205,7 +205,7 @@ The owner chose native. `native/` is a C++ webOS app (`com.muhib.bloob`, "Bloob 
 
   TV pass: `native/TV-TEST.md` §18. HDR10 and Dolby Vision are proven on the simulator only and not yet on the screen.
 
-  **Agentic calibration (proposal, 30 October 2026, not built):** `research/Agentic-calibration-for-Bloob.md`. A Claude agent in the service runs the session through `bloob-cal serve` tools; the solver still makes every table, and a write gate checks them. Steps A0–A4.
+  **Agentic calibration (proposal, 30 October 2026, not built):** `research/Agentic-calibration-for-Bloob.md`. A Claude agent in the service runs the session through `bloob-cal serve` tools; the solver still makes every table, and a write gate checks them. The owner's **Pal** design is mapped onto Bloob in `research/Pal-in-Bloob.md`: manifest, characterisation, checkpoints, report; session state stays in `bloob-cal`, so a dropped Pal still ends in verify or undo. Steps P0–P6.
 - **Design (2.0, Glass):** the visual system, with materials, tokens, type, focus, motion, states, the spoken interface and per-screen layouts, is in `native/DESIGN.md`. The tokens live in `native/src/theme.h`, the type scale, label roles and components in `ui.cpp`, and the frost bake in `images.cpp`.
 - **Rendering and playback:**
   - The TV's SDL2 provides the window and remote. Bloob draws with its own renderer: Inter via stb_truetype with oversampling and gamma, exact-size anti-aliased shapes, and artwork via stb_image scaled on worker threads, on a 1920×1080 offscreen canvas.
