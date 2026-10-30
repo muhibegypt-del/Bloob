@@ -22,12 +22,13 @@ class Meter {
  public:
   ~Meter() { close(); }
   bool open(const MeterConfig &c, std::string *error);  // a session, or the one-shot fallback
-  bool read(Vec3 *XYZ, std::string *error);
+  bool read(Vec3 *XYZ, std::string *error);  // restarts a stuck session once
   void close();
   bool session() const { return pid_ > 0; }
 
  private:
   bool read_one_shot(Vec3 *XYZ, std::string *error);
+  bool read_session(Vec3 *XYZ, std::string *error);
   bool wait_for(const std::string &marker, int timeout_ms, std::string *seen);
   MeterConfig cfg_;
   int fd_ = -1;

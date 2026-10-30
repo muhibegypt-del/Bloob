@@ -50,8 +50,13 @@ class CalibrateScreen : public Screen {
 
   enum class Row { Check, Test, Calibrate, Thorough, Undo, Stop };
 
+  // LG's pattern generator draws in the video plane, under Bloob's graphics (seen on the
+  // owner's TV: the meter read Bloob's page, never a square). So while a run is going this
+  // screen is see-through, with one small card in a corner, away from the meter.
+  bool over_video() const override { return busy(); }
+
   std::vector<Row> rows() const {
-    if (running()) return {Row::Stop};
+    if (busy()) return {Row::Stop};
     return {Row::Check, Row::Test, Row::Calibrate, Row::Thorough, Row::Undo};
   }
 
@@ -91,6 +96,11 @@ class CalibrateScreen : public Screen {
     Ctx &c = ctx();
     using namespace theme;
     if (c.now >= next_poll_) poll();
+    if (busy()) {
+      draw_running_card();
+      c.redraw_at(c.now + 1000);
+      return;
+    }
     c.gfx.clear(plain);
     int x = safe_x, w = 860;
     text(Text::Title2, "Calibrate", x, 90, label(Label::Primary));
@@ -149,11 +159,47 @@ class CalibrateScreen : public Screen {
     return "";
   }
 
+  // Running, or just started and not yet reported (a second OK must not start a second run).
+  bool busy() const { return running() || ctx().now < starting_until_; }
+
+  // Over the patterns: transparent everywhere except a card in the bottom left.
+  void draw_running_card() {
+    using namespace theme;
+    Ctx &c = ctx();
+    c.gfx.clear({0, 0, 0, 0});
+    const int w = 820, h = 210, x = safe_x, y = H - 60 - h;
+    c.gfx.fill_round(x, y, w, h, 30, rgba(0x1c1c1e, 235));
+    static const std::pair<const char *, const char *> names[] = {{"check", "Check"}, {"test", "Test on Expert 2"}, {"sdr", "Calibrate Expert 1"}, {"undo", "Undo"}};
+    std::string action = running() ? status_["action"].as_string() : started_, what = action;
+    for (auto &n : names)
+      if (action == n.first) what = n.second;
+    int tx = x + 36, tw = w - 72, ty = y + 28;
+    text(Text::Headline, what + (running() ? ": running" : ": starting"), tx, ty, label(Label::Primary), tw);
+    ty += 54;
+    long long readings = status_["readings"].as_int(), expected = status_["expected"].as_int(), started = status_["started"].as_int();
+    if (running() && expected > 0) {
+      double frac = std::min(1.0, static_cast<double>(readings) / expected);
+      draw_progress(tx, ty, tw, 8, frac);
+      ty += 24;
+      long long elapsed = static_cast<long long>(time(nullptr)) - started;
+      std::string t = std::to_string(readings) + " of about " + std::to_string(expected) + " readings  \xC2\xB7  " + duration_text(elapsed) + " so far";
+      if (readings > 20 && frac < 1) t += ", about " + duration_text(static_cast<long long>(elapsed * (1 - frac) / frac)) + " left";
+      text(Text::Caption1, t, tx, ty, label(Label::Secondary), tw);
+      ty += 44;
+    } else {
+      ty += 32;
+    }
+    std::string step = status_["step"].as_string();
+    text(Text::Caption1, (running() && !step.empty() ? step + "  \xC2\xB7  " : std::string()) + "OK stops", tx, ty, label(Label::Tertiary), tw);
+  }
+
+  // The status file's run is live only if its pid is still bloob-cal: a pid from an
+  // earlier run may belong to another program by now.
   bool running() const {
     if (status_["state"].as_string() != "running") return false;
     long long pid = status_["pid"].as_int();
-    struct stat st;
-    return pid > 0 && stat(("/proc/" + std::to_string(pid)).c_str(), &st) == 0;
+    if (pid <= 0) return false;
+    return slurp("/proc/" + std::to_string(pid) + "/cmdline").find("bloob-cal") != std::string::npos;
   }
 
   void poll() {
@@ -169,10 +215,13 @@ class CalibrateScreen : public Screen {
     std::string bin = std::getenv("BLOOB_CAL_BIN") ? std::getenv("BLOOB_CAL_BIN") : ctx().dir + "/bin/bloob-cal";
     std::string dir = cal_dir();
     // Fixed words only: the action and its arguments come from this screen's own list.
+    // bloob-cal writes last-run.log itself once it holds the lock; a refused start only
+    // reaches start.log.
     std::string cmd = "mkdir -p '" + dir + "' && cd '" + dir + "' && '" + bin + "' " + action + (args.empty() ? "" : " " + args) +
-                      " </dev/null >'" + dir + "/last-run.log' 2>&1 &";
+                      " </dev/null >'" + dir + "/start.log' 2>&1 &";
     logf("calibrate", "start %s", action.c_str());
     started_ = action;
+    starting_until_ = ctx().now + 8000;
     Luna::instance().call(kExec, "{\"command\":" + Json::quote(cmd) + "}", [](const std::string &reply) {
       if (!Json::parse(reply)["returnValue"].as_bool()) logf("calibrate", "could not start: %s", reply.c_str());
     });
@@ -181,8 +230,8 @@ class CalibrateScreen : public Screen {
   }
 
   void stop() {
+    if (!running()) return;  // still starting: no pid of this run yet
     long long pid = status_["pid"].as_int();
-    if (pid <= 0) return;
     logf("calibrate", "stop %lld", pid);
     Luna::instance().call(kExec, "{\"command\":\"kill -TERM " + std::to_string(pid) + "\"}", nullptr);
   }
@@ -265,6 +314,7 @@ class CalibrateScreen : public Screen {
   bool confirm_ = false;
   long long next_poll_ = 0;
   std::string started_;
+  long long starting_until_ = 0;
   Json status_;
 };
 

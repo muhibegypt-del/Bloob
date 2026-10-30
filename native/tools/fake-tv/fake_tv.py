@@ -144,6 +144,8 @@ def luna(argv):
 def colour():
     """XYZ of what is on screen now."""
     s = load()
+    if os.environ.get("FAKE_TV_HIDE_PATTERNS"):
+        return (11.5, 18.1, 3.6)  # what the owner's meter read with Bloob's page over the squares
     if not s["on"]:
         return (0.0, 0.0, 0.0)
     code = s["boxes"].get("1" if s["num"] >= 2 else "0", [64, 64, 64])

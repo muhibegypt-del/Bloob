@@ -181,6 +181,19 @@ bool Meter::read_one_shot(Vec3 *XYZ, std::string *error) {
 
 bool Meter::read(Vec3 *XYZ, std::string *error) {
   if (fallback_) return read_one_shot(XYZ, error);
+  if (read_session(XYZ, error)) return true;
+  // A session that stopped answering (seen on the TV after "measuring refresh rate failed"
+  // on a dim screen): start spotread again, once, and take the reading again.
+  std::string first = *error, again;
+  if (open(cfg_, &again)) {
+    if (fallback_ ? read_one_shot(XYZ, error) : read_session(XYZ, error)) return true;
+    again = *error;
+  }
+  *error = first + "; after restarting the meter: " + again;
+  return false;
+}
+
+bool Meter::read_session(Vec3 *XYZ, std::string *error) {
   if (pid_ <= 0 || ::write(fd_, " ", 1) != 1) {
     *error = "the meter session is closed";
     return false;

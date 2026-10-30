@@ -186,12 +186,32 @@ static bool meter_up(TvDevice &tv) {
   return true;
 }
 
+// Do the test squares reach the screen? On the owner's TV they were first hidden under
+// Bloob's page: the meter read the page (18 then 1.7 cd/m², greenish), never a square.
+// A white square must be bright, near neutral and far above a black one; otherwise the
+// run stops before it changes anything.
+static bool squares_visible(TvDevice &tv) {
+  out("== Are the squares on the screen?\n");
+  Reading w, k;
+  if (!read_avg(tv, {940, 940, 940}, 2, &w) || !read_avg(tv, {64, 64, 64}, 2, &k)) return false;
+  bool bright = w.xyz.y >= 30, neutral = w.x > 0.26 && w.x < 0.37 && w.y > 0.27 && w.y < 0.39, contrast = w.xyz.y >= 10 * std::max(k.xyz.y, 0.05);
+  if (bright && neutral && contrast) {
+    out("  Yes: white %.1f cd/m2, black %.3f cd/m2.\n", w.xyz.y, k.xyz.y);
+    return true;
+  }
+  out("  No. The meter read white %.1f cd/m2 (x %.3f y %.3f) and black %.2f cd/m2, which is not a test square.\n", w.xyz.y, w.x, w.y, k.xyz.y);
+  out("  Leave Bloob open on the Calibrate screen (it turns see-through while a run goes) and the meter flat in the middle.\n");
+  out("  If squares still do not appear, send the log: nothing was changed.\n");
+  return false;
+}
+
 static int cmd_check() {
   TvDevice tv(config("expert1"));
   Json pic;
   if (tv.read_picture(&pic)) out("== Picture now: %s\n", Json::stringify(pic).c_str());
   tables(tv);
   if (!meter_up(tv)) return 1;
+  if (!squares_visible(tv)) return 1;
   out("== Readings (keep the meter still and the room dark)\n");
   out("  Showing a white square in the middle of the screen. If the TV asks to allow Bloob, press OK.\n");
   Reading w, hi;
@@ -229,6 +249,11 @@ static int cmd_test() {
     return 1;
   }
   sleep(2);
+  if (!squares_visible(tv)) {
+    tv.finish();
+    if (!tv.set_picture_mode(home_mode)) out("  Could not switch back to %s: %s\n", home_mode.c_str(), tv.last_error().c_str());
+    return 1;
+  }
   bool wrote = false;
   auto restore = [&]() {
     if (wrote && g_stop) {
@@ -495,6 +520,7 @@ static int cmd_sdr(double nits, bool quick) {
   if (tv.read_picture(&pic)) tv.set_light_cache(static_cast<int>(pic["backlight"].as_number(std::atof(pic["backlight"].as_string("28").c_str()))));
   tables(tv);
   if (!meter_up(tv)) return 1;
+  if (!squares_visible(tv)) return 1;
   tv.on_reading = [](long n) {
     g_status.readings = n;
     g_status.write();
@@ -623,6 +649,16 @@ int main(int argc, char **argv) {
     return 3;
   }
   { std::ofstream(pidfile) << getpid(); }
+  // The run's own log, opened only now that this run holds the lock: a refused second
+  // start must not wipe the log of the run that is going (seen on the TV).
+  if (!isatty(1)) {
+    int fd = ::open((data_dir() + "/last-run.log").c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (fd >= 0) {
+      dup2(fd, 1);
+      dup2(fd, 2);
+      if (fd > 2) ::close(fd);
+    }
+  }
   g_status.path = env_or("BLOOB_CAL_STATUS", data_dir() + "/status.json");
   g_status.action = cmd;
   // Quick is the default for sdr: close to Calman's AutoCal, about a third of the readings.
