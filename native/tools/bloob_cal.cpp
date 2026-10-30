@@ -354,6 +354,13 @@ static int cmd_test() {
     if (!tv.set_picture_mode(home_mode)) out("  Could not switch back to %s: %s\n", home_mode.c_str(), tv.last_error().c_str());
     return 1;
   }
+  // Calibration mode sets its own colour temperature and gamut (Warm 50, Wide [bsc]); they
+  // are put back at the end, and the "after" reading is taken outside calibration mode with
+  // them back, so it compares like with like (on the owner's TV the first test compared a
+  // reading inside calibration mode with one outside: 10% and 0.010 xy apart).
+  Json e2;
+  bool have_e2 = tv.read_settings("picture", {"colorTemperature", "colorGamut"}, &e2);
+  if (have_e2) out("  Expert 2: colour temperature %s, gamut %s\n", e2["colorTemperature"].as_string("?").c_str(), e2["colorGamut"].as_string("?").c_str());
   bool wrote = false;
   auto restore = [&]() {
     if (wrote && g_stop) {
@@ -365,6 +372,7 @@ static int cmd_test() {
       g_stop = stop;
     }
     tv.finish();
+    if (have_e2 && !tv.set_picture_settings(Json::stringify(e2))) out("  Could not put Expert 2's colour temperature and gamut back: %s\n", tv.last_error().c_str());
     if (!tv.set_picture_mode(home_mode)) out("  Could not switch back to %s: %s\n", home_mode.c_str(), tv.last_error().c_str());
     else out("  Back in %s.\n", home_mode.c_str());
   };
@@ -442,6 +450,18 @@ static int cmd_test() {
   out("== Back to factory (Expert 2)\n");
   ok = tv.reset_factory();
   verdict(ok, "factory reset accepted" + (ok ? std::string() : ": " + tv.last_error()));
+  if (have_backup) {
+    Json after;
+    if (tv.get_table("GET_1D_DPG_DATA", &after))
+      verdict(after["data"].as_string() == before1d["data"].as_string(), "the 1D LUT read back after the reset equals the saved one");
+  }
+  // Out of calibration mode, colour temperature and gamut back, then the comparison.
+  tv.set_calibration_mode(false);
+  Json left;
+  if (tv.read_settings("picture", {"colorTemperature", "colorGamut"}, &left))
+    out("  After calibration mode: colour temperature %s, gamut %s\n", left["colorTemperature"].as_string("?").c_str(), left["colorGamut"].as_string("?").c_str());
+  if (have_e2 && !tv.set_picture_settings(Json::stringify(e2))) out("  Could not put colour temperature and gamut back: %s\n", tv.last_error().c_str());
+  sleep(1);
   Reading w3, r3;
   if (ok && read_avg(tv, {940, 940, 940}, 2, &w3) && read_avg(tv, {721, 64, 64}, 2, &r3)) {
     show("white after reset", w3);
@@ -451,12 +471,6 @@ static int cmd_test() {
     verdict(dw < 2 && dxy < 0.003, "Expert 2 is back to how it was (white " + std::to_string(dw).substr(0, 4) + "% and " +
                                        std::to_string(dxy).substr(0, 6) + " xy away)");
   }
-  if (have_backup) {
-    Json after;
-    if (tv.get_table("GET_1D_DPG_DATA", &after))
-      verdict(after["data"].as_string() == before1d["data"].as_string(), "the 1D LUT read back after the reset equals the saved one");
-  }
-  tv.set_calibration_mode(false);
   restore();
   out("== %d passed, %d failed. Expert 1 was not touched.\n", pass_count, fail_count);
   return fail_count ? 2 : 0;

@@ -201,6 +201,8 @@ The owner chose native. `native/` is a C++ webOS app (`com.muhib.bloob`, "Bloob 
   - spotread: `-y` from the correction file (refresh for the OLED), `-N` after the first good start of a boot (`/tmp/bloob-spyder-checked`), an optional `-Y R:<Hz>` from `calibration/meter.json` (`refresh_hz`) or `BLOOB_METER_REFRESH`; a meter that stops answering is restarted on a white square, because spotread needs a bright patch to time its readings.
   - 1 s settle after each table upload; live reading counts for Check and Test; "Reading a dark patch: the meter takes up to 20 s" on the card; the range line says "video range, levels above white shown"; the black video window is placed again once the clip reports its size (the magenta is not yet explained).
 
+  3.3.7 on the TV (owner, 30 October 2026): Check passed (white 98.0, black 0.000, 0.20% spread; 1019 now reads as 940, so levels above white are clipped). Test passed 7 of 8 over the single socket: calibration mode, Calman's bypass, 1D tables applied (red halved: 6.34 → 1.47 cd/m²), 3D tables applied in the expected order (3D, then 1D), factory reset, 1D readback equal to the saved table. The failure was Test's own comparison: "before" was read outside calibration mode and "after" inside it, where LG's colour temperature and gamut differ (white 60.5 → 54.4 cd/m², xy 0.010 away). **3.3.8:** Test reads Expert 2's colour temperature and gamut first, leaves calibration mode, logs what the TV left them at, puts them back and only then compares; its clean-up puts them back too (stand-in: 8/8, whether or not CAL_END reverts them).
+
   TV pass: `native/TV-TEST.md` §18. HDR10 and Dolby Vision are proven on the simulator only and not yet on the screen.
 - **Design (2.0, Glass):** the visual system, with materials, tokens, type, focus, motion, states, the spoken interface and per-screen layouts, is in `native/DESIGN.md`. The tokens live in `native/src/theme.h`, the type scale, label roles and components in `ui.cpp`, and the frost bake in `images.cpp`.
 - **Rendering and playback:**
@@ -218,7 +220,7 @@ The owner chose native. `native/` is a C++ webOS app (`com.muhib.bloob`, "Bloob 
   - watch progress and settings.
   If the bus will not start the service, the app runs it directly with the TV's Node and stops it on exit.
 - **Build and test scripts:**
-  - `native/scripts/build.sh`: tests, cross-build, ABI guards (no GLIBCXX, and since 2.4 no glibc symbol newer than GLIBC_2.4), service staging, IPK with fixed modes (`native/artifacts/com.muhib.bloob_3.3.7_arm.ipk`).
+  - `native/scripts/build.sh`: tests, cross-build, ABI guards (no GLIBCXX, and since 2.4 no glibc symbol newer than GLIBC_2.4), service staging, IPK with fixed modes (`native/artifacts/com.muhib.bloob_3.3.8_arm.ipk`).
   - `native/scripts/tv-inspect.sh`: reads the runtime inspector snapshot `/tmp/bloob-state.json` from the TV, read-only.
   - `native/scripts/ui-tour.sh`: drives the whole app on the desktop through the acceptance task, plus quick-menu, Home and pipeline-lost events, against the real service with fixture sources.
   - `native/scripts/ui-snapshots.sh`: covers player states.
