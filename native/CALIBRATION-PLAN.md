@@ -300,13 +300,13 @@ Codes are 10-bit; *L(p)* is the limited-range code for fraction *p*: 64 + round(
 3. **Backups**, saved to `<data>/calibration/backup-<time>/`:
    - every picture setting of the target modes, from the settings service;
    - the getters' 1D LUT, 3D LUT and matrices, wherever the getters work. Their checksums are compared with a second read; disagreement means that backup is marked unreliable, and Undo uses the factory reset for that mode.
-4. **Measurement settings:** energy saving, AI picture and brightness, dynamic contrast, peak brightness, logo brightness, the screensaver and auto power-off are recorded and switched off for the run. All are restored at the end, and on cancel or failure.
+4. **Measurement settings:** energy saving, AI picture and brightness, dynamic contrast, peak brightness, logo brightness, the screensaver and auto power-off are recorded and switched off for the run. All are restored at the end, and on cancel or failure. **Built in 3.3.3 (SDR):** `energySaving`, `dynamicContrast`, `dynamicColor`, `peakBrightness`, `logoLuminanceAdjust`, `ambientLightCompensation` (picture) and `ai_Picture`, `ai_Brightness`, `ai_Genre` (aiPicture), the names and off values of bscpylgtv's C2 list, the G2's generation. Only keys the TV reports are touched; the first run's values are kept in `expert1-processing.json`. Changed from this plan: after a successful calibration they stay off, because the tables were measured without them; Undo and a failed or stopped run put them back. The screensaver and auto power-off are not touched (patterns keep the screen busy; not yet checked on the TV).
 
 ### 7.2 SDR (`expert1`)
 
 1. Bloob is in the foreground, showing a black page. Set `pictureMode: expert1` and confirm it was applied.
 2. `CAL_START` `expert1`, then contrast 85, brightness 50 and colour 50 (bscpylgtv's defaults; the owner's current values too [tv]).
-3. **Bypass:** both enable flags off, matrices identity, both 3D LUTs unity, 1D LUT unity.
+3. **Bypass:** both enable flags off, matrices identity, both 3D LUTs unity, 1D LUT unity. **3.3.3:** every run first applies LG's factory reset of Expert 1's calibration data (`dataOpt` 2 on the enable flags, both matrices, both 3D LUTs and the 1D LUT, as Undo does), so nothing an earlier tool left stays under the result; the procedure then sets the 3D and 1D tables to unity.
 4. **Pipeline order test (once, C2.3):** does the 1D LUT act before or after the 3D LUT? This decides the method below.
    - **If 1D acts after 3D** (expected: "DPG" sits on the panel side): the 1D LUT carries grey and white balance, and the 3D LUT carries colour with its grey axis identity.
    - **If not:** the 3D LUT carries everything and the 1D LUT stays unity. This is the method bscpylgtv's SDR guide uses.
@@ -320,7 +320,7 @@ Codes are 10-bit; *L(p)* is the limited-range code for fraction *p*: 64 + round(
    - Gate (6.5).
    - Upload `BT709_3D_LUT_DATA` and leave the BT.2020 slot unity.
 9. **Closed loop:** measure V and a 100-patch random subset of C. Refit the residual from these readings only and solve again. At most 3 passes; stop when V stops improving.
-10. `CAL_END`. Set colour gamut to the value the C2.4 experiment proves keeps the uploaded LUT in charge.
+10. `CAL_END`. Set colour gamut to the value the C2.4 experiment proves keeps the uploaded LUT in charge. **3.3.3, until C2.4 has run:** colour temperature and gamut are read just after `CAL_START` (the state the tables are measured in) and set back to those values after `CAL_END` if the TV changed them, so the viewing state is the measured state; the viewing check then confirms it.
 11. **Final verification** in the viewing state, outside calibration mode: set V again. If it fails its pass marks or is worse than the baseline, the mode is restored (9.1).
 
 ### 7.3 Native gamut (for Dolby Vision, measured once)

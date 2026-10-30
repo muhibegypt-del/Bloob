@@ -352,6 +352,73 @@ static std::string settings_payload(const Json &pic) {
   return j + "}";
 }
 
+// Picture processing that moves the readings (CALIBRATION-PLAN.md §7.1 step 4), with its off
+// value. Names and values from bscpylgtv's list for the C2, the G2's generation; only the keys
+// this TV reports are touched. They stay off after a calibration (it measured the picture
+// without them); Undo and a failed run put the first run's values back.
+struct Processing {
+  const char *category, *key, *off;
+};
+static const Processing kProcessing[] = {
+    {"picture", "energySaving", "off"},      {"picture", "dynamicContrast", "off"},          {"picture", "dynamicColor", "off"},
+    {"picture", "peakBrightness", "off"},    {"picture", "logoLuminanceAdjust", "off"},      {"picture", "ambientLightCompensation", "off"},
+    {"aiPicture", "ai_Picture", "off"},      {"aiPicture", "ai_Brightness", "off"},          {"aiPicture", "ai_Genre", "off"},
+};
+static const char *kProcessingCategories[] = {"picture", "aiPicture"};
+
+static std::vector<std::string> processing_keys(const char *category) {
+  std::vector<std::string> keys;
+  for (const Processing &p : kProcessing)
+    if (std::string(p.category) == category) keys.push_back(p.key);
+  return keys;
+}
+
+// {"picture":{...},"aiPicture":{...}}, with the keys this TV has.
+static std::string read_processing(TvDevice &tv) {
+  std::string j = "{";
+  for (const char *c : kProcessingCategories) {
+    Json now;
+    if (!tv.read_settings(c, processing_keys(c), &now)) now = Json::parse("{}");
+    j += std::string(j.size() > 1 ? "," : "") + Json::quote(c) + ":" + Json::stringify(now);
+  }
+  return j + "}";
+}
+
+// Switches off what is on; says what it changed.
+static void processing_off(TvDevice &tv, const Json &now) {
+  int changed = 0;
+  for (const char *c : kProcessingCategories) {
+    std::string payload = "{";
+    for (const Processing &p : kProcessing) {
+      if (std::string(p.category) != c || !now[c].has(p.key)) continue;
+      std::string was = now[c][p.key].as_string();
+      if (was == p.off) continue;
+      payload += std::string(payload.size() > 1 ? "," : "") + Json::quote(p.key) + ":" + Json::quote(p.off);
+      out("  %s: %s -> %s\n", p.key, was.c_str(), p.off);
+      changed++;
+    }
+    if (payload.size() > 1 && !tv.set_settings(c, payload + "}")) out("  The TV refused some of these: %s\n", tv.last_error().c_str());
+  }
+  if (!changed) out("  Picture processing already off.\n");
+}
+
+static bool restore_processing(TvDevice &tv) {
+  std::ifstream f(data_dir() + "/expert1-processing.json");
+  std::string saved((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+  bool have = false;
+  Json was = Json::parse(saved, &have);
+  if (!have) return false;
+  bool ok = true;
+  for (const char *c : kProcessingCategories) {
+    std::string payload = "{";
+    for (const Processing &p : kProcessing)
+      if (std::string(p.category) == c && was[c].has(p.key))
+        payload += std::string(payload.size() > 1 ? "," : "") + Json::quote(p.key) + ":" + Json::stringify(was[c][p.key]);
+    if (payload.size() > 1) ok = tv.set_settings(c, payload + "}") && ok;
+  }
+  return ok;
+}
+
 // Factory data for Expert 1 and the saved settings back (also after a failed or stopped run).
 static bool undo_expert1(TvDevice &tv, std::string *note) {
   int stop = g_stop;
@@ -366,6 +433,7 @@ static bool undo_expert1(TvDevice &tv, std::string *note) {
   Json pic = Json::parse(saved, &have);
   if (have && tv.set_picture_settings(settings_payload(pic))) *note = "factory tables and your saved settings";
   else *note = have ? "factory tables (your settings could not be put back: " + tv.last_error() + ")" : "factory tables (no saved settings)";
+  if (restore_processing(tv)) *note += ", picture processing as it was";
   g_stop = stop;
   return ok;
 }
@@ -418,6 +486,7 @@ static int cmd_sdr(double nits, bool quick) {
     std::ofstream(saved) << Json::stringify(pic);
     out("  Saved your Expert 1 settings for Undo.\n");
   }
+  std::string saved_processing = data_dir() + "/expert1-processing.json";
   if (!tv.set_picture_mode("expert1")) {
     out("Could not switch to Expert 1: %s\n", tv.last_error().c_str());
     return 1;
@@ -432,12 +501,33 @@ static int cmd_sdr(double nits, bool quick) {
   };
   g_log_hook = [](const std::string &line) { out("  %s\n", line.c_str()); };
 
-  out(quick ? "== Calibrating, quick (leave the meter on the screen; about 1½ to 2 hours)\n"
-            : "== Calibrating, thorough (leave the meter on the screen; this takes a few hours)\n");
+  // Measured without the picture processing that moves the readings (Calman sets these too).
+  out("== Picture processing off for the measurements\n");
+  std::string processing = read_processing(tv);
+  if (!exists(saved_processing)) std::ofstream(saved_processing) << processing;
+  processing_off(tv, Json::parse(processing));
   if (!tv.set_calibration_mode(true)) {
     out("Calibration mode refused: %s\n", tv.last_error().c_str());
+    restore_processing(tv);
     return 1;
   }
+  // From LG's factory calibration data, as Undo leaves it: matrices and gamma switches too,
+  // not only the two tables the procedure sets to neutral.
+  out("== Starting from LG's factory calibration data\n");
+  if (!tv.reset_factory()) {
+    out("The factory reset was refused: %s\n", tv.last_error().c_str());
+    tv.finish();
+    restore_processing(tv);
+    return 1;
+  }
+  // Calibration mode sets its own colour temperature and gamut (Warm 50, Wide [bsc]); the
+  // tables are measured in that state, so it is the state to watch in afterwards.
+  Json during;
+  bool have_during = tv.read_settings("picture", {"colorTemperature", "colorGamut"}, &during);
+  if (have_during) out("  In calibration mode: colour temperature %s, gamut %s\n", during["colorTemperature"].as_string("?").c_str(),
+                       during["colorGamut"].as_string("?").c_str());
+  out(quick ? "== Calibrating, quick (leave the meter on the screen; about 1½ to 2 hours)\n"
+            : "== Calibrating, thorough (leave the meter on the screen; this takes a few hours)\n");
   SdrOptions o = quick ? SdrOptions::quick() : SdrOptions::tv_profile();
   o.target.Lw = nits;
   auto t0 = std::chrono::steady_clock::now();
@@ -463,6 +553,17 @@ static int cmd_sdr(double nits, bool quick) {
   std::string runs = data_dir() + "/runs";
   mkdir(runs.c_str(), 0755);
   std::ofstream(runs + "/expert1-" + stamp + ".cube") << to_cube(r.lut3d, "Bloob Expert 1");
+  if (have_during) {
+    Json after;
+    std::string payload = "{";
+    if (tv.read_settings("picture", {"colorTemperature", "colorGamut"}, &after))
+      for (const char *k : {"colorTemperature", "colorGamut"})
+        if (during.has(k) && after.has(k) && Json::stringify(after[k]) != Json::stringify(during[k])) {
+          out("  %s went back to %s after calibration mode: set to %s, as measured\n", k, after[k].as_string("?").c_str(), during[k].as_string("?").c_str());
+          payload += std::string(payload.size() > 1 ? "," : "") + Json::quote(k) + ":" + Json::stringify(during[k]);
+        }
+    if (payload.size() > 1 && !tv.set_picture_settings(payload + "}")) out("  The TV refused: %s\n", tv.last_error().c_str());
+  }
   out("== Checking the result as you will watch it\n");
   Stats view;
   bool viewed = viewing_check(tv, o.target, &view);

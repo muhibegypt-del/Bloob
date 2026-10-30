@@ -266,9 +266,36 @@ bool TvDevice::set_picture_mode(const std::string &mode) {
   return true;
 }
 
-bool TvDevice::set_picture_settings(const std::string &settings_json) {
+bool TvDevice::read_settings(const std::string &category, const std::vector<std::string> &keys, Json *settings) {
+  auto ask = [&](const std::vector<std::string> &ks, Json *r) {
+    std::string list;
+    for (const std::string &k : ks) list += (list.empty() ? "" : ",") + Json::quote(k);
+    return luna("luna://com.webos.settingsservice/getSystemSettings", "{\"category\":" + Json::quote(category) + ",\"keys\":[" + list + "]}", r) &&
+           (*r)["returnValue"].as_bool();
+  };
   Json r;
-  if (!luna("luna://com.webos.settingsservice/setSystemSettings", "{\"category\":\"picture\",\"settings\":" + settings_json + "}", &r)) return false;
+  if (ask(keys, &r)) {
+    *settings = r["settings"];
+    for (const std::string &k : keys)
+      if (settings->has(k)) return true;
+    return false;
+  }
+  std::string j = "{";
+  bool any = false;
+  for (const std::string &k : keys) {
+    Json one;
+    if (!ask({k}, &one) || !one["settings"].has(k)) continue;
+    j += (any ? "," : "") + Json::quote(k) + ":" + Json::stringify(one["settings"][k]);
+    any = true;
+  }
+  *settings = Json::parse(j + "}");
+  return any;
+}
+
+bool TvDevice::set_settings(const std::string &category, const std::string &settings_json) {
+  Json r;
+  if (!luna("luna://com.webos.settingsservice/setSystemSettings", "{\"category\":" + Json::quote(category) + ",\"settings\":" + settings_json + "}", &r))
+    return false;
   if (!r["returnValue"].as_bool()) {
     error_ = "settings refused: " + Json::stringify(r).substr(0, 200);
     return false;

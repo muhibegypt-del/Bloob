@@ -25,6 +25,21 @@ def load():
                 "boxes": {}, "num": 0, "on": False, "log": []}
 
 
+# Settings by category, as the settings service keeps them (processing on, as some owners have it).
+DEFAULT_SETTINGS = {
+    "picture": {"contrast": "85", "brightness": "50", "color": "50", "gamma": "high1", "colorGamut": "auto",
+                "colorTemperature": "-50", "energySaving": "min", "dynamicContrast": "low", "dynamicColor": "off",
+                "peakBrightness": "off", "logoLuminanceAdjust": "light"},
+    "aiPicture": {"ai_Picture": "on", "ai_Brightness": "on", "ai_Genre": "off"},
+}
+
+
+def settings(s):
+    if "settings" not in s:
+        s["settings"] = json.loads(json.dumps(DEFAULT_SETTINGS))
+    return s["settings"]
+
+
 def save(s):
     tmp = STATE + ".tmp"
     with open(tmp, "w") as f:
@@ -56,8 +71,13 @@ def pq(payload, write):
         return reply
     if cmd == "CAL_START":
         s["session"] = payload.get("picMode")
+        pic = settings(s)["picture"]
+        s["before_cal"] = {"colorTemperature": pic["colorTemperature"], "colorGamut": pic["colorGamut"]}
+        pic.update({"colorTemperature": "50", "colorGamut": "wide"})  # CAL_START's side effects [bsc]
     elif cmd == "CAL_END":
         s["session"] = None
+        if s.get("before_cal") and os.environ.get("FAKE_TV_CAL_END_REVERTS", "1") == "1":
+            settings(s)["picture"].update(s.pop("before_cal"))  # the worst case: the TV puts them back
     elif cmd == "PTN_SINGLE_WINBOX_ATTR":
         s["boxes"][str(payload["winId"])] = [payload["fillR"], payload["fillG"], payload["fillB"]]
     elif cmd == "PTN_CTRL":
@@ -98,14 +118,22 @@ def luna(argv):
     elif uri.endswith("pqcontroller/getExternalPqData"):
         r = pq(payload, False)
     elif uri.endswith("getSystemSettings"):
-        r = {"returnValue": True, "settings": {"pictureMode": s["mode"], "backlight": s["backlight"], "contrast": 85}}
+        cat = settings(s).get(payload.get("category", "picture"))
+        if cat is None:
+            r = {"returnValue": False, "errorText": "unknown category"}
+        else:
+            have = dict(cat, pictureMode=s["mode"], backlight=s["backlight"]) if payload.get("category", "picture") == "picture" else cat
+            r = {"returnValue": True, "settings": {k: have[k] for k in payload.get("keys", []) if k in have}}
+        save(s)
     elif uri.endswith("setSystemSettings"):
         st = payload["settings"]
+        cat = payload.get("category", "picture")
         if "pictureMode" in st:
             s["mode"] = st["pictureMode"]
         if "backlight" in st:
             s["backlight"] = int(st["backlight"])
-        s.setdefault("settings_set", []).append(st)
+        settings(s).setdefault(cat, {}).update({k: v for k, v in st.items() if k not in ("pictureMode", "backlight")})
+        s.setdefault("settings_set", []).append({cat: st})
         save(s)
         r = {"returnValue": True}
     else:

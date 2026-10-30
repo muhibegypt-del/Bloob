@@ -9,6 +9,7 @@
 #include <functional>
 #include <set>
 #include <string>
+#include <vector>
 
 #include "device.h"
 #include "json.h"
@@ -57,7 +58,11 @@ class TvDevice : public Device {
   bool read_picture(Json *settings);
   bool set_picture_mode(const std::string &mode);
   // Several picture settings at once, as a JSON object (Undo puts the saved ones back).
-  bool set_picture_settings(const std::string &settings_json);
+  bool set_picture_settings(const std::string &settings_json) { return set_settings("picture", settings_json); }
+  // Any settings category. Keys this TV does not have are left out of the reply
+  // (asked one by one if the TV refuses the whole list); false if none was read.
+  bool read_settings(const std::string &category, const std::vector<std::string> &keys, Json *settings);
+  bool set_settings(const std::string &category, const std::string &settings_json);
   void set_light_cache(int v) { light_ = v; }
   // Ends calibration mode and turns patterns off (idempotent).
   void finish();
