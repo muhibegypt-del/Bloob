@@ -253,3 +253,46 @@ Pal reads the after report and finds out why before acting:
 3. Gentler steps at levels that overshot in pass 1 (dimension 6).
 4. A second reading only where a level is near its limit (dimensions 1 and 5).
 5. The measured 100% red, green and blue fed into the correction maths (dimensions 1 and 6).
+
+## 11. The measuring state, and the magenta flash
+
+### A pre-flight gate before any reading counts (`pal-start`)
+
+Every item is read back from the TV or measured, never assumed. If one fails, `pal-start` says which and measures nothing.
+
+| Check | How it is confirmed |
+| --- | --- |
+| Expert 1 is the active mode for Bloob's video | Picture settings read back |
+| Processing that moves readings is off (energy saving, dynamic contrast and colour, peak brightness, logo dimming, ambient light, AI picture) | Each key read back after writing |
+| Calibration mode is closed, colour temperature and gamut are back to the viewing values | Read back after `CAL_END` |
+| The black clip is playing full screen, BT.709 video range | Player state and window size; a 940 patch reads white and 1019 doesn't read brighter (clipping, as 3.3.7 measured) |
+| The meter is on the screen, centred and answering | Patch drawn centre and off-centre; readings compared |
+| The panel is warm and steady | White read until three readings a minute apart agree within the meter's wobble |
+| The meter's wobble is known | Three readings each of white and 50% |
+
+### While measuring
+
+- **The window:** a 10% window on a black background, Calman's OLED pattern, so the panel's power limiter stays out of it.
+- **Settling:** a reading starts only after the patch is drawn and has settled.
+- **Sanity:** each grey reading must be near neutral and brighter than the level below. A reading that fails either is taken again, so a flash or a glitch can't end up in the data.
+- **White re-checks:** every few patches, to catch drift or LG's static-image dimming.
+- **Dark patches:** they get the time and the readings they need.
+
+### The magenta flash: a located suspect
+
+The evidence:
+- In the `bloob-cal patterns` test (30 October), the routes that drew **one** box showed it on **magenta** ("green on magenta", "yellow on magenta"). The routes that drew a black background box as well showed it on black.
+- Between squares, `TvDevice::measure` inserts 0.8 s of full-screen 18% grey (Calman's OLED pattern insertion), and that insertion is drawn as **one** box (`numOfBox: 1`).
+- The owner saw magenta **between** squares, which is exactly when that insertion runs.
+
+Likely cause, not yet proven: LG's generator fills everything outside its boxes with magenta when it draws a single box, and the insertion triggers it.
+
+**Test:** `bloob-cal flashcheck`, read-only, about 3 minutes; the owner watches, or films in slow motion. It cycles squares four ways for 30 s each:
+1. as now;
+2. without the insertion;
+3. with the insertion drawn as two boxes (grey background plus a grey box);
+4. changing only the square box, with the background left in place.
+
+**Fix:** whichever way shows no magenta. Candidate 3 keeps Calman's insertion; candidate 2 drops it, which at a 10% window and 140 nits costs little. Either way, the sanity check stops a flash from entering a reading.
+
+**Also:** the black clip is 10 minutes long and loops. A loop restart could blink once, so it becomes a three-hour black clip, which is still small because black compresses to almost nothing.
