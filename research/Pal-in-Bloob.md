@@ -112,3 +112,35 @@ Quick and Thorough stay as they are, for runs without a network and as the yards
 | P6 | Eyes: a phone camera confirms each pattern | Readings tied to what the screen showed |
 
 Success is judged against Quick on the same TV: final grey and colour as watched, minutes, unattended completion, and failures recovered inside the run.
+
+## 7. Pal as the command centre: a hands-off run
+
+Owner, 30 October 2026: Pal should be the brains of the whole operation, so the experience is hands-off. That is the target. Pal decides and recovers; `bloob-cal` holds the state and does the work safely; the Calibrate screen is its face.
+
+**What you do, all of it:**
+
+1. Choose **Calibrate** once. The first time only, Pal asks a few questions about the room, viewing and targets, and remembers the answers.
+2. Hang the meter when Pal asks. It guides you to the centre with live readings: it draws the patch at a few places and says "a little left", "good".
+3. Take the meter off when Pal says it's finished.
+
+The TV's one-time "allow Bloob" prompt has already been answered. Everything else is Pal's.
+
+**What Pal owns:**
+
+- **Before:** checks the meter, the clip, the picture mode, the processing and the firmware (a new firmware means re-checking what the playbook assumes); warms the panel; waits for stability.
+- **During:** one session across every mode in the manifest (Day and Night SDR, then HDR10 and Dolby Vision once built), each with its own checkpoints. Pal may split a long session over two evenings and tells you when.
+- **Recovery without you:** every failure met in 3.3.x is a playbook entry Pal acts on:
+  - no patches → the clip isn't playing → restart it;
+  - socket 500 → fresh connection, then a route test;
+  - meter stopped → restart on white, refresh-rate flags;
+  - a reading that doesn't fit → read again;
+  - a stage that made things worse → restore the checkpoint and try another strategy;
+  - `CAL_START` changing colour temperature and gamut → put them back.
+
+  A new failure becomes a new entry, written by Pal into its playbook on the TV, not a release from me.
+- **After:** verification, the report, the "remove the meter" message, and the screen switched off so LG's panel care runs (if the TV allows Bloob to do it; not yet verified).
+- **Stopping:** only for what it can't do from the TV: the meter fell off, the TV was switched off, the network is gone (`bloob-cal` then finishes the stage the Quick way). It says in one line what it needs.
+
+**Limits that stay:** the meter needs hands twice per run. The viewing check (P-ISF7 in `research/Pal-moonshot.md`) is optional and off unless you ask. Monthly health checks need the meter, so Pal reminds you rather than running them.
+
+**Build path:** P1 (`bloob-cal serve`) and P2 (manifest and report) first, then the recovery playbook from the 3.3.x history, meter centring, then P4 (Pal in the service). Pal needs a Claude API key in `keys.json` on the TV, written by the owner like the other keys.
