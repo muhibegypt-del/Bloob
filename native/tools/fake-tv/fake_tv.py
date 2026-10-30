@@ -52,10 +52,14 @@ def decode_u16(b64):
     return list(struct.unpack("<%dH" % (len(raw) // 2), raw))
 
 
-def pq(payload, write):
+def pq(payload, write, route="luna"):
     s = load()
     cmd = payload.get("command")
     s["log"].append(cmd)
+    s.setdefault("routes", {}).setdefault(route, 0)
+    s["routes"][route] += 1
+    if write and not cmd.startswith("PTN_") and "picMode" not in payload:
+        s.setdefault("missing_picmode", []).append(cmd)  # Calman sends picMode with every command
     reply = {"returnValue": True}
     if not write:
         if cmd == "GET_1D_DPG_DATA":
@@ -253,7 +257,7 @@ def ws_client(conn):
                 send({"type": "error", "id": m["id"], "error": "500 Application error", "payload": {}})  # as the owner's TV answered
                 continue
             write = m["uri"].endswith("setExternalPqData")
-            send({"type": "response", "id": m["id"], "payload": pq(m["payload"], write)})
+            send({"type": "response", "id": m["id"], "payload": pq(m["payload"], write, "socket")})
 
 
 if __name__ == "__main__":

@@ -15,6 +15,9 @@ struct MeterConfig {
   std::string libs;                // its LD_LIBRARY_PATH
   std::string loader;              // e.g. /lib/ld-linux.so.3 (the probe runs it this way); empty: exec directly
   std::string ccss;                // spectral correction, -X (empty: none)
+  std::string display;             // -y: "c" (refresh: OLED, as the correction file says) or "l"; empty: spotread's default
+  bool no_init_cal = false;        // -N: the Spyder's start-up calibration was done earlier this boot
+  std::string refresh_hz;          // -Y R:<Hz>: the screen's refresh, so spotread does not measure it
   std::string extra;               // extra options, e.g. "-Y r"
 };
 
@@ -22,7 +25,7 @@ class Meter {
  public:
   ~Meter() { close(); }
   bool open(const MeterConfig &c, std::string *error);  // a session, or the one-shot fallback
-  bool read(Vec3 *XYZ, std::string *error);  // restarts a stuck session once
+  bool read(Vec3 *XYZ, std::string *error);
   void close();
   bool session() const { return pid_ > 0; }
 

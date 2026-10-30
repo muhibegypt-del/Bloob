@@ -199,7 +199,8 @@ class CalibrateScreen : public Screen {
     } else {
       ty += 32;
     }
-    std::string step = status_["step"].as_string();
+    std::string step = status_["step"].as_string(), note = status_["note"].as_string();
+    if (running() && !note.empty()) step = note;  // e.g. a slow dark reading: say so, so it doesn't look frozen
     std::string hint = c.now < back_note_until_ ? "A run is going: OK stops it, then Back leaves" : "OK stops";
     if (!pending_.empty()) hint = "Starting the black video the TV needs for its squares";
     text(Text::Caption1, (running() && !step.empty() ? step + "  \xC2\xB7  " : std::string()) + hint, tx, ty, label(Label::Tertiary), tw);
@@ -230,6 +231,8 @@ class CalibrateScreen : public Screen {
     std::weak_ptr<int> alive = alive_;
     black_->load("file://" + c.dir + "/assets/media/black.mp4", c.app_id, window_, "media", [this, alive](const MediaEvent &e) {
       if (!alive.lock() || !black_) return;
+      if (e.kind == MediaEvent::Loaded || e.kind == MediaEvent::VideoInfo || e.kind == MediaEvent::SourceInfo)
+        place_black(black_->info().width, black_->info().height);  // as the player places films, once the size is known
       if (e.kind == MediaEvent::Loaded) {
         black_->play();
       } else if (e.kind == MediaEvent::Playing) {
@@ -246,6 +249,15 @@ class CalibrateScreen : public Screen {
       }
     });
     logf("calibrate", "black video loading");
+  }
+
+  void place_black(int vw, int vh) {
+    Ctx &c = ctx();
+    if (window_.empty() || !c.webos.set_exported_window) return;
+    int dw = W, dh = H;
+    SDL_GetWindowSize(c.window, &dw, &dh);
+    SDL_Rect src{0, 0, vw > 0 ? vw : 1920, vh > 0 ? vh : 1080}, dst{0, 0, dw, dh};
+    c.webos.set_exported_window(window_.c_str(), &src, &dst);
   }
 
   void stop_black() {

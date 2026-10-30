@@ -49,6 +49,10 @@ class TvDevice : public Device {
   int light() const override { return light_; }
   bool set_tonemap(const int params[7]) override;
   bool set_calibration_mode(bool on) override;
+  // Calman's SDR start, inside calibration mode (tv_device.cpp): the bypass part (gamma
+  // switches off, BT.709 identity), then contrast 85, brightness 50, colour 50.
+  bool calman_bypass();
+  bool start_like_calman();
   bool load_dolby_config(const std::string &) override { return false; }  // no USB stick yet
 
   // Read-only: a getter (GET_1D_DPG_DATA, GET_3D_LUT_DATA, GET_3BY3_GAMUT_DATA…).
@@ -73,6 +77,8 @@ class TvDevice : public Device {
   long readings() const { return readings_; }
   // Called after every meter reading (progress for the status file).
   std::function<void(long)> on_reading;
+  // Called when a new patch is shown (the screen says when a dark one will read slowly).
+  std::function<void(const Patch &)> on_patch;
 
  private:
   bool pq(const std::string &command, const std::string &fields, bool write = true);

@@ -30,6 +30,16 @@ static std::vector<std::string> argv_for(const MeterConfig &c, bool one_shot) {
   a.push_back("-e");
   a.push_back("-x");
   if (one_shot) a.push_back("-O");
+  // As PGenerator+ runs spotread for an OLED (research/PGenerator-Plus-and-LG-for-Bloob.md §3).
+  if (c.no_init_cal) a.push_back("-N");
+  if (!c.display.empty()) {
+    a.push_back("-y");
+    a.push_back(c.display);
+  }
+  if (!c.refresh_hz.empty()) {
+    a.push_back("-Y");
+    a.push_back("R:" + c.refresh_hz);
+  }
   if (!c.ccss.empty()) {
     a.push_back("-X");
     a.push_back(c.ccss);
@@ -181,16 +191,7 @@ bool Meter::read_one_shot(Vec3 *XYZ, std::string *error) {
 
 bool Meter::read(Vec3 *XYZ, std::string *error) {
   if (fallback_) return read_one_shot(XYZ, error);
-  if (read_session(XYZ, error)) return true;
-  // A session that stopped answering (seen on the TV after "measuring refresh rate failed"
-  // on a dim screen): start spotread again, once, and take the reading again.
-  std::string first = *error, again;
-  if (open(cfg_, &again)) {
-    if (fallback_ ? read_one_shot(XYZ, error) : read_session(XYZ, error)) return true;
-    again = *error;
-  }
-  *error = first + "; after restarting the meter: " + again;
-  return false;
+  return read_session(XYZ, error);  // a stuck session is restarted by TvDevice, on a white square
 }
 
 bool Meter::read_session(Vec3 *XYZ, std::string *error) {

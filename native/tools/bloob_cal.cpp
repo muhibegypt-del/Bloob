@@ -51,13 +51,14 @@ static std::string data_dir() { return env_or("BLOOB_CAL_DATA", kData); }
 struct Status {
   std::string path, action, state = "running", step;
   long readings = 0, expected = 0;
+  std::string note;  // what is happening right now, e.g. a slow dark reading
   time_t started = time(nullptr);
   std::vector<std::string> lines;
   std::string result = "null";
   void write() const {
     if (path.empty()) return;
     std::string j = "{\"action\":" + Json::quote(action) + ",\"state\":" + Json::quote(state) + ",\"step\":" + Json::quote(step) +
-                    ",\"readings\":" + std::to_string(readings) + ",\"expected\":" + std::to_string(expected) +
+                    ",\"note\":" + Json::quote(note) + ",\"readings\":" + std::to_string(readings) + ",\"expected\":" + std::to_string(expected) +
                     ",\"started\":" + std::to_string(static_cast<long long>(started)) + ",\"updated\":" +
                     std::to_string(static_cast<long long>(time(nullptr))) + ",\"pid\":" + std::to_string(getpid()) + ",\"lines\":[";
     for (size_t i = 0; i < lines.size(); i++) j += (i ? "," : "") + Json::quote(lines[i]);
@@ -100,6 +101,9 @@ static void out(const char *fmt, ...) {
 
 static bool exists(const std::string &p) { return access(p.c_str(), F_OK) == 0; }
 
+// Written after the first good reading of a boot (/tmp is emptied at boot).
+static const char *kSpyderChecked = "/tmp/bloob-spyder-checked";
+
 static TvConfig config(const std::string &mode) {
   std::string probe = env_or("BLOOB_PROBE", kProbe), data = env_or("BLOOB_CAL_DATA", kData);
   TvConfig c;
@@ -109,6 +113,27 @@ static TvConfig config(const std::string &mode) {
   if (c.meter.loader == "none") c.meter.loader.clear();
   std::string ccss = data + "/argyll/lg-55g2.ccss";
   if (exists(ccss)) c.meter.ccss = ccss;
+  // spotread's display type from the correction file, as PGenerator+ chooses it: refresh
+  // ("c") when it says DISPLAY_TYPE_REFRESH "YES" or names an OLED, otherwise "l"; refresh
+  // for this OLED when there is no file.
+  {
+    std::ifstream f(c.meter.ccss);
+    std::string text((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    bool says_no = text.find("DISPLAY_TYPE_REFRESH \"NO\"") != std::string::npos;
+    c.meter.display = c.meter.ccss.empty() || !says_no ? "c" : "l";
+  }
+  // The Spyder5 calibrates itself on its first start after a boot; later starts reuse it.
+  c.meter.no_init_cal = exists(kSpyderChecked);
+  // An explicit refresh rate, once known ({"refresh_hz": 120} in meter.json).
+  {
+    std::ifstream f(data + "/meter.json");
+    std::string text((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    bool ok = false;
+    Json m = Json::parse(text, &ok);
+    double hz = ok ? m["refresh_hz"].as_number() : 0;
+    if (hz >= 20 && hz <= 480) c.meter.refresh_hz = std::to_string(static_cast<int>(hz + 0.5));
+  }
+  if (getenv("BLOOB_METER_REFRESH")) c.meter.refresh_hz = getenv("BLOOB_METER_REFRESH");
   c.manifest = probe + "/itpg_manifest.json";
   c.key_file = data + "/ssap-key.json";
   c.picture_mode = mode;
@@ -120,6 +145,20 @@ struct Reading {
   Vec3 xyz;
   double x = 0, y = 0;
 };
+
+// Live progress for the screen: the reading count, and a note while a dark patch reads
+// (the Spyder takes up to about 20 s on an OLED black).
+static void report_progress(TvDevice &tv) {
+  tv.on_reading = [](long n) {
+    g_status.readings = n;
+    g_status.write();
+  };
+  tv.on_patch = [](const Patch &p) {
+    int top = std::max(p.r, std::max(p.g, p.b));
+    g_status.note = top < 200 ? "Reading a dark patch: the meter takes up to 20 s" : "";
+    g_status.write();
+  };
+}
 
 static bool read_avg(TvDevice &tv, const Patch &p, int n, Reading *avg, double *spread = nullptr) {
   std::vector<Vec3> v;
@@ -197,6 +236,7 @@ static bool squares_visible(TvDevice &tv) {
   bool bright = w.xyz.y >= 30, neutral = w.x > 0.26 && w.x < 0.37 && w.y > 0.27 && w.y < 0.39, contrast = w.xyz.y >= 10 * std::max(k.xyz.y, 0.05);
   if (bright && neutral && contrast) {
     out("  Yes: white %.1f cd/m2, black %.3f cd/m2.\n", w.xyz.y, k.xyz.y);
+    std::ofstream(kSpyderChecked) << "1\n";  // later starts this boot skip the Spyder's own calibration (-N)
     return true;
   }
   out("  No. The meter read white %.1f cd/m2 (x %.3f y %.3f) and black %.2f cd/m2, which is not a test square.\n", w.xyz.y, w.x, w.y, k.xyz.y);
@@ -263,6 +303,7 @@ static int cmd_patterns() {
 
 static int cmd_check() {
   TvDevice tv(config("expert1"));
+  report_progress(tv);
   Json pic;
   if (tv.read_picture(&pic)) out("== Picture now: %s\n", Json::stringify(pic).c_str());
   tables(tv);
@@ -280,7 +321,9 @@ static int cmd_check() {
   if (!read_avg(tv, {1019, 1019, 1019}, 3, &hi)) return 1;
   show("white 1019 (range test)", hi);
   double ratio = hi.xyz.y / std::max(w.xyz.y, 1e-6);
-  out("  range: 1019 is %.2fx 940 -> %s\n", ratio, ratio > 1.12 ? "full range" : ratio > 1.02 ? "limited, above-white passed" : "limited range");
+  // Code 64 read as black in the square check, so the TV takes video (limited) range; a brighter
+  // 1019 only means it also shows the levels above white.
+  out("  range: 1019 is %.2fx 940 -> %s\n", ratio, ratio > 1.02 ? "video range, levels above white shown" : "video range, above white clipped");
   tv.finish();
   out("Done. Nothing was changed.\n");
   return 0;
@@ -298,6 +341,7 @@ static int cmd_test() {
   out("== You are in %s; the test uses expert2 and comes back to %s.\n", pic["pictureMode"].as_string("?").c_str(), home_mode.c_str());
 
   TvDevice tv(config("expert2"));
+  report_progress(tv);
   tables(tv);
   if (!meter_up(tv)) return 1;
   if (!tv.set_picture_mode("expert2")) {
@@ -356,6 +400,7 @@ static int cmd_test() {
     return 1;
   }
   verdict(true, "calibration mode started for expert2");
+  verdict(tv.calman_bypass(), "gamma switches off and the BT.709 matrix at identity, as Calman starts (factory reset puts them back)");
   wrote = true;
   bool ok = tv.upload_1d(Lut1D::unity());
   verdict(ok, "a neutral 1D LUT was accepted" + (ok ? std::string() : ": " + tv.last_error()));
@@ -577,10 +622,7 @@ static int cmd_sdr(double nits, bool quick) {
   tables(tv);
   if (!meter_up(tv)) return 1;
   if (!squares_visible(tv)) return 1;
-  tv.on_reading = [](long n) {
-    g_status.readings = n;
-    g_status.write();
-  };
+  report_progress(tv);
   g_log_hook = [](const std::string &line) { out("  %s\n", line.c_str()); };
 
   // Measured without the picture processing that moves the readings (Calman sets these too).
@@ -600,6 +642,16 @@ static int cmd_sdr(double nits, bool quick) {
     out("The factory reset was refused: %s\n", tv.last_error().c_str());
     tv.finish();
     restore_processing(tv);
+    return 1;
+  }
+  // Then as Calman starts SDR: gamma switches off, BT.709 matrix at identity, contrast 85,
+  // brightness 50, colour 50 (research/PGenerator-Plus-and-LG-for-Bloob.md L3, L4, L6).
+  out("  Gamma switches off, colour matrix neutral, contrast 85, brightness 50, colour 50 (as Calman starts).\n");
+  if (!tv.start_like_calman()) {
+    out("The TV refused Calman's start: %s\n", tv.last_error().c_str());
+    tv.finish();
+    std::string note;
+    undo_expert1(tv, &note);
     return 1;
   }
   // Calibration mode sets its own colour temperature and gamut (Warm 50, Wide [bsc]); the
@@ -719,7 +771,7 @@ int main(int argc, char **argv) {
   g_status.action = cmd;
   // Quick is the default for sdr: close to Calman's AutoCal, about a third of the readings.
   bool quick = !(argc > 3 && std::string(argv[3]) == "thorough");
-  g_status.expected = cmd == "check" ? 13 : cmd == "test" ? 24 : cmd == "sdr" ? (quick ? 1950 : 4200) : 0;
+  g_status.expected = cmd == "check" ? 17 : cmd == "test" ? 28 : cmd == "sdr" ? (quick ? 1950 : 4200) : 0;
   g_status.write();
   int rc = 0;
   if (cmd == "check") rc = cmd_check();

@@ -194,6 +194,13 @@ The owner chose native. `native/` is a C++ webOS app (`com.muhib.bloob`, "Bloob 
 
   **Root cause found (owner, 30 October 2026, `bloob-cal patterns`): LG's pattern generator draws only while a video plays.** With a video playing, all five routes drew (red and blue on black, green and yellow over the video, white in calibration mode, which also brings up webOS's "calibration start" notice); without one, nothing. **3.3.6:** every run from the Calibrate screen first plays `assets/media/black.mp4` (10 minutes, 1080p24 H.264, BT.709 limited-range black, 1.1 MB, looped) in Bloob's own exported video window, and starts `bloob-cal` once the TV reports it playing (6 s at most). So the Expert 1 measured is the one films in Bloob use. Back is held while a run goes; Stop before the video plays cancels; a dropped video is restarted; the drift sentinel stops (and undoes) a run if the white square falls below half its level.
 
+  3.3.6 on the TV (owner, 30 October 2026): Check passed (white 98.7 cd/m², black 0.000, 0.21% spread, 3.1 s a reading); black readings took about 20 s each, the screen showed 0 readings, and magenta flashed between squares. **3.3.7, from `research/PGenerator-Plus-and-LG-for-Bloob.md` (a study of PGenerator+, which drives LG's calibration API from captured Calman traffic):**
+  - One calibration session, one connection: `CAL_START`, every table and pattern and `CAL_END` over the second-screen socket (only the read-only getters and settings use luna-send); a fresh-connection retry only for patterns and reads.
+  - `picMode`, `profileNo` and `programID` on every write, as Calman sends them.
+  - Calman's SDR start after the factory reset: `1D_2_2_EN` and `1D_0_45_EN` 0, BT.709 3×3 identity, contrast 85, brightness 50, colour 50 (Test checks the first two, which the factory reset puts back).
+  - spotread: `-y` from the correction file (refresh for the OLED), `-N` after the first good start of a boot (`/tmp/bloob-spyder-checked`), an optional `-Y R:<Hz>` from `calibration/meter.json` (`refresh_hz`) or `BLOOB_METER_REFRESH`; a meter that stops answering is restarted on a white square, because spotread needs a bright patch to time its readings.
+  - 1 s settle after each table upload; live reading counts for Check and Test; "Reading a dark patch: the meter takes up to 20 s" on the card; the range line says "video range, levels above white shown"; the black video window is placed again once the clip reports its size (the magenta is not yet explained).
+
   TV pass: `native/TV-TEST.md` §18. HDR10 and Dolby Vision are proven on the simulator only and not yet on the screen.
 - **Design (2.0, Glass):** the visual system, with materials, tokens, type, focus, motion, states, the spoken interface and per-screen layouts, is in `native/DESIGN.md`. The tokens live in `native/src/theme.h`, the type scale, label roles and components in `ui.cpp`, and the frost bake in `images.cpp`.
 - **Rendering and playback:**
@@ -211,7 +218,7 @@ The owner chose native. `native/` is a C++ webOS app (`com.muhib.bloob`, "Bloob 
   - watch progress and settings.
   If the bus will not start the service, the app runs it directly with the TV's Node and stops it on exit.
 - **Build and test scripts:**
-  - `native/scripts/build.sh`: tests, cross-build, ABI guards (no GLIBCXX, and since 2.4 no glibc symbol newer than GLIBC_2.4), service staging, IPK with fixed modes (`native/artifacts/com.muhib.bloob_3.3.6_arm.ipk`).
+  - `native/scripts/build.sh`: tests, cross-build, ABI guards (no GLIBCXX, and since 2.4 no glibc symbol newer than GLIBC_2.4), service staging, IPK with fixed modes (`native/artifacts/com.muhib.bloob_3.3.7_arm.ipk`).
   - `native/scripts/tv-inspect.sh`: reads the runtime inspector snapshot `/tmp/bloob-state.json` from the TV, read-only.
   - `native/scripts/ui-tour.sh`: drives the whole app on the desktop through the acceptance task, plus quick-menu, Home and pipeline-lost events, against the real service with fixture sources.
   - `native/scripts/ui-snapshots.sh`: covers player states.

@@ -44,6 +44,9 @@ PGenerator+ never asks the TV to draw (section 1). Bloob does, through LG's iTPG
 
 ## 5. What Bloob should take, in order
 
+Status: 1 (except the refresh rate, which waits for a reading, and dark-patch averaging, which waits for a check of what the probe's spotread supports), 2, 3, 4 and the settle in 5 are in Bloob 3.3.7, proven against the stand-in TV (every write over the socket with `picMode`; Test 8/8; a Quick run and Undo). None of it has run on the TV yet.
+
+
 1. **Meter (most likely fixes the owner's stall):** `-y` chosen from the CCSS as PGenerator+ does (read the owner's DisplayCAL G2 file on the TV for `DISPLAY_TYPE_REFRESH` first), an explicit `-Y R:<Hz>` (the rate to use is not known yet: one spotread on a white patch, with the rate it reports, settles it), `-N` after the first start of a boot, `-Y a` for patches below about 1 cd/m², and a status line while a slow dark read runs.
 2. **One socket for the whole session (L2):** `CAL_START`, every table, every pattern and `CAL_END` over the same second-screen connection; luna-send only for reads and settings.
 3. **`picMode` on every command (L1).**

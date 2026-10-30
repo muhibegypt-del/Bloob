@@ -49,6 +49,17 @@ static std::string u16_data(const std::vector<uint16_t> &v, int opt = 1) {
          ",\"dataType\":\"unsigned integer16\",\"dataOpt\":" + std::to_string(opt);
 }
 
+static std::string f32_data(const std::vector<float> &v, int opt = 1) {
+  std::vector<unsigned char> b;
+  for (float f : v) {
+    uint32_t x;
+    std::memcpy(&x, &f, 4);
+    for (int i = 0; i < 4; i++) b.push_back(static_cast<unsigned char>((x >> (8 * i)) & 0xff));
+  }
+  return ",\"data\":\"" + base64_bytes(b.data(), b.size()) + "\",\"dataCount\":" + std::to_string(v.size()) + ",\"dataType\":\"float\",\"dataOpt\":" +
+         std::to_string(opt);
+}
+
 static std::string reset_data(const char *type) { return std::string(",\"data\":\"\",\"dataCount\":0,\"dataType\":\"") + type + "\",\"dataOpt\":2"; }
 
 TvDevice::TvDevice(const TvConfig &c) : cfg_(c) {}
@@ -103,14 +114,19 @@ bool TvDevice::pq(const std::string &command, const std::string &fields, bool wr
     error_ = "refused by Bloob's allow-list: " + command;
     return false;
   }
-  std::string payload = "{\"command\":\"" + command + "\"" + (write && command.rfind("PTN_", 0) != 0 ? ",\"profileNo\":0" : "") + ",\"programID\":1" + fields + "}";
+  // Calman sends picMode, profileNo and programID with every calibration command, not only
+  // CAL_START (PGenerator+, from captured Calman traffic; research/PGenerator-Plus-and-LG-for-Bloob.md L1).
+  bool pattern = command.rfind("PTN_", 0) == 0;
+  std::string payload = "{\"command\":\"" + command + "\"" +
+                        (write && !pattern ? ",\"profileNo\":0,\"picMode\":\"" + cfg_.picture_mode + "\"" : std::string()) + ",\"programID\":1" +
+                        fields + "}";
   if (!write) payload = "{\"command\":\"" + command + "\"}";
   Json reply;
   bool sent;
-  // Patterns go over the second-screen socket, as the Spyder probe drew them: on this TV a
-  // pattern sent by luna-send did not appear (29 October 2026), most likely because it
-  // lasts only while the client that set it is connected. Large tables go there too.
-  bool socket = payload.size() >= 100000 || (command.rfind("PTN_", 0) == 0 && !getenv("BLOOB_PATTERNS_LUNA"));
+  // One calibration session, one connection: CAL_START, every table and pattern, and CAL_END
+  // all go over the same second-screen socket, as Calman and PGenerator+ do (L2). Only
+  // bloob-cal patterns (BLOOB_PATTERNS_LUNA) and BLOOB_PQ_LUNA send by luna-send.
+  bool socket = payload.size() >= 100000 || !(getenv("BLOOB_PQ_LUNA") || (pattern && getenv("BLOOB_PATTERNS_LUNA")));
   auto t0 = std::chrono::steady_clock::now();
   if (!socket) {
     sent = luna(std::string(kPq) + (write ? "setExternalPqData" : "getExternalPqData"), payload, &reply);
@@ -122,7 +138,10 @@ bool TvDevice::pq(const std::string &command, const std::string &fields, bool wr
       return false;
     }
     sent = ssap_.request(uri, payload, &reply, &error_);
-    if (!sent) {
+    // A pattern or a read may go again on a fresh connection; a session command or a table
+    // may not, because the calibration session belongs to the connection that opened it.
+    if (!sent && !(pattern || !write)) error_ = command + " over the second-screen socket: " + error_;
+    if (!sent && (pattern || !write)) {
       // The TV's own error (on the owner's TV, "500 Application error"): once more on a
       // fresh connection, in case the session went bad, then say which command and route.
       std::string first = error_;
@@ -195,10 +214,26 @@ bool TvDevice::measure(const Patch &p, Vec3 *XYZ) {
     }
     shown_ = p;
     showing_ = true;
+    if (on_patch) on_patch(p);
     std::this_thread::sleep_for(std::chrono::milliseconds(getenv("BLOOB_CAL_FAST") ? 0 : 400));  // desktop tests only
   }
   std::string err;
   bool ok = meter_.read(XYZ, &err);
+  if (!ok && !g_stop) {
+    // spotread times its readings from the screen's refresh, which it can only measure on a
+    // bright patch (on a dark one: "measuring refresh rate failed", then nothing). So a stuck
+    // meter is started again on a white square, then the patch is shown again and read.
+    std::string again;
+    Patch white = cfg_.family == Family::DolbyVision ? Patch{1023, 1023, 1023} : Patch{940, 940, 940};
+    Vec3 dummy;
+    bool recovered = show(white) && meter_.open(cfg_.meter, &again) && meter_.read(&dummy, &again) && show(p);
+    if (recovered) {
+      shown_ = p;
+      std::this_thread::sleep_for(std::chrono::milliseconds(getenv("BLOOB_CAL_FAST") ? 0 : 400));
+      ok = meter_.read(XYZ, &again);
+    }
+    if (!ok) err += "; after restarting the meter on a white square: " + (again.empty() ? std::string("no reading") : again);
+  }
   if (!ok) error_ = err;
   if (ok) {
     readings_++;
@@ -207,14 +242,36 @@ bool TvDevice::measure(const Patch &p, Vec3 *XYZ) {
   return ok && !g_stop;
 }
 
-bool TvDevice::upload_1d(const Lut1D &lut) { return pq("1D_DPG_DATA", u16_data(lut.encode())); }
+// A new table takes a moment to reach the panel; readings wait for it.
+static void settle_after_table() { std::this_thread::sleep_for(std::chrono::milliseconds(getenv("BLOOB_CAL_FAST") ? 0 : 1000)); }
+
+bool TvDevice::upload_1d(const Lut1D &lut) {
+  if (!pq("1D_DPG_DATA", u16_data(lut.encode()))) return false;
+  settle_after_table();
+  return true;
+}
 
 bool TvDevice::upload_3d(Slot slot, const Lut3D &lut) {
   if (lut.n != 33) {
     error_ = "this TV takes 33-point 3D LUTs";
     return false;
   }
-  return pq(slot == Slot::Bt709 ? "BT709_3D_LUT_DATA" : "BT2020_3D_LUT_DATA", u16_data(lut.encode()));
+  if (!pq(slot == Slot::Bt709 ? "BT709_3D_LUT_DATA" : "BT2020_3D_LUT_DATA", u16_data(lut.encode()))) return false;
+  settle_after_table();
+  return true;
+}
+
+// Calman's SDR start (L3, L4, L6), after CAL_START and the factory reset: both gamma
+// switches off, so the 1D table carries the whole grey scale; the BT.709 matrix at
+// identity (one left by an HDR run would bend every grey correction); contrast 85,
+// brightness 50 and colour 50. Light is set later, to the target.
+bool TvDevice::calman_bypass() {
+  return pq("1D_2_2_EN", u16_data({0})) && pq("1D_0_45_EN", u16_data({0})) && pq("BT709_3BY3_GAMUT_DATA", f32_data({1, 0, 0, 0, 1, 0, 0, 0, 1}));
+}
+
+bool TvDevice::start_like_calman() {
+  return calman_bypass() && pq("CONTRAST_UI_DATA", u16_data({85})) && pq("BRIGHTNESS_UI_DATA", u16_data({50})) &&
+         pq("COLOR_UI_DATA", u16_data({50}));
 }
 
 // LG's factory data for the mode in session (bscpylgtv's reset_factory_data_*).
@@ -246,7 +303,7 @@ bool TvDevice::set_calibration_mode(bool on) {
       error_ = "refused by Bloob's allow-list: picture mode " + cfg_.picture_mode;
       return false;
     }
-    if (!pq("CAL_START", ",\"picMode\":\"" + cfg_.picture_mode + "\"")) return false;
+    if (!pq("CAL_START", "")) return false;
     in_session_ = true;
     return true;
   }
