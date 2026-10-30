@@ -144,3 +144,51 @@ The TV's one-time "allow Bloob" prompt has already been answered. Everything els
 **Limits that stay:** the meter needs hands twice per run. The viewing check (P-ISF7 in `research/Pal-moonshot.md`) is optional and off unless you ask. Monthly health checks need the meter, so Pal reminds you rather than running them.
 
 **Build path:** P1 (`bloob-cal serve`) and P2 (manifest and report) first, then the recovery playbook from the 3.3.x history, meter centring, then P4 (Pal in the service). Pal needs a Claude API key in `keys.json` on the TV, written by the owner like the other keys.
+
+## 8. The technical layer, and keeping the spend small
+
+### How information reaches Pal
+
+```text
+bloob-cal serve (root)  ──events──>  pal.js (Bloob service)  ──HTTPS──>  Claude API
+   runs every stage itself          wakes only on an event            one turn: read digest,
+   journal, checkpoints, gate  <──tool calls (JSON)──                  decide, call tools
+```
+
+- **One local channel.** `bloob-cal serve` listens on a local socket and accepts only the service, using a one-time token written for each session. Commands and replies are single JSON lines.
+- **Events, not polling.** `bloob-cal` runs each stage's inner loop (hundreds of readings) by itself and wakes Pal only at a decision point:
+  - session start and the manifest;
+  - end of each stage, with its result;
+  - an anomaly: a reading that doesn't fit, drift, the meter stopping, a pattern error, a stage that made things worse;
+  - the end of the run.
+
+  Between events there are no API calls at all.
+- **Digests, with detail on request.** An event carries a summary of a few hundred tokens, for example: `grey pass 4: avg 0.42, worst 1.1 at code 108 (5%), white 139.6 cd/m², repeatability 0.3%`. Raw readings stay in the journal. Pal asks for the part it needs (`readings(stage, codes)`) only when a digest raises a question.
+- **State lives in the journal, not in the conversation.** If the conversation is lost (a crash, a restart, too much context), `pal.js` starts a new one from the journal's digest and carries on.
+
+### Keeping the spend small
+
+| Lever | What it does |
+| --- | --- |
+| Call Pal only at decisions | Tens of calls per SDR run (estimate 50–150), never one per reading |
+| Prompt caching | The fixed part (instructions, playbook, tool definitions, about 20k tokens) is cached with a one-hour lifetime, because gaps between events can pass five minutes. The growing conversation is cached automatically. Cache reads cost a twentieth of normal input on the default model |
+| A stable prefix | Nothing that changes (times, readings) goes in the instructions or tool list, so the cache isn't broken by accident |
+| Short replies | Pal answers with tool calls and one line for the screen, not essays. Effort is medium by default and raised only for a diagnosis |
+| A hard cap per run | `pal.js` adds up the cost of every call from the API's own usage figures. At the cap, Pal hands the run to Quick, which finishes it the normal way and says so in the report. Nothing fails because of the cap |
+| Measured, not guessed | Every call's tokens and cost go into the run report, so the second run's budget comes from the first run's numbers |
+
+**Estimate before measuring** (list prices as of October 2026, default model Claude Opus 5.5: $4 per million input tokens, $20 output, $0.20 cached reads): about $0.03–0.06 per Pal turn, so roughly **$3–8 for an SDR run** (100 turns). Night, HDR10 and Dolby Vision cost about the same again each. The default cap is $15 per run. A smaller model is cheaper, but the choice of model is the owner's.
+
+**Not used:** the Batch API (half price, but answers can take hours) and anything that puts the model inside the reading loop.
+
+### Plan of action
+
+| Step | Work | Where it's proven |
+| --- | --- | --- |
+| T0 | Read the TV's Node version: the official Anthropic SDK for Node needs a recent Node. If the TV's is too old, `pal.js` runs on a newer Node shipped with Bloob's service | One read-only command on the TV |
+| T1 | `bloob-cal serve`: socket and token, the event stream, digests, journal, checkpoints after each stage, the write gate, a Quick fallback when Pal is silent | Stand-in TV and simulator: a scripted Pal (no API) completes SDR; killing it mid-run still ends in verify or undo |
+| T2 | The run report and manifest, for every run, Quick included | Stand-in TV |
+| T3 | Known-failure recovery from 3.3.x as code; the playbook text Pal reads | Stand-in TV with each failure injected (`FAKE_TV_*`) |
+| T4 | `pal.js`: the loop, caching, cost meter and cap, conversation rebuilt from the journal; key from `keys.json` | Desktop against the stand-in TV with the real API (a few dollars, with the owner's approval) |
+| T5 | Settings → Pal → SDR calibration; Pal's line on the card; meter-centring check | Desktop tour, then the TV |
+| T6 | First Pal run on the TV | The report: result, minutes, turns and cost |
