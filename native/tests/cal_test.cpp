@@ -10,6 +10,7 @@
 #include "hdr.h"
 #include "lut.h"
 #include "model.h"
+#include "pal.h"
 #include "procedure.h"
 #include "sim.h"
 
@@ -345,6 +346,215 @@ static void test_dolby() {
   CHECK(c.find("TPrimaries = 0.6800 0.3200 0.2650 0.6900 0.1500 0.0600 0.3127 0.3290\r\n") != std::string::npos);
 }
 
+// ---- Pal's grey flow (research/Pal-in-Bloob.md §9–11) ----------------------
+
+// One grey report on a Device, as bloob-cal's grey-report takes it: two readings a level
+// (averaged), 0% not read, and the three primaries at 100%.
+static std::vector<GreyLevel> pal_report(Device &tv, Vec3 prim[3]) {
+  std::vector<GreyLevel> levels;
+  for (int pct : pal_levels()) {
+    GreyLevel l;
+    l.pct = pct;
+    l.code = pal_code(pct);
+    if (pct > 0) {
+      Vec3 a, b;
+      tv.measure({l.code, l.code, l.code}, &a);
+      tv.measure({l.code, l.code, l.code}, &b);
+      l.XYZ = (a + b) / 2.0;
+      l.measured = true;
+      l.reads = 2;
+    }
+    levels.push_back(l);
+  }
+  const Patch ps[3] = {{940, 64, 64}, {64, 940, 64}, {64, 64, 940}};
+  for (int c = 0; c < 3; c++) tv.measure(ps[c], &prim[c]);
+  return levels;
+}
+
+struct PalRun {
+  GreySummary before, after;
+  int passes = 0, light = 0;
+  bool goal = false, worse = false;
+  std::vector<double> avgs;
+};
+
+// The scripted Pal: light with headroom, then report → propose → gate → upload → report,
+// keeping each pass only if it is better; at most three passes.
+static PalRun pal_flow(VirtualTv &tv, const SdrTarget &t, TableIndex mode = TableIndex::Signal) {
+  PalRun run;
+  PalGoal goal;
+  Lut1D table = Lut1D::unity();
+  tv.upload_1d(table);
+  Vec3 w;
+  for (int i = 0; i < 6; i++) {  // white about 6% above the target, as pal-start sets it
+    tv.measure({940, 940, 940}, &w);
+    int light = static_cast<int>(std::lround(tv.light() * t.Lw * 1.06 / std::max(w.y, 1.0)));
+    if (light == tv.light()) break;
+    tv.set_light(std::clamp(light, 0, 100));
+  }
+  run.light = tv.light();
+  Vec3 prim[3];
+  auto levels = pal_report(tv, prim);
+  run.before = pal_summarise(levels, t, goal);
+  GreySummary now = run.before;
+  run.avgs.push_back(now.avg);
+  for (int pass = 1; pass <= 3 && !now.goal_met; pass++) {
+    // White short of the target (the correction trims channels): more light, then a fresh report.
+    if (now.white_err_pct < -PalGoal{}.white_pct / 2) {
+      tv.set_light(std::clamp(static_cast<int>(std::ceil(tv.light() * t.Lw / std::max(now.white_Y, 1.0) * 1.01)), 0, 100));
+      levels = pal_report(tv, prim);
+      now = pal_summarise(levels, t, goal);
+      if (now.goal_met) break;
+    }
+    std::vector<std::string> notes;
+    PalAdjust a = pal_propose(levels, table, prim, t, pass == 1 ? 1.0 : 0.8, mode, &notes);
+    std::string why;
+    CHECK(pal_adjust_valid(a, &why));
+    Lut1D next = pal_apply(table, a, mode);
+    GateResult g = pal_gate(next, table);
+    if (!g.ok) std::printf("    gate: %s\n", g.why.c_str());
+    CHECK(g.ok);
+    if (!g.ok) break;
+    tv.upload_1d(next);
+    Vec3 p2[3];
+    auto after = pal_report(tv, p2);
+    GreySummary s = pal_summarise(after, t, goal);
+    run.passes = pass;
+    run.avgs.push_back(s.avg);
+    for (size_t k = 0; k < after.size(); k++)
+      if (after[k].scored && after[k].de > run.before.max + 0.3 && after[k].de > levels[k].de + 0.3) run.worse = true;
+    table = next;
+    levels = after;
+    for (int c = 0; c < 3; c++) prim[c] = p2[c];
+    now = s;
+  }
+  if (std::getenv("CAL_VERBOSE"))
+    for (auto &l : levels)
+      if (l.scored) std::printf("      %3d%%  de %.2f  Y %.3f / %.3f\n", l.pct, l.de, l.XYZ.y, l.target.y);
+  run.after = now;
+  run.goal = now.goal_met;
+  run.light = tv.light();
+  return run;
+}
+
+static void test_pal() {
+  // Levels and targets.
+  auto lv = pal_levels();
+  CHECK(lv.size() == 21 && lv.front() == 0 && lv.back() == 100);
+  CHECK(pal_code(0) == 64 && pal_code(100) == 940 && pal_code(50) == 502);
+  NEAR(pal_table_x(100, TableIndex::Signal), 1.0, 1e-12);
+  NEAR(pal_table_x(100, TableIndex::Code), 940 / 1023.0, 1e-12);
+  SdrTarget t;
+  t.Lw = 140;
+  NEAR(pal_target(t, 100).y, 140, 1e-9);
+  NEAR(pal_target(t, 50).y, 140 * std::pow(0.5, 2.4), 1e-6);
+
+  // A summary that meets the goal, and one that misses it at one level.
+  std::vector<GreyLevel> g;
+  for (int pct : lv) {
+    GreyLevel l;
+    l.pct = pct;
+    l.measured = pct > 0;
+    l.XYZ = pal_target(t, pct);
+    g.push_back(l);
+  }
+  GreySummary s = pal_summarise(g, t, PalGoal{});
+  CHECK(s.goal_met);
+  NEAR(s.avg, 0, 1e-9);
+  g[10].XYZ = g[10].XYZ * 1.05;  // 50% 5% bright
+  s = pal_summarise(g, t, PalGoal{});
+  CHECK(!s.goal_met || s.max > 0.3);
+  CHECK(s.max_at == 50);
+  CHECK(!g[1].scored && g[2].scored);  // 5% reported, not scored; 10% scored
+
+  // Sanity: a pink flicker, a darker step, and a dark patch whose colour can't be judged.
+  std::string why;
+  Vec3 grey = xyY(kD65x, kD65y, 30), pink = grey + Vec3{8, 3, 12};
+  CHECK(pal_grey_sane(grey, nullptr, 0.3, &why));
+  CHECK(!pal_grey_sane(pink, nullptr, 0.3, &why) && why == "far from neutral");
+  Vec3 brighter = xyY(kD65x, kD65y, 40);
+  CHECK(!pal_grey_sane(grey, &brighter, 0.3, &why) && why == "darker than the level below");
+  CHECK(pal_grey_sane(xyY(0.25, 0.25, 0.2), nullptr, 0.3, &why));
+
+  // Adjustments: validation, identity, and the table's own shape kept between levels.
+  PalAdjust a;
+  a.pct = lv;
+  for (auto &m : a.mult) m.assign(lv.size(), 1.0);
+  CHECK(pal_adjust_valid(a, &why));
+  Lut1D base = Lut1D::unity();
+  for (int i = 0; i < Lut1D::kSize; i++) base.ch[0][i] = std::pow(i / 1023.0, 1.05);
+  Lut1D same = pal_apply(base, a);
+  for (int c = 0; c < 3; c++)
+    for (int i = 0; i < Lut1D::kSize; i++) NEAR(same.ch[c][i], base.ch[c][i], 1e-12);
+  a.mult[2][10] = 0.97;  // blue at 50%
+  Lut1D bent = pal_apply(base, a);
+  NEAR(bent.eval(2, 0.5), 0.5 * 0.97, 1e-4);
+  NEAR(bent.eval(2, 0.25), 0.25, 1e-9);  // the next untouched levels stay put
+  CHECK(pal_gate(bent, base).ok);
+  PalAdjust bad = a;
+  bad.mult[1].pop_back();
+  CHECK(!pal_adjust_valid(bad, &why));
+  bad = a;
+  bad.mult[0][3] = 2.0;
+  CHECK(!pal_adjust_valid(bad, &why));
+  bad = a;
+  bad.pct[4] = bad.pct[3];
+  CHECK(!pal_adjust_valid(bad, &why));
+
+  // The gate: a falling table, a value out of range, a big step, a spike, and a NaN.
+  Lut1D u = Lut1D::unity(), x = u;
+  x.ch[1][500] = x.ch[1][499] - 0.01;
+  CHECK(!pal_gate(x, u).ok);
+  x = u;
+  x.ch[0][1023] = 1.2;
+  CHECK(!pal_gate(x, u).ok);
+  x = u;
+  for (int i = 0; i < 1024; i++) x.ch[2][i] *= 0.8;
+  GateResult gr = pal_gate(x, u);
+  CHECK(!gr.ok && gr.why.find("allowed in one pass") != std::string::npos);
+  x = u;
+  x.ch[0][300] += 0.004;
+  x.ch[0][301] += 0.004;
+  gr = pal_gate(x, u);
+  CHECK(!gr.ok);
+  x = u;
+  x.ch[0][10] = std::nan("");
+  CHECK(!pal_gate(x, u).ok);
+  CHECK(pal_gate(u, u).ok);
+
+  // The index check's flat step stays a rising table and darkens only its band.
+  Lut1D p = pal_plateau(u, 0.77, 0.83);
+  CHECK(pal_gate(p, u, 0.15, false).ok);
+  CHECK(!pal_gate(p, u).ok);  // a deliberate kink: only the index check may write one
+  NEAR(p.eval(0, 0.8), 0.77, 2e-3);
+  NEAR(p.eval(0, 0.748), 0.748, 1e-9);
+
+  // The whole flow on the virtual G2 and the hard panel, at the owner's 140 nits.
+  struct Case {
+    const char *name;
+    PanelSpec spec;
+    unsigned seed;
+  };
+  std::vector<Case> cases;
+  for (unsigned seed = 61; seed < 69; seed++) cases.push_back({"G2", panel_g2(), seed});
+  for (unsigned seed = 71; seed < 75; seed++) cases.push_back({"hard panel", panel_hard(), seed});
+  for (unsigned seed = 81; seed < 84; seed++) cases.push_back({"dimming panel", panel_drifting(), seed});
+  int met = 0;
+  for (const Case &c : cases) {
+    VirtualTv tv(c.spec, SimMode::Sdr, c.seed);
+    PalRun r = pal_flow(tv, t);
+    std::printf("  Pal grey, %s (seed %u): light %d, before %.2f avg / %.2f max, after %.2f / %.2f in %d pass%s%s\n", c.name, c.seed, r.light,
+                r.before.avg, r.before.max, r.after.avg, r.after.max, r.passes, r.passes == 1 ? "" : "es", r.goal ? ", goal met" : ", GOAL MISSED");
+    CHECK(tv.bad_uploads() == 0);
+    CHECK(!r.worse);
+    CHECK(r.after.avg < r.before.avg);
+    if (std::string(c.name) == "G2") CHECK(r.goal && r.passes <= 2);
+    met += r.goal;
+  }
+  std::printf("  Pal grey: goal met in %d of %zu runs\n", met, cases.size());
+  CHECK(met >= static_cast<int>(cases.size()) - 1);
+}
+
 int main() {
   test_colour();
   test_luts();
@@ -355,6 +565,7 @@ int main() {
   test_sdr_quick();
   test_hdr10();
   test_dolby();
+  test_pal();
   if (failures) std::printf("%d calibration check(s) failed\n", failures);
   else std::printf("calibration tests passed\n");
   return failures ? 1 : 0;

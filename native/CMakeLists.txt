@@ -26,7 +26,7 @@ target_include_directories(buna_core PUBLIC src)
 
 # Calibration (CALIBRATION-PLAN.md): colour science, LG's tables, the panel
 # model, the procedure, and the virtual G2 it is tested on. No dependencies.
-add_library(bloob_cal STATIC cal/colour.cpp cal/lut.cpp cal/measure.cpp cal/model.cpp cal/grey.cpp cal/sdr.cpp cal/hdr.cpp cal/sim.cpp)
+add_library(bloob_cal STATIC cal/colour.cpp cal/lut.cpp cal/measure.cpp cal/model.cpp cal/grey.cpp cal/sdr.cpp cal/hdr.cpp cal/sim.cpp cal/pal.cpp)
 target_include_directories(bloob_cal PUBLIC cal)
 # Optimised even in Debug: the tests run whole calibrations on the virtual G2.
 target_compile_options(bloob_cal PRIVATE -O2)

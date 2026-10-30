@@ -3,17 +3,48 @@
 
 One file plays three parts, sharing a state file ($FAKE_TV_STATE):
   fake_tv.py luna-send -n 1 <uri> <payload>   the pqcontroller and settings services
-  fake_tv.py ssap                              the second-screen socket on 127.0.0.1:3000
+  fake_tv.py ssap                              the second-screen socket on 127.0.0.1:$FAKE_TV_PORT (3000)
   fake_tv.py spotread [options]                Argyll's spotread in a terminal
 
-The panel is deliberately simple (Rec.709 primaries, gamma 2.4, a factory 1D LUT that
-trims red): enough to check that bloob-cal sends the right commands and reads the
-right changes, not a model of the G2 (that is cal/sim.cpp).
+The panel is a small WOLED model, enough to make a one-pass grey correction imperfect:
+per-channel tone curves, a white sub-pixel that takes over the common part of R, G and B
+(its own colour, so greys are not additive), colour temperature and OLED light, a factory
+1D LUT that trims red. It is not a model of the G2 (that is cal/sim.cpp); it exists to
+check that bloob-cal sends the right commands, reads the right changes and survives the
+faults seen on the owner's TV.
+
+The meter is a spot on the screen (default the middle): it reads whichever pattern box
+covers it. Readings carry noise (FAKE_TV_NOISE, 1 = realistic, 0 = none; seeded by
+FAKE_TV_SEED).
+
+Behaviour switches (environment, read by every part):
+  FAKE_TV_FLICKER_S        after a pattern change the picture flickers pink for this long (LG, B1)
+  FAKE_TV_WARMUP_S         the panel brightens towards steady with this time constant (0: steady)
+  FAKE_TV_NO_VIDEO         no video playing: the pattern generator accepts patterns and draws nothing
+  FAKE_TV_METER_AT=x,y     where the meter sits, in panel pixels (state "meter_at" overrides)
+  FAKE_TV_IGNORE_1D        the TV accepts 1D tables and keeps the old one (a table that didn't load)
+  FAKE_TV_SSAP_500         every pattern command over the socket fails with "500 Application error"
+  FAKE_TV_SSAP_500_COUNT=n only the first n pattern commands fail
+  FAKE_TV_METER_STALL_AFTER=n  the spotread session stops answering after n readings (once)
+  FAKE_TV_HIDE_PATTERNS    the meter reads Bloob's page instead of the squares (3.3.3)
+  FAKE_TV_PROTECT_EXPERT1  writes to expert1 are refused
+  FAKE_TV_CAL_END_REVERTS  0: CAL_END leaves colour temperature and gamut as CAL_START set them
 """
-import base64, hashlib, json, os, socket, struct, sys, threading, time
+import base64, hashlib, json, math, os, random, socket, struct, sys, threading, time
 
 STATE = os.environ.get("FAKE_TV_STATE", "/tmp/fake-tv-state.json")
 FACTORY_1D = [[round(i * 32767 / 1023 * k) for i in range(1024)] for k in (0.97, 1.0, 1.0)]
+
+PANEL_W, PANEL_H = 3840, 2160
+GAMMA = (2.30, 2.40, 2.48)          # per-channel tone curves (what the 1D LUT corrects)
+W_SHARE = 0.6                       # share of the common R, G, B drive the white sub-pixel takes
+W_XY, W_GAIN = (0.300, 0.330), 1.15  # the white sub-pixel's colour and relative brightness
+REC709 = [[0.4124, 0.3576, 0.1805], [0.2126, 0.7152, 0.0722], [0.0193, 0.1192, 0.9505]]
+
+
+def env(name, default=""):
+    v = os.environ.get(name)
+    return v if v not in (None, "") else default
 
 
 def load():
@@ -22,7 +53,7 @@ def load():
             return json.load(f)
     except Exception:
         return {"mode": "expert1", "backlight": 28, "session": None, "lut1d": None, "swap": False,
-                "boxes": {}, "num": 0, "on": False, "log": []}
+                "boxes": {}, "num": 0, "on": False, "log": [], "power_on": time.time()}
 
 
 # Settings by category, as the settings service keeps them (processing on, as some owners have it).
@@ -41,7 +72,7 @@ def settings(s):
 
 
 def save(s):
-    tmp = STATE + ".tmp"
+    tmp = STATE + ".tmp.%d" % os.getpid()
     with open(tmp, "w") as f:
         json.dump(s, f)
     os.replace(tmp, STATE)
@@ -80,26 +111,31 @@ def pq(payload, write, route="luna"):
         pic.update({"colorTemperature": "50", "colorGamut": "wide"})  # CAL_START's side effects [bsc]
     elif cmd == "CAL_END":
         s["session"] = None
-        if s.get("before_cal") and os.environ.get("FAKE_TV_CAL_END_REVERTS", "1") == "1":
+        if s.get("before_cal") and env("FAKE_TV_CAL_END_REVERTS", "1") == "1":
             settings(s)["picture"].update(s.pop("before_cal"))  # the worst case: the TV puts them back
     elif cmd == "PTN_SINGLE_WINBOX_ATTR":
-        s["boxes"][str(payload["winId"])] = [payload["fillR"], payload["fillG"], payload["fillB"]]
+        s["boxes"][str(payload["winId"])] = {"rgb": [payload["fillR"], payload["fillG"], payload["fillB"]],
+                                             "w": payload.get("width", PANEL_W), "h": payload.get("height", PANEL_H),
+                                             "x": payload.get("startX", 0), "y": payload.get("startY", 0)}
     elif cmd == "PTN_CTRL":
         if payload["enable"] == "false" and not s["on"]:
             reply = {"returnValue": False, "errorCode": 20}
         s["on"] = payload["enable"] == "true"
         s["num"] = payload["numOfBox"]
+        s["ptn_time"] = time.time()
     else:
         if not s["session"]:
             reply = {"returnValue": False, "errorText": "not in calibration mode"}
-        elif s["session"] == "expert1" and os.environ.get("FAKE_TV_PROTECT_EXPERT1"):
+        elif s["session"] == "expert1" and env("FAKE_TV_PROTECT_EXPERT1"):
             reply = {"returnValue": False, "errorText": "the fake TV refuses writes to expert1 (the test must not touch it)"}
         elif cmd == "BACKLIGHT_UI_DATA":
             s["backlight"] = decode_u16(payload["data"])[0]
         elif cmd == "1D_DPG_DATA":
+            s.setdefault("uploads_1d", 0)
+            s["uploads_1d"] += 1
             if payload.get("dataOpt") == 2:
                 s["lut1d"] = None
-            else:
+            elif not env("FAKE_TV_IGNORE_1D"):
                 flat = decode_u16(payload["data"])
                 s["lut1d"] = [flat[0:1024], flat[1024:2048], flat[2048:3072]]
         elif cmd in ("BT709_3D_LUT_DATA", "BT2020_3D_LUT_DATA"):
@@ -110,6 +146,8 @@ def pq(payload, write, route="luna"):
                 v = decode_u16(payload["data"])
                 s["swap"] = v[3] == 0 and v[4] == 128  # node (r=1,g=0,b=0) became green
                 s["lut3d"] = None if s["swap"] else v
+        elif cmd in ("1D_2_2_EN", "1D_0_45_EN"):
+            s.setdefault("switches", {})[cmd] = None if payload.get("dataOpt") == 2 else decode_u16(payload["data"])[0]
     save(s)
     return reply
 
@@ -145,14 +183,39 @@ def luna(argv):
     print(json.dumps(r))
 
 
-def colour():
-    """XYZ of what is on screen now."""
-    s = load()
-    if os.environ.get("FAKE_TV_HIDE_PATTERNS"):
-        return (11.5, 18.1, 3.6)  # what the owner's meter read with Bloob's page over the squares
+def table_out(t, c, v):
+    """Output of 1D table channel c at signal v, linear between entries."""
+    f = min(max(v, 0.0), 1.0) * 1023
+    i = min(int(f), 1022)
+    w = f - i
+    return (t[c][i] * (1 - w) + t[c][i + 1] * w) / 32767
+
+
+def box_under_meter(s):
+    if env("FAKE_TV_NO_VIDEO") or s.get("video") is False:
+        return None  # the generator draws only while a video plays
     if not s["on"]:
+        return None
+    at = s.get("meter_at") or [float(x) for x in env("FAKE_TV_METER_AT", "1920,1080").split(",")]
+    for i in range(int(s["num"]) - 1, -1, -1):
+        b = s["boxes"].get(str(i))
+        if not b:
+            continue
+        if isinstance(b, list):  # an old state file
+            return b
+        if b["x"] <= at[0] < b["x"] + b["w"] and b["y"] <= at[1] < b["y"] + b["h"]:
+            return b["rgb"]
+    return [64, 64, 64]  # the black video around the boxes
+
+
+def colour(s=None):
+    """XYZ the meter sees now, before noise."""
+    s = s or load()
+    if env("FAKE_TV_HIDE_PATTERNS"):
+        return (11.5, 18.1, 3.6)  # what the owner's meter read with Bloob's page over the squares
+    code = box_under_meter(s)
+    if code is None:
         return (0.0, 0.0, 0.0)
-    code = s["boxes"].get("1" if s["num"] >= 2 else "0", [64, 64, 64])
     v = [min(max((c - 64) / 876, 0), 1) for c in code]
     if s["swap"]:
         v = [v[1], v[0], v[2]]
@@ -172,11 +235,39 @@ def colour():
                         acc[k] += wt * (1.0 if t3[i + k] >= 4095 else t3[i + k] / 4096.0)
         v = acc
     t = s["lut1d"] or FACTORY_1D
-    v = [t[c][min(int(v[c] * 1023 + 0.5), 1023)] / 32767 for c in range(3)]
-    lin = [x ** 2.4 for x in v]
-    m = [[0.4124, 0.3576, 0.1805], [0.2126, 0.7152, 0.0722], [0.0193, 0.1192, 0.9505]]
+    o = [table_out(t, c, v[c]) for c in range(3)]
+    ct = float(settings(s)["picture"].get("colorTemperature", "0") or 0)
+    gain = (1 + 0.0006 * ct, 1.0, 1 - 0.0016 * ct)  # warm (+) lifts red and lowers blue
+    lin = [gain[c] * o[c] ** GAMMA[c] for c in range(3)]
+    common = W_SHARE * min(lin)
+    rgb = [x - common for x in lin]
+    wX, wY = W_XY[0] / W_XY[1], 1.0
+    wZ = (1 - W_XY[0] - W_XY[1]) / W_XY[1]
     k = 100.0 * s["backlight"] / 28
-    return tuple(k * sum(m[r][c] * lin[c] for c in range(3)) for r in range(3))
+    xyz = [k * (sum(REC709[r][c] * rgb[c] for c in range(3)) + W_GAIN * common * (wX, wY, wZ)[r]) for r in range(3)]
+    warm = float(env("FAKE_TV_WARMUP_S", "0"))
+    if warm > 0:
+        xyz = [x * (1 - 0.04 * math.exp(-(time.time() - s.get("power_on", time.time())) / warm)) for x in xyz]
+    flick = float(env("FAKE_TV_FLICKER_S", "0"))
+    if flick > 0 and time.time() - s.get("ptn_time", 0) < flick:
+        xyz = [xyz[0] + 8.0, xyz[1] + 3.0, xyz[2] + 12.0]  # LG's pink transition after a pattern change
+    return tuple(xyz)
+
+
+def measure():
+    """One reading: colour plus meter noise; counts readings (and those taken in calibration mode)."""
+    s = load()
+    X, Y, Z = colour(s)
+    n = s.get("reads_total", 0) + 1
+    s["reads_total"] = n
+    if s["session"]:
+        s["reads_in_session"] = s.get("reads_in_session", 0) + 1
+    save(s)
+    noise = float(env("FAKE_TV_NOISE", "1"))
+    if noise > 0:
+        rng = random.Random(int(env("FAKE_TV_SEED", "1")) * 100003 + n)
+        X, Y, Z = [max(0.0, c * (1 + rng.gauss(0, 0.002 * noise)) + rng.gauss(0, 0.0008 * noise)) for c in (X, Y, Z)]
+    return X, Y, Z
 
 
 def spotread(argv):
@@ -195,7 +286,15 @@ def spotread(argv):
         if not c or c in (b"q", b"Q", b"\x1b"):
             return
         time.sleep(0.05)
-        X, Y, Z = colour()
+        stall = env("FAKE_TV_METER_STALL_AFTER")
+        if stall:
+            s = load()
+            if not s.get("stalled_once") and s.get("reads_total", 0) >= int(stall):
+                s["stalled_once"] = True
+                save(s)
+                while True:  # stops answering, as the owner's meter did after a dark patch
+                    time.sleep(60)
+        X, Y, Z = measure()
         sxyz = X + Y + Z or 1
         out.write("\r\n Result is XYZ: %.6f %.6f %.6f, Yxy: %.6f %.6f %.6f\r\n" % (X, Y, Z, Y, X / sxyz, Y / sxyz))
         out.flush()
@@ -207,7 +306,7 @@ def spotread(argv):
 def ws_server():
     srv = socket.socket()
     srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    srv.bind(("127.0.0.1", int(os.environ.get("FAKE_TV_PORT", "3000"))))
+    srv.bind(("127.0.0.1", int(env("FAKE_TV_PORT", "3000"))))
     srv.listen(4)
     while True:
         conn, _ = srv.accept()
@@ -253,9 +352,19 @@ def ws_client(conn):
                 send({"type": "response", "id": m["id"], "payload": {"pairingType": "PROMPT"}})
             send({"type": "registered", "id": m["id"], "payload": {"client-key": "fake-key-0001"}})
         elif m["type"] == "request":
-            if os.environ.get("FAKE_TV_SSAP_500") and m["payload"].get("command", "").startswith("PTN_"):
-                send({"type": "error", "id": m["id"], "error": "500 Application error", "payload": {}})  # as the owner's TV answered
-                continue
+            if m["payload"].get("command", "").startswith("PTN_"):
+                fail = bool(env("FAKE_TV_SSAP_500"))
+                count = env("FAKE_TV_SSAP_500_COUNT")
+                if count:
+                    s = load()
+                    done = s.get("ssap_500_sent", 0)
+                    fail = done < int(count)
+                    if fail:
+                        s["ssap_500_sent"] = done + 1
+                        save(s)
+                if fail:
+                    send({"type": "error", "id": m["id"], "error": "500 Application error", "payload": {}})  # as the owner's TV answered
+                    continue
             write = m["uri"].endswith("setExternalPqData")
             send({"type": "response", "id": m["id"], "payload": pq(m["payload"], write, "socket")})
 
