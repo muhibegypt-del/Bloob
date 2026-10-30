@@ -20,6 +20,8 @@ Evidence labels:
 
 **3.3.4 on the TV (owner, 30 October 2026).** Still no squares; the first pattern command failed with "500 Application error" from the second-screen socket. `bloob-cal patterns` (3.3.5, read-only) tries every route, each in its own colour, so the owner's report of which colours appeared settles C1.1 and the transport.
 
+**Root cause (owner, 30 October 2026): the iTPG draws only while a video plays** (C1.1 passed with a video playing: all five `bloob-cal patterns` routes drew, on black and over the video). 3.3.6 plays a looped SDR black clip in Bloob's video window under every run, so the picture mode measured is the app input's, the one Bloob's films use.
+
 ### Proven on the virtual G2 (29 October 2026)
 
 The whole procedure (SDR, HDR10, Dolby Vision) is written once in C++ (`native/cal/`) against an abstract device, and runs end to end against the virtual G2 in `native/tests/cal_test.cpp` (`build-host/cal_tests`). The same code cross-compiles with the webOS NDK and passes the same tests as ARM code (qemu, static build), with identical results.

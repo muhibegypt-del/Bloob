@@ -200,7 +200,8 @@ static bool squares_visible(TvDevice &tv) {
     return true;
   }
   out("  No. The meter read white %.1f cd/m2 (x %.3f y %.3f) and black %.2f cd/m2, which is not a test square.\n", w.xyz.y, w.x, w.y, k.xyz.y);
-  out("  Leave Bloob open on the Calibrate screen (it turns see-through while a run goes) and the meter flat in the middle.\n");
+  out("  The TV draws its squares only while a video plays: start runs from Bloob's Calibrate screen, which plays a black\n");
+  out("  video for them (over SSH, play something first), and keep the meter flat in the middle.\n");
   out("  If squares still do not appear, send the log: nothing was changed.\n");
   return false;
 }

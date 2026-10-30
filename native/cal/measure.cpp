@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <vector>
 
 namespace cal {
@@ -64,6 +65,14 @@ bool Measurer::read(const Patch &p, Vec3 *XYZ, int min_reads) {
   if (ref_y_ > 0 && ++since_ >= 20) {
     Vec3 w;
     if (!agreed(sentinel_, &w, single_ ? 3 : 0)) return false;
+    // The squares vanished (no video under LG's generator any more: Bloob closed or the TV
+    // switched away). Nothing measured from here would be real, so the run stops and undoes.
+    if (last_y_ > 0 && w.y < 0.5 * last_y_) {
+      char b[160];
+      std::snprintf(b, sizeof b, "the white square fell from %.1f to %.1f cd/m2: the test squares are no longer on screen", last_y_, w.y);
+      if (g_log_hook) g_log_hook(b);
+      return false;
+    }
     if (last_y_ > 0 && std::fabs(w.y / last_y_ - 1) > 0.015) jumps_++;
     last_y_ = w.y;
     factor_ = carried_ * ref_y_ / std::max(w.y, 1e-9);

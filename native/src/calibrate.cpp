@@ -17,6 +17,7 @@
 #include "json.h"
 #include "log.h"
 #include "luna.h"
+#include "media.h"
 #include "screens.h"
 
 namespace {
@@ -46,6 +47,7 @@ std::string duration_text(long long s) {
 class CalibrateScreen : public Screen {
  public:
   CalibrateScreen() { poll(); }
+  ~CalibrateScreen() override { stop_black(); }
   const char *name() const override { return "calibrate"; }
 
   enum class Row { Check, Test, Calibrate, Thorough, Undo, Stop };
@@ -73,7 +75,14 @@ class CalibrateScreen : public Screen {
     Row r = list[static_cast<size_t>(row_)];
     if (key != Key::Ok) confirm_ = false;
     switch (key) {
-      case Key::Back: ctx().pop(); return true;
+      case Key::Back:
+        // Leaving would stop the black video, and LG's squares with it.
+        if (busy()) {
+          back_note_until_ = ctx().now + 4000;
+          return true;
+        }
+        ctx().pop();
+        return true;
       case Key::Up: row_ = std::max(0, row_ - 1); return true;
       case Key::Down: row_ = std::min(count - 1, row_ + 1); return true;
       case Key::Ok:
@@ -96,6 +105,7 @@ class CalibrateScreen : public Screen {
     Ctx &c = ctx();
     using namespace theme;
     if (c.now >= next_poll_) poll();
+    tend_black();
     if (busy()) {
       draw_running_card();
       c.redraw_at(c.now + 1000);
@@ -106,8 +116,8 @@ class CalibrateScreen : public Screen {
     text(Text::Title2, "Calibrate", x, 90, label(Label::Primary));
     paragraph(Text::Callout,
               "Your Spyder5 measures the screen and Bloob corrects Expert 1, the picture mode you watch in, to " + std::to_string(kNits) +
-                  " nits for a room with a small lamp on. Hang the meter flat in the middle of the screen first. While it works the screen "
-                  "shows test squares instead of Bloob, and it carries on even if Bloob is closed.",
+                  " nits for a room with a small lamp on. Hang the meter flat in the middle of the screen first. While it works Bloob plays a "
+                  "black video, which the TV needs to draw its test squares, so keep Bloob open on this screen until it finishes.",
               x, 160, label(Label::Secondary), W - 2 * safe_x, 3);
     auto list = rows();
     for (size_t i = 0; i < list.size(); i++) {
@@ -160,7 +170,7 @@ class CalibrateScreen : public Screen {
   }
 
   // Running, or just started and not yet reported (a second OK must not start a second run).
-  bool busy() const { return running() || ctx().now < starting_until_; }
+  bool busy() const { return running() || !pending_.empty() || ctx().now < starting_until_; }
 
   // Over the patterns: transparent everywhere except a card in the bottom left.
   void draw_running_card() {
@@ -190,7 +200,92 @@ class CalibrateScreen : public Screen {
       ty += 32;
     }
     std::string step = status_["step"].as_string();
-    text(Text::Caption1, (running() && !step.empty() ? step + "  \xC2\xB7  " : std::string()) + "OK stops", tx, ty, label(Label::Tertiary), tw);
+    std::string hint = c.now < back_note_until_ ? "A run is going: OK stops it, then Back leaves" : "OK stops";
+    if (!pending_.empty()) hint = "Starting the black video the TV needs for its squares";
+    text(Text::Caption1, (running() && !step.empty() ? step + "  \xC2\xB7  " : std::string()) + hint, tx, ty, label(Label::Tertiary), tw);
+  }
+
+  // ---- The black video ----
+  // LG's squares draw only while a video plays (owner's TV, 30 October 2026: with Bloob's
+  // pages or LG Home on screen every pattern was accepted and none appeared; with a video
+  // playing all five routes drew). So a run plays a 10-minute SDR black clip, looped, in
+  // Bloob's own video window, and bloob-cal starts once it plays. The picture mode measured
+  // is then the one films in Bloob use.
+  void start_black() {
+    if (black_) return;
+    Ctx &c = ctx();
+    if (window_.empty() && c.webos.create_exported_window) {
+      const char *w = c.webos.create_exported_window(0);
+      window_ = w ? w : "";
+    }
+    if (!window_.empty() && c.webos.set_exported_window) {
+      int dw = W, dh = H;
+      SDL_GetWindowSize(c.window, &dw, &dh);
+      SDL_Rect src{0, 0, 1920, 1080}, dst{0, 0, dw, dh};
+      c.webos.set_exported_window(window_.c_str(), &src, &dst);
+    }
+    black_.reset(new UmsPlayer());
+    black_playing_ = black_failed_ = false;
+    black_started_at_ = c.now;
+    std::weak_ptr<int> alive = alive_;
+    black_->load("file://" + c.dir + "/assets/media/black.mp4", c.app_id, window_, "media", [this, alive](const MediaEvent &e) {
+      if (!alive.lock() || !black_) return;
+      if (e.kind == MediaEvent::Loaded) {
+        black_->play();
+      } else if (e.kind == MediaEvent::Playing) {
+        if (!black_playing_) logf("calibrate", "black video playing");
+        black_playing_ = true;
+        ctx().dirty = true;
+      } else if (e.kind == MediaEvent::EndOfStream) {
+        black_->seek(0);
+        black_->play();
+      } else if (e.kind == MediaEvent::Error || e.kind == MediaEvent::Lost) {
+        logf("calibrate", "black video stopped: %s", e.text.c_str());
+        black_failed_ = true;
+        ctx().dirty = true;
+      }
+    });
+    logf("calibrate", "black video loading");
+  }
+
+  void stop_black() {
+    if (!black_) return;
+    black_->unload();
+    black_.reset();
+    black_playing_ = false;
+    Ctx &c = ctx();
+    if (!window_.empty() && c.webos.destroy_exported_window) {
+      c.webos.destroy_exported_window(window_.c_str());
+      window_.clear();
+    }
+  }
+
+  // Every frame: the pending run starts once the video plays (or after 6 s: the square check
+  // then says what the meter saw); a dropped video is restarted; no run, no video.
+  void tend_black() {
+    Ctx &c = ctx();
+    if (!pending_.empty()) {
+      if (black_playing_ || c.now - black_started_at_ > 6000) {
+        if (!black_playing_) logf("calibrate", "black video not confirmed after 6 s; starting anyway");
+        launch(pending_, pending_args_);
+        pending_.clear();
+      }
+      c.redraw_at(c.now + 200);
+      return;
+    }
+    if (busy()) {
+      if (black_failed_ && c.now - black_started_at_ > 5000) {
+        stop_black();
+        start_black();
+      }
+    } else if (black_) {
+      stop_black();
+    }
+  }
+
+  void background() override { stop_black(); }
+  void foreground() override {
+    if (busy()) start_black();
   }
 
   // The status file's run is live only if its pid is still bloob-cal: a pid from an
@@ -212,6 +307,16 @@ class CalibrateScreen : public Screen {
   }
 
   void start(const std::string &action, const std::string &args = "") {
+    if (!pending_.empty()) return;
+    pending_ = action;
+    pending_args_ = args;
+    started_ = action;
+    starting_until_ = ctx().now + 30000;
+    row_ = 0;
+    start_black();
+  }
+
+  void launch(const std::string &action, const std::string &args) {
     std::string bin = std::getenv("BLOOB_CAL_BIN") ? std::getenv("BLOOB_CAL_BIN") : ctx().dir + "/bin/bloob-cal";
     std::string dir = cal_dir();
     // Fixed words only: the action and its arguments come from this screen's own list.
@@ -230,7 +335,13 @@ class CalibrateScreen : public Screen {
   }
 
   void stop() {
-    if (!running()) return;  // still starting: no pid of this run yet
+    if (!pending_.empty()) {  // still waiting for the black video: nothing has started
+      pending_.clear();
+      starting_until_ = 0;
+      stop_black();
+      return;
+    }
+    if (!running()) return;  // just launched: no pid of this run yet
     long long pid = status_["pid"].as_int();
     logf("calibrate", "stop %lld", pid);
     Luna::instance().call(kExec, "{\"command\":\"kill -TERM " + std::to_string(pid) + "\"}", nullptr);
@@ -315,6 +426,12 @@ class CalibrateScreen : public Screen {
   long long next_poll_ = 0;
   std::string started_;
   long long starting_until_ = 0;
+  std::string pending_, pending_args_;  // a run waiting for the black video
+  long long back_note_until_ = 0;
+  std::unique_ptr<UmsPlayer> black_;
+  std::string window_;
+  bool black_playing_ = false, black_failed_ = false;
+  long long black_started_at_ = 0;
   Json status_;
 };
 

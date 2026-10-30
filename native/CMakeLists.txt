@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(bloob_native VERSION 3.3.5 LANGUAGES C CXX)
+project(bloob_native VERSION 3.3.6 LANGUAGES C CXX)
 
 # Cross-compile for the TV with the webOS NDK (openlgtv buildroot-nc4):
 #   cmake -B build -DCMAKE_TOOLCHAIN_FILE=/opt/arm-webos-linux-gnueabi_sdk-buildroot/share/buildroot/toolchainfile.cmake
@@ -89,6 +89,7 @@ if (CMAKE_CROSSCOMPILING)
     COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:bloob-cal> ${PKG}/bin/bloob-cal
     COMMAND ${CMAKE_STRIP} ${PKG}/bin/bloob-cal
     COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_SOURCE_DIR}/package/appinfo.json ${CMAKE_SOURCE_DIR}/package/icon.png ${PKG}/
+    COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_SOURCE_DIR}/package/media/black.mp4 ${PKG}/assets/media/
     COMMAND ${CMAKE_COMMAND} -E copy
       ${CMAKE_SOURCE_DIR}/third_party/fonts/Inter-Regular.ttf
       ${CMAKE_SOURCE_DIR}/third_party/fonts/Inter-Medium.ttf
