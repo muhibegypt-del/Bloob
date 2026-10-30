@@ -225,3 +225,31 @@ Pal reads the after report and finds out why before acting:
 | Worse than before anywhere | The correction was wrong | Clear to the start, redo with the cause named in the report |
 
 **The default is to build on the table in the TV:** read it back, measure the screen with it loaded, and add the correction for what is still off to that table (new table = table in the TV + correction). Each pass is a better version of the last one. Clearing back to the starting table happens only when a pass made a level worse than before.
+
+## 10. Refining the grey flow: definition and rubric
+
+**Refined means:** the flow reaches the goal (§9) every time, never leaves the TV worse, proves what it did, and does so in the fewest minutes, readings and owner actions. It explains each decision well enough that a calibrator would agree with it.
+
+**How it is refined:** every run is scored against the rubric below. Change one thing at a time, aimed at the lowest score; run again; keep the change only if that score rises and none falls. Fault handling and repeatability are scored on the stand-in TV first, the result on the TV.
+
+| # | Dimension | 3 (refined) | 2 | 1 | 0 | How it is scored |
+| --- | --- | --- | --- | --- | --- | --- |
+| 1 | **Result** | Average ≤ 0.5, every level 10–100% ≤ 1.0, white within 2% | Average ≤ 0.8, max ≤ 1.5 | Better than before at every level | Not better | Final after report |
+| 2 | **Never worse** (gate: must be 3) | No level worse than before beyond repeatability; any failure ends at the starting table and settings | — | — | Any level worse, or the TV left changed after a failure | Before vs after; the undo log |
+| 3 | **Proof** | Readback equals the table sent, and the after report is measured in the viewing state (outside calibration mode) | Readback only | Measured only | Neither | Report |
+| 4 | **Repeatability** | Two runs the same evening: averages within 0.2, every level within 0.4 | Within 0.3 / 0.6 | Within 0.5 / 1.0 | Worse | Two runs, scored by the report |
+| 5 | **Time** | ≤ 15 min to the goal | ≤ 30 min | ≤ 60 min | Longer | Report timestamps (warm-up counted separately) |
+| 6 | **Passes** | Goal met in 1 | 2 | 3 | Not met in 3 | Report |
+| 7 | **Hands-off** | Owner: hang the meter, one press, remove the meter; nothing mid-run | One mid-run request with a clear reason | Two | More, or unclear requests | Count of prompts to the owner |
+| 8 | **Diagnosis** | Every missed pass names a cause the evidence supports (readback, white shift, overshoot, noise), and the action follows §9's table | One cause unsupported | Causes named, actions don't follow | No diagnosis | Review of the report by me and the owner |
+| 9 | **Fault handling** | All injected faults recovered or cleanly undone: meter stall, video drop, socket 500, table not loaded, meter moved | All but one | Half | Fewer | Stand-in TV with `FAKE_TV_*` faults |
+| 10 | **Report** | Before/after per level, each pass with its reason, tables, meter and correction file, time, cost or usage; plain English | One part missing | Numbers only | No report | Checklist |
+| 11 | **Usage** | Claude Code: a small share of the Pro plan's limits per run (later, API: under the per-run cap) | — | — | Run stopped by limits | Session usage; later the API's usage figures |
+
+**First refinements to try, in the order the rubric is likely to ask for them:**
+
+1. White first: set light so 100% reads the target before the grey correction (dimensions 1 and 6).
+2. A warm-up and repeatability gate at the start (dimensions 2 and 4).
+3. Gentler steps at levels that overshot in pass 1 (dimension 6).
+4. A second reading only where a level is near its limit (dimensions 1 and 5).
+5. The measured 100% red, green and blue fed into the correction maths (dimensions 1 and 6).
