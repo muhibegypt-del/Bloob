@@ -177,7 +177,7 @@ bloob-cal serve (root)  ──events──>  pal.js (Bloob service)  ──HTTPS
 | A hard cap per run | `pal.js` adds up the cost of every call from the API's own usage figures. At the cap, Pal hands the run to Quick, which finishes it the normal way and says so in the report. Nothing fails because of the cap |
 | Measured, not guessed | Every call's tokens and cost go into the run report, so the second run's budget comes from the first run's numbers |
 
-**Estimate before measuring** (list prices as of October 2026, default model Claude Opus 5.5: $4 per million input tokens, $20 output, $0.20 cached reads): about $0.03–0.06 per Pal turn, so roughly **$3–8 for an SDR run** (100 turns). Night, HDR10 and Dolby Vision cost about the same again each. The default cap is $15 per run. A smaller model is cheaper, but the choice of model is the owner's.
+**Estimate before measuring** (list prices as of October 2026, the default Opus model: $4 per million input tokens, $20 output, $0.20 cached reads): about $0.03–0.06 per Pal turn, so roughly **$3–8 for an SDR run** (100 turns). Night, HDR10 and Dolby Vision cost about the same again each. The default cap is $15 per run. A smaller model is cheaper, but the choice of model is the owner's.
 
 **Not used:** the Batch API (half price, but answers can take hours) and anything that puts the model inside the reading loop.
 
