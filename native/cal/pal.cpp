@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 
 #include "model.h"
 
@@ -246,6 +247,18 @@ PalAdjust pal_propose(const std::vector<GreyLevel> &levels, const Lut1D &current
       a.mult[c][k] = m;
     }
   }
+  // Keep Pal's own proposal acceptable to the gate: where the new table would fall (big dark
+  // corrections next to small ones), soften the corrections below that point and try again.
+  for (int attempt = 0; attempt < 8; attempt++) {
+    GateResult g = pal_gate(pal_apply(current, a, mode), current);
+    if (g.ok || g.why.find("falls at entry") == std::string::npos) break;
+    int entry = std::atoi(g.why.c_str() + g.why.find("entry") + 6);
+    double x = static_cast<double>(entry) / (Lut1D::kSize - 1);
+    for (size_t k = 0; k < levels.size(); k++)
+      if (pal_table_x(levels[k].pct, mode) <= x + 0.06)
+        for (int c = 0; c < 3; c++) a.mult[c][k] = 1 + 0.6 * (a.mult[c][k] - 1);
+    if (attempt == 0) note("dark-level corrections softened so the table keeps rising (the next pass takes the rest)");
+  }
   if (short_white) {
     char b[160];
     std::snprintf(b, sizeof b, "white can reach %.1f%% of the target at this light: raise light about %.0f%% (pal-light)", 100 * white_reach,
@@ -264,6 +277,14 @@ PalAdjust pal_propose(const std::vector<GreyLevel> &levels, const Lut1D &current
     note(b);
   }
   return a;
+}
+
+double pal_white_need(const Vec3 &white, const Vec3 prim[3], const SdrTarget &t) {
+  Mat3 M = Mat3::columns(prim[0], prim[1], prim[2]);
+  Vec3 s = M.inverse() * white;
+  Mat3 Ms = Mat3::columns(prim[0] * s.x, prim[1] * s.y, prim[2] * s.z);
+  Vec3 want = Ms.inverse() * t.white();
+  return std::max(want.x, std::max(want.y, want.z));
 }
 
 Lut1D pal_plateau(const Lut1D &current, double x0, double x1) {

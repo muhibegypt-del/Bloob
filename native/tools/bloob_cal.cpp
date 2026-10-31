@@ -17,6 +17,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <cstdarg>
@@ -25,11 +26,14 @@
 #include <cstring>
 #include <ctime>
 #include <fstream>
+#include <functional>
+#include <thread>
 #include <string>
 #include <vector>
 
 #include "colour.h"
 #include "lut.h"
+#include "pal.h"
 #include "procedure.h"
 #include "tv_device.h"
 
@@ -75,6 +79,8 @@ static Status g_status;
 
 // Everything bloob-cal says goes to its output and to the status file's recent lines;
 // "== " lines name the current step.
+static FILE *g_log = nullptr;  // Pal's commands also write to <data>/pal/session.log
+
 static void out(const char *fmt, ...) {
   char buf[2048];
   va_list ap;
@@ -82,6 +88,10 @@ static void out(const char *fmt, ...) {
   vsnprintf(buf, sizeof buf, fmt, ap);
   va_end(ap);
   std::fputs(buf, stdout);
+  if (g_log) {
+    std::fputs(buf, g_log);
+    std::fflush(g_log);
+  }
   std::string all = buf;
   size_t s = 0;
   while (s < all.size()) {
@@ -738,6 +748,760 @@ static int cmd_undo() {
   return ok ? 0 : 2;
 }
 
+
+// ---- Pal's grey flow (research/Pal-in-Bloob.md §9–11, native/PAL-PLAYBOOK.md) ----------
+// Pal (Claude, on the owner's computer over SSH) runs these one at a time while Bloob's
+// Calibrate screen holds a Pal session (the black video LG's squares need). The session lives
+// in <data>/pal/: session.json, every report, proposal and table. Each command prints its
+// result as one line, "PAL {json}", and exits 0 when it did what was asked; 4 when the gate
+// refused a table, 5 when the TV did not load it, 6 when a pre-flight check failed, 2 otherwise.
+
+static std::string pal_dir() { return data_dir() + "/pal"; }
+
+static std::string slurp_file(const std::string &path) {
+  std::ifstream f(path);
+  return std::string((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+}
+
+static void write_file(const std::string &path, const std::string &text) {
+  std::string tmp = path + ".tmp";
+  { std::ofstream(tmp) << text; }
+  ::rename(tmp.c_str(), path.c_str());
+}
+
+static std::string stamp_now() {
+  char b[32];
+  time_t now = time(nullptr);
+  strftime(b, sizeof b, "%Y%m%d-%H%M%S", localtime(&now));
+  return b;
+}
+
+static std::string num(double v, int places = 4) {
+  if (!std::isfinite(v)) return "null";
+  char b[48];
+  std::snprintf(b, sizeof b, "%.*f", places, v);
+  return b;
+}
+
+static std::string vec(const Vec3 &v, int places = 4) { return "[" + num(v.x, places) + "," + num(v.y, places) + "," + num(v.z, places) + "]"; }
+
+static std::string list(const std::vector<double> &v, int places = 5) {
+  std::string j = "[";
+  for (size_t i = 0; i < v.size(); i++) j += (i ? "," : "") + num(v[i], places);
+  return j + "]";
+}
+
+// The result line Pal reads (written whole, not through out(), which is for short lines).
+static int pal_result(int rc, const std::string &json) {
+  g_status.result = json;
+  std::string line = "PAL " + json + "\n";
+  std::fputs(line.c_str(), stdout);
+  std::fflush(stdout);
+  if (g_log) {
+    std::fputs(line.c_str(), g_log);
+    std::fflush(g_log);
+  }
+  return rc;
+}
+
+static int pal_fail(int rc, const std::string &why, const std::string &extra = "") {
+  out("  %s\n", why.c_str());
+  return pal_result(rc, "{\"ok\":false,\"error\":" + Json::quote(why) + extra + "}");
+}
+
+static std::vector<uint16_t> u16_from_base64(const std::string &b64) {
+  std::vector<unsigned char> bytes;
+  unsigned v = 0;
+  int bits = 0;
+  for (char ch : b64) {
+    int d = ch >= 'A' && ch <= 'Z' ? ch - 'A' : ch >= 'a' && ch <= 'z' ? ch - 'a' + 26 : ch >= '0' && ch <= '9' ? ch - '0' + 52 : ch == '+' ? 62 : ch == '/' ? 63 : -1;
+    if (d < 0) continue;
+    v = v << 6 | static_cast<unsigned>(d);
+    bits += 6;
+    if (bits >= 8) {
+      bits -= 8;
+      bytes.push_back(static_cast<unsigned char>(v >> bits & 0xff));
+    }
+  }
+  std::vector<uint16_t> out16;
+  for (size_t i = 0; i + 1 < bytes.size(); i += 2) out16.push_back(static_cast<uint16_t>(bytes[i] | bytes[i + 1] << 8));
+  return out16;
+}
+
+static std::string hex64(uint64_t h) {
+  char b[20];
+  std::snprintf(b, sizeof b, "%016llx", static_cast<unsigned long long>(h));
+  return b;
+}
+
+// The 1D table in the TV now (readable outside calibration mode on the owner's TV).
+static bool read_1d(TvDevice &tv, Lut1D *t, std::string *fnv) {
+  Json r;
+  if (!tv.get_table("GET_1D_DPG_DATA", &r) || !r["returnValue"].as_bool()) return false;
+  auto v = u16_from_base64(r["data"].as_string());
+  if (v.size() != 3 * Lut1D::kSize) return false;
+  *t = Lut1D::decode(v);
+  if (fnv) *fnv = hex64(fnv1a(v));
+  return true;
+}
+
+struct PalSession {
+  bool open = false;
+  double nits = 140, headroom = 1.04;
+  TableIndex index = TableIndex::Signal;
+  double wobble_white = 0.3, wobble_mid = 0.3;
+  int light = -1, reports = 0, proposals = 0, applied = 0;
+  std::string view_ct = "null", view_gamut = "null";  // as JSON values, as the TV reported them
+  std::string started, start_fnv;
+};
+
+static bool load_session(PalSession *s) {
+  bool ok = false;
+  Json j = Json::parse(slurp_file(pal_dir() + "/session.json"), &ok);
+  if (!ok || !j["open"].as_bool()) return false;
+  s->open = true;
+  s->nits = j["nits"].as_number(140);
+  s->headroom = j["headroom"].as_number(1.04);
+  s->index = j["index"].as_string() == "code" ? TableIndex::Code : TableIndex::Signal;
+  s->wobble_white = j["wobble"]["white_pct"].as_number(0.3);
+  s->wobble_mid = j["wobble"]["mid_pct"].as_number(0.3);
+  s->light = static_cast<int>(j["light"].as_int(-1));
+  s->reports = static_cast<int>(j["reports"].as_int());
+  s->proposals = static_cast<int>(j["proposals"].as_int());
+  s->applied = static_cast<int>(j["applied"].as_int());
+  s->view_ct = Json::stringify(j["viewing"]["colorTemperature"]);
+  s->view_gamut = Json::stringify(j["viewing"]["colorGamut"]);
+  s->started = j["started"].as_string();
+  s->start_fnv = j["start_table"].as_string();
+  return true;
+}
+
+static void save_session(const PalSession &s) {
+  write_file(pal_dir() + "/session.json",
+             "{\"open\":" + std::string(s.open ? "true" : "false") + ",\"nits\":" + num(s.nits, 1) + ",\"headroom\":" + num(s.headroom, 3) +
+                 ",\"eotf\":\"bt1886\",\"index\":\"" + (s.index == TableIndex::Code ? "code" : "signal") + "\",\"wobble\":{\"white_pct\":" +
+                 num(s.wobble_white, 3) + ",\"mid_pct\":" + num(s.wobble_mid, 3) + "},\"light\":" + std::to_string(s.light) +
+                 ",\"reports\":" + std::to_string(s.reports) + ",\"proposals\":" + std::to_string(s.proposals) + ",\"applied\":" +
+                 std::to_string(s.applied) + ",\"viewing\":{\"colorTemperature\":" + s.view_ct + ",\"colorGamut\":" + s.view_gamut +
+                 "},\"started\":" + Json::quote(s.started) + ",\"start_table\":" + Json::quote(s.start_fnv) + "}");
+}
+
+static SdrTarget pal_sdr_target(const PalSession &s) {
+  SdrTarget t;
+  t.Lw = s.nits;
+  t.Lb = 0;  // OLED black: BT.1886 becomes a 2.4 power curve
+  return t;
+}
+
+// Calibration mode changes colour temperature and gamut on its own (Warm 50 and Wide on the
+// owner's TV, 3.3.7). Pal measures as the owner watches (B3), so both go back after every write.
+static bool viewing_state(TvDevice &tv, const PalSession &s, std::string *note) {
+  Json now;
+  if (!tv.read_settings("picture", {"colorTemperature", "colorGamut"}, &now)) {
+    *note = "could not read colour temperature and gamut: " + tv.last_error();
+    return false;
+  }
+  if (Json::stringify(now["colorTemperature"]) == s.view_ct && Json::stringify(now["colorGamut"]) == s.view_gamut) return true;
+  if (!tv.set_picture_settings("{\"colorTemperature\":" + s.view_ct + ",\"colorGamut\":" + s.view_gamut + "}")) {
+    *note = "could not put colour temperature and gamut back: " + tv.last_error();
+    return false;
+  }
+  Json again;
+  bool ok = tv.read_settings("picture", {"colorTemperature", "colorGamut"}, &again) && Json::stringify(again["colorTemperature"]) == s.view_ct &&
+            Json::stringify(again["colorGamut"]) == s.view_gamut;
+  *note = ok ? "colour temperature and gamut put back to the viewing values" : "colour temperature and gamut did not read back as set";
+  return ok;
+}
+
+// A write inside calibration mode, which always ends and puts the viewing state back.
+static bool pal_write(TvDevice &tv, const PalSession &s, const std::function<bool()> &fn, std::string *err) {
+  bool ok = tv.set_calibration_mode(true) && fn();
+  if (!ok) *err = tv.last_error();
+  tv.set_calibration_mode(false);
+  tv.patterns_off();
+  std::string note;
+  if (!viewing_state(tv, s, &note)) {
+    if (ok) *err = note;
+    return false;
+  }
+  if (!note.empty()) out("  %s\n", note.c_str());
+  return ok;
+}
+
+// Readings agree when their luminance is within the meter's wobble (or 0.01 cd/m²) and, once
+// bright enough to judge, their colour within 0.002 u′v′.
+static bool readings_agree(const Vec3 &a, const Vec3 &b, double wobble_pct) {
+  double m = std::max(1e-6, (a.y + b.y) / 2), dy = std::fabs(a.y - b.y);
+  if (dy > 0.01 && dy / m * 100 > std::max(0.5, 3 * wobble_pct)) return false;
+  return m < 1 || duv(a, b) <= 0.002;
+}
+
+// One grey level: two readings, a third when they disagree, and the sanity check (B1: a pink
+// flicker or a wrong patch is read again once it has passed).
+static bool pal_read_level(TvDevice &tv, int reads, double wobble, const Vec3 *below, GreyLevel *l) {
+  Patch p{l->code, l->code, l->code};
+  auto take = [&](std::vector<Vec3> *v, int n) {
+    for (int i = 0; i < n; i++) {
+      Vec3 x;
+      if (!tv.measure(p, &x)) {
+        out("    reading failed: %s\n", tv.last_error().c_str());
+        return false;
+      }
+      v->push_back(x);
+    }
+    return true;
+  };
+  auto mean_of = [](const std::vector<Vec3> &v) {
+    Vec3 m;
+    for (auto &x : v) m = m + x / static_cast<double>(v.size());
+    return m;
+  };
+  std::vector<Vec3> v;
+  if (!take(&v, reads)) return false;
+  int count = reads;
+  if (v.size() >= 2 && !readings_agree(v[0], v[1], wobble)) {
+    if (!take(&v, 1)) return false;
+    count++;
+    size_t a = 0, b = 1;
+    double best = 1e300;
+    for (size_t i = 0; i < v.size(); i++)
+      for (size_t j = i + 1; j < v.size(); j++) {
+        double d = std::fabs(v[i].y - v[j].y);
+        if (d < best) best = d, a = i, b = j;
+      }
+    if (!readings_agree(v[a], v[b], wobble)) {
+      l->suspect = true;
+      l->note = "readings disagreed";
+    }
+    v = {v[a], v[b]};
+  }
+  Vec3 m = mean_of(v);
+  std::string why;
+  for (int retry = 0; retry < 2 && !pal_grey_sane(m, below, wobble, &why); retry++) {
+    out("    %d%%: %s; reading again\n", l->pct, why.c_str());
+    std::this_thread::sleep_for(std::chrono::milliseconds(getenv("BLOOB_CAL_FAST") ? 0 : tv.pattern_delay()));
+    std::vector<Vec3> again;
+    if (!take(&again, std::max(reads, 1))) return false;
+    count += std::max(reads, 1);
+    m = mean_of(again);
+  }
+  if (!pal_grey_sane(m, below, wobble, &why)) {
+    l->suspect = true;
+    l->note = why;
+  }
+  l->XYZ = m;
+  l->measured = true;
+  l->reads = count;
+  double x, y;
+  chromaticity(m, &x, &y);
+  out("    %3d%%  Y %8.3f  x %.4f  y %.4f%s\n", l->pct, m.y, x, y, l->suspect ? ("  (" + l->note + ")").c_str() : "");
+  return true;
+}
+
+struct PalReport {
+  std::vector<GreyLevel> levels;
+  Vec3 prim[3];
+  GreySummary sum;
+  Lut1D table = Lut1D::unity();
+  std::string fnv, json;
+};
+
+// A grey report as the owner watches: 5–100% in 5% steps (0% is OLED black and is not read),
+// the three primaries at 100%, white again at the end to catch drift.
+static bool pal_report(TvDevice &tv, PalSession &s, PalReport *r, std::string *err) {
+  auto t0 = std::chrono::steady_clock::now();
+  long r0 = tv.readings();
+  std::string note;
+  if (!viewing_state(tv, s, &note)) {
+    *err = note;
+    return false;
+  }
+  if (!note.empty()) out("  %s\n", note.c_str());
+  if (!read_1d(tv, &r->table, &r->fnv)) {
+    *err = "could not read the 1D table: " + tv.last_error();
+    return false;
+  }
+  int reads = getenv("BLOOB_PAL_READS") ? std::max(1, atoi(getenv("BLOOB_PAL_READS"))) : 2;
+  const Vec3 *below = nullptr;
+  for (int pct : pal_levels()) {
+    GreyLevel l;
+    l.pct = pct;
+    l.code = pal_code(pct);
+    if (pct > 0) {
+      g_status.note = pct <= 10 ? "Reading a dark patch: the meter takes up to 20 s" : "";
+      if (!pal_read_level(tv, reads, pct >= 50 ? s.wobble_white : s.wobble_mid, below, &l)) {
+        *err = "the meter failed: " + tv.last_error();
+        return false;
+      }
+    }
+    r->levels.push_back(l);
+    if (l.measured) below = &r->levels.back().XYZ;
+  }
+  g_status.note.clear();
+  // The meter must still see the squares: white far below the target means it moved, fell or
+  // the video under the squares stopped.
+  if (r->levels.back().XYZ.y < 0.3 * s.nits) {
+    *err = "White read " + num(r->levels.back().XYZ.y, 1) + " cd/m2: the meter no longer sees the squares (moved, fallen, or the video under them stopped).";
+    return false;
+  }
+  const Patch ps[3] = {{940, 64, 64}, {64, 940, 64}, {64, 64, 940}};
+  for (int c = 0; c < 3; c++)
+    if (!tv.measure(ps[c], &r->prim[c])) {
+      *err = "the meter failed: " + tv.last_error();
+      return false;
+    }
+  Vec3 w_end;
+  if (!tv.measure({940, 940, 940}, &w_end)) {
+    *err = "the meter failed: " + tv.last_error();
+    return false;
+  }
+  SdrTarget t = pal_sdr_target(s);
+  r->sum = pal_summarise(r->levels, t, PalGoal{});
+  double drift = r->sum.white_Y > 0 ? 100 * (w_end.y / r->sum.white_Y - 1) : 0;
+  auto pts = pal_table_points(r->table, s.index);
+  Json view;
+  tv.read_settings("picture", {"colorTemperature", "colorGamut"}, &view);
+  s.reports++;
+  std::string j = "{\"ok\":true,\"kind\":\"report\",\"n\":" + std::to_string(s.reports) + ",\"time\":" + Json::quote(stamp_now()) +
+                  ",\"in_calibration_mode\":false,\"viewing\":" + Json::stringify(view) + ",\"target\":{\"white\":" + num(s.nits, 1) +
+                  ",\"eotf\":\"bt1886\",\"black\":0,\"x\":0.3127,\"y\":0.3290},\"goal\":{\"avg\":0.5,\"max\":1.0,\"white_pct\":2,\"first_scored\":10}" +
+                  ",\"index\":\"" + (s.index == TableIndex::Code ? "code" : "signal") + "\",\"light\":" + std::to_string(s.light) +
+                  ",\"wobble\":{\"white_pct\":" + num(s.wobble_white, 3) + ",\"mid_pct\":" + num(s.wobble_mid, 3) + "},\"table\":{\"fnv\":\"" + r->fnv +
+                  "\",\"points\":{\"r\":" + list(pts[0]) + ",\"g\":" + list(pts[1]) + ",\"b\":" + list(pts[2]) + "}},\"primaries\":{\"r\":" +
+                  vec(r->prim[0]) + ",\"g\":" + vec(r->prim[1]) + ",\"b\":" + vec(r->prim[2]) + "},\"levels\":[";
+  for (size_t i = 0; i < r->levels.size(); i++) {
+    const GreyLevel &l = r->levels[i];
+    double x = 0, y = 0;
+    if (l.measured) chromaticity(l.XYZ, &x, &y);
+    j += std::string(i ? "," : "") + "{\"pct\":" + std::to_string(l.pct) + ",\"code\":" + std::to_string(l.code) + ",\"measured\":" +
+         (l.measured ? "true" : "false") + ",\"XYZ\":" + vec(l.XYZ) + ",\"Y\":" + num(l.XYZ.y) + ",\"x\":" + num(x) + ",\"y\":" + num(y) +
+         ",\"target_Y\":" + num(l.target.y) + ",\"de\":" + num(l.de, 3) + ",\"scored\":" + (l.scored ? "true" : "false") + ",\"reads\":" +
+         std::to_string(l.reads) + ",\"suspect\":" + (l.suspect ? "true" : "false") + ",\"note\":" + Json::quote(l.note) + "}";
+  }
+  double secs = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+  j += "],\"summary\":{\"avg\":" + num(r->sum.avg, 3) + ",\"max\":" + num(r->sum.max, 3) + ",\"max_at\":" + std::to_string(r->sum.max_at) +
+       ",\"white_Y\":" + num(r->sum.white_Y, 3) + ",\"white_err_pct\":" + num(r->sum.white_err_pct, 2) + ",\"goal_met\":" +
+       (r->sum.goal_met ? "true" : "false") + "},\"drift_pct\":" + num(drift, 2) + ",\"readings\":" + std::to_string(tv.readings() - r0) +
+       ",\"seconds\":" + num(secs, 0) + "}";
+  r->json = j;
+  write_file(pal_dir() + "/report-" + std::to_string(s.reports) + ".json", j);
+  write_file(pal_dir() + "/latest-report.json", j);
+  save_session(s);
+  out("  Report %d: average %.2f, worst %.2f at %d%%, white %.1f cd/m2 (%+.1f%%)%s\n", s.reports, r->sum.avg, r->sum.max, r->sum.max_at, r->sum.white_Y,
+      r->sum.white_err_pct, r->sum.goal_met ? ", goal met" : "");
+  if (std::fabs(drift) > std::max(1.0, 3 * s.wobble_white)) out("  White moved %.1f%% during the report: the panel or the meter is not steady\n", drift);
+  return true;
+}
+
+// A report back from its file, for pal-propose and the never-worse check.
+static bool load_report(const std::string &path, std::vector<GreyLevel> *levels, Vec3 prim[3], std::string *fnv) {
+  bool ok = false;
+  Json j = Json::parse(slurp_file(path), &ok);
+  if (!ok || j["kind"].as_string() != "report") return false;
+  levels->clear();
+  for (size_t i = 0; i < j["levels"].size(); i++) {
+    const Json &e = j["levels"][i];
+    GreyLevel l;
+    l.pct = static_cast<int>(e["pct"].as_int());
+    l.code = static_cast<int>(e["code"].as_int());
+    l.measured = e["measured"].as_bool();
+    l.XYZ = {e["XYZ"][0].as_number(), e["XYZ"][1].as_number(), e["XYZ"][2].as_number()};
+    l.de = e["de"].as_number();
+    l.scored = e["scored"].as_bool();
+    levels->push_back(l);
+  }
+  const char *names[3] = {"r", "g", "b"};
+  for (int c = 0; c < 3; c++) prim[c] = {j["primaries"][names[c]][0].as_number(), j["primaries"][names[c]][1].as_number(), j["primaries"][names[c]][2].as_number()};
+  if (fnv) *fnv = j["table"]["fnv"].as_string();
+  return !levels->empty();
+}
+
+// Light so that white reads `goal` (cd/m²) as the owner watches.
+static bool pal_dial_light(TvDevice &tv, PalSession &s, double goal, std::string *err) {
+  Json pic;
+  if (s.light < 0 && tv.read_picture(&pic)) s.light = static_cast<int>(pic["backlight"].as_number(std::atof(pic["backlight"].as_string("28").c_str())));
+  tv.set_light_cache(s.light);
+  for (int i = 0; i < 6; i++) {
+    Reading w;
+    if (!read_avg(tv, {940, 940, 940}, 2, &w)) {
+      *err = "the meter failed: " + tv.last_error();
+      return false;
+    }
+    double off = 100 * (w.xyz.y / goal - 1);
+    out("  light %d: white %.1f cd/m2 (%+.1f%% from %.1f)\n", s.light, w.xyz.y, off, goal);
+    if (std::fabs(off) <= 1.5) return true;
+    int next = std::clamp(static_cast<int>(std::lround(s.light * goal / std::max(w.xyz.y, 0.5))), 1, 100);
+    if (next == s.light) next += off < 0 ? 1 : -1;
+    if (next < 1 || next > 100) break;
+    if (!pal_write(tv, s, [&] { return tv.set_light(next); }, err)) return false;
+    s.light = next;
+    save_session(s);
+  }
+  return true;  // as close as whole light steps get; the report says how close
+}
+
+static int cmd_pal_start(double nits) {
+  mkdir(pal_dir().c_str(), 0755);
+  PalSession old;
+  if (load_session(&old)) return pal_fail(6, "A Pal session is already open: end it first (pal-end ok, or pal-end undo).");
+  TvDevice tv(config("expert1"));
+  report_progress(tv);
+  PalSession s;
+  s.nits = nits;
+  s.started = stamp_now();
+  out("== Pal session: getting the TV ready (Expert 1, %.0f nits)\n", nits);
+  // 1. Expert 1, with the owner's settings saved for Undo.
+  Json pic;
+  if (!tv.read_picture(&pic)) return pal_fail(6, "Could not read the picture settings: " + tv.last_error());
+  std::string saved = data_dir() + "/expert1-settings.json";
+  if (pic["pictureMode"].as_string() != "expert1") {
+    if (!tv.set_picture_mode("expert1")) return pal_fail(6, "Could not switch to Expert 1: " + tv.last_error());
+    sleep(1);
+    tv.read_picture(&pic);
+  }
+  if (pic["pictureMode"].as_string() != "expert1") return pal_fail(6, "Expert 1 did not become the active picture mode.");
+  if (!exists(saved)) {
+    std::ofstream(saved) << Json::stringify(pic);
+    out("  Saved your Expert 1 settings for Undo.\n");
+  }
+  s.light = static_cast<int>(pic["backlight"].as_number(std::atof(pic["backlight"].as_string("28").c_str())));
+  s.view_ct = Json::stringify(pic["colorTemperature"]);
+  s.view_gamut = Json::stringify(pic["colorGamut"]);
+  out("  Expert 1 active (light %d, colour temperature %s, gamut %s).\n", s.light, s.view_ct.c_str(), s.view_gamut.c_str());
+  // 2. Meter and squares, before anything changes.
+  if (!meter_up(tv)) return pal_fail(6, "The meter did not answer.");
+  if (!squares_visible(tv)) return pal_fail(6, "The test squares are not reaching the meter (is the Pal session open on Bloob's Calibrate screen?).");
+  // 3. The meter sees the middle window and only it.
+  out("== Is the meter in the middle?\n");
+  Reading c;
+  if (!read_avg(tv, {940, 940, 940}, 1, &c)) return pal_fail(2, "The meter failed: " + tv.last_error());
+  struct Side {
+    const char *name;
+    int x, y;
+  };
+  // Each one right beside the middle window: a meter near an edge sees part of it.
+  const Side sides[] = {{"left", 1313 - 1214, 738}, {"right", 1313 + 1214, 738}, {"above", 1313, 738 - 683}, {"below", 1313, 738 + 683}};
+  for (const Side &d : sides) {
+    if (!tv.show_at({940, 940, 940}, d.x, d.y)) return pal_fail(2, "Could not draw the centring window: " + tv.last_error());
+    Vec3 x;
+    if (!tv.read_shown(&x)) return pal_fail(2, "The meter failed: " + tv.last_error());
+    out("  window %s of the middle: %.2f cd/m2 (middle %.1f)\n", d.name, x.y, c.xyz.y);
+    if (x.y > 0.05 * c.xyz.y) return pal_fail(6, std::string("The meter also sees a window drawn ") + d.name + " of the middle: hang it flat in the middle of the screen.");
+  }
+  out("  Yes: only the middle window reaches it.\n");
+  // 4. Processing that moves readings, off and read back (put back if the start fails later).
+  out("== Picture processing off\n");
+  std::string processing = read_processing(tv);
+  if (!exists(data_dir() + "/expert1-processing.json")) std::ofstream(data_dir() + "/expert1-processing.json") << processing;
+  processing_off(tv, Json::parse(processing));
+  Json now = Json::parse(read_processing(tv));
+  for (const Processing &p : kProcessing)
+    if (now[p.category].has(p.key) && now[p.category][p.key].as_string() != p.off)
+      return restore_processing(tv), pal_fail(6, std::string("Picture processing still on after switching it off: ") + p.key);
+  out("  Read back: all off.\n");
+  // 5. Warm-up: white steady over three readings an interval apart (B4: panel and meter together).
+  out("== Warming up: waiting for white to hold steady\n");
+  int interval = getenv("BLOOB_PAL_WARMUP_INTERVAL_S") ? atoi(getenv("BLOOB_PAL_WARMUP_INTERVAL_S")) : 60;
+  int most = getenv("BLOOB_PAL_WARMUP_MAX_S") ? atoi(getenv("BLOOB_PAL_WARMUP_MAX_S")) : 1800;
+  std::vector<double> whites;
+  auto w0 = std::chrono::steady_clock::now();
+  for (;;) {
+    Reading w;
+    if (!read_avg(tv, {940, 940, 940}, 2, &w)) return restore_processing(tv), pal_fail(2, "The meter failed: " + tv.last_error());
+    whites.push_back(w.xyz.y);
+    if (whites.size() >= 3) {
+      double lo = *std::min_element(whites.end() - 3, whites.end()), hi = *std::max_element(whites.end() - 3, whites.end());
+      double spread = 100 * (hi - lo) / std::max(1e-6, (hi + lo) / 2);
+      out("  white %.2f cd/m2; last three within %.2f%%\n", w.xyz.y, spread);
+      if (spread <= 0.5) break;
+    } else {
+      out("  white %.2f cd/m2\n", w.xyz.y);
+    }
+    if (std::chrono::duration<double>(std::chrono::steady_clock::now() - w0).count() > most)
+      return restore_processing(tv), pal_fail(6, "White did not hold steady within the warm-up time: the panel or the meter is still drifting.");
+    for (int i = 0; i < interval && !g_stop; i++) sleep(1);
+    if (g_stop) return restore_processing(tv), pal_fail(2, "Stopped.");
+  }
+  // 6. Calman's SDR start: LG's factory data, gamma switches off, BT.709 matrix neutral.
+  //    From here on a failure undoes everything.
+  out("== Starting from LG's factory data, as Calman does (gamma switches off, matrix neutral)\n");
+  save_session(s);  // the viewing values are needed by every write from here
+  auto undo_fail = [&](int rc, const std::string &why) {
+    std::string note;
+    undo_expert1(tv, &note);
+    s.open = false;
+    save_session(s);
+    return pal_fail(rc, why + " Expert 1 is back to " + note + ".");
+  };
+  std::string err;
+  if (!pal_write(tv, s, [&] { return tv.reset_factory() && tv.start_like_calman(); }, &err)) return undo_fail(2, "The TV refused Calman's start: " + err);
+  Lut1D start;
+  std::string start_raw;
+  if (!read_1d(tv, &start, &s.start_fnv)) return undo_fail(2, "Could not read the 1D table: " + tv.last_error());
+  {
+    auto v = start.encode();
+    std::string b = base64(v);
+    write_file(pal_dir() + "/start-1d.json", "{\"fnv\":\"" + s.start_fnv + "\",\"data\":\"" + b + "\"}");
+  }
+  // 7. Which table entry does a level use? A flat step from 77% to 83% of the table: under the
+  //    signal reading the 80% patch (code 765) darkens; under the code reading code 818 does.
+  out("== Which table entry each level uses\n");
+  Reading a0, b0, a1, b1;
+  if (!read_avg(tv, {765, 765, 765}, 2, &a0) || !read_avg(tv, {818, 818, 818}, 2, &b0)) return undo_fail(2, "The meter failed: " + tv.last_error());
+  if (!pal_write(tv, s, [&] { return tv.upload_1d(pal_plateau(start, 0.77, 0.83)); }, &err)) return undo_fail(2, "The index check's table was refused: " + err);
+  bool measured = read_avg(tv, {765, 765, 765}, 2, &a1) && read_avg(tv, {818, 818, 818}, 2, &b1);
+  if (!pal_write(tv, s, [&] { return tv.upload_1d(start); }, &err)) return undo_fail(2, "Could not put the start table back: " + err);
+  std::string back_fnv;
+  Lut1D back;
+  if (!read_1d(tv, &back, &back_fnv) || back_fnv != s.start_fnv) return undo_fail(5, "The start table did not read back after the index check.");
+  if (!measured) return undo_fail(2, "The meter failed: " + tv.last_error());
+  double ra = a1.xyz.y / std::max(a0.xyz.y, 1e-6), rb = b1.xyz.y / std::max(b0.xyz.y, 1e-6);
+  out("  80%% (code 765): %.3f of before; code 818: %.3f of before\n", ra, rb);
+  if (ra < 0.97 && rb > 0.985) s.index = TableIndex::Signal;
+  else if (rb < 0.97 && ra > 0.985) s.index = TableIndex::Code;
+  else return undo_fail(6, "Could not tell which table entry a level uses (both or neither darkened).");
+  out("  The table follows the %s.\n", s.index == TableIndex::Code ? "10-bit code (64 at entry 64, 940 at entry 940)" : "video signal (64 at entry 0, 940 at entry 1023)");
+  // 8. Light, white first: what the corrected white will need, so no correction has to be
+  //    followed by more light (which would brighten every level it just fixed).
+  out("== Light: enough for a D65 white at %.0f nits\n", s.nits);
+  if (!pal_dial_light(tv, s, s.nits, &err)) return undo_fail(2, err);
+  {
+    Reading w;
+    Vec3 prim[3];
+    const Patch ps[3] = {{940, 64, 64}, {64, 940, 64}, {64, 64, 940}};
+    bool ok = read_avg(tv, {940, 940, 940}, 2, &w);
+    for (int c = 0; c < 3 && ok; c++) ok = tv.measure(ps[c], &prim[c]);
+    if (!ok) return undo_fail(2, "The meter failed: " + tv.last_error());
+    double need = pal_white_need(w.xyz, prim, pal_sdr_target(s));
+    s.headroom = std::max(1.0, need) * 1.01;
+    out("  The corrected white needs %.1f%% more drive than now: white set to %.1f cd/m2 before correcting.\n", 100 * (need - 1), s.nits * s.headroom);
+  }
+  if (!pal_dial_light(tv, s, s.nits * s.headroom, &err)) return undo_fail(2, err);
+  // 9. How much the meter wobbles: three readings of white and of 50% grey.
+  out("== How steady the meter reads\n");
+  Reading w, m;
+  double sw = 0, sm = 0;
+  if (!read_avg(tv, {940, 940, 940}, 3, &w, &sw) || !read_avg(tv, {502, 502, 502}, 3, &m, &sm)) return undo_fail(2, "The meter failed: " + tv.last_error());
+  s.wobble_white = std::max(sw, 0.05);
+  s.wobble_mid = std::max(sm, 0.05);
+  out("  white within %.2f%%, 50%% within %.2f%%\n", sw, sm);
+  s.open = true;
+  save_session(s);
+  tv.finish();
+  out("== Ready. Next: grey-report.\n");
+  return pal_result(0, "{\"ok\":true,\"kind\":\"start\",\"nits\":" + num(s.nits, 1) + ",\"light\":" + std::to_string(s.light) + ",\"index\":\"" +
+                           (s.index == TableIndex::Code ? "code" : "signal") + "\",\"wobble\":{\"white_pct\":" + num(s.wobble_white, 3) +
+                           ",\"mid_pct\":" + num(s.wobble_mid, 3) + "},\"start_table\":\"" + s.start_fnv + "\",\"viewing\":{\"colorTemperature\":" +
+                           s.view_ct + ",\"colorGamut\":" + s.view_gamut + "},\"warmup_readings\":" + std::to_string(whites.size()) + "}");
+}
+
+static int cmd_grey_report() {
+  PalSession s;
+  if (!load_session(&s)) return pal_fail(6, "No Pal session is open: run pal-start first.");
+  TvDevice tv(config("expert1"));
+  report_progress(tv);
+  if (!meter_up(tv)) return pal_fail(2, "The meter did not answer.");
+  out("== Grey report (as you watch: outside calibration mode)\n");
+  PalReport r;
+  std::string err;
+  if (!pal_report(tv, s, &r, &err)) return pal_fail(2, err);
+  tv.finish();
+  return pal_result(0, r.json);
+}
+
+static int cmd_pal_propose(const std::string &report_path, double damp) {
+  PalSession s;
+  if (!load_session(&s)) return pal_fail(6, "No Pal session is open: run pal-start first.");
+  std::string path = report_path.empty() ? pal_dir() + "/latest-report.json" : report_path;
+  std::vector<GreyLevel> levels;
+  Vec3 prim[3];
+  std::string fnv;
+  if (!load_report(path, &levels, prim, &fnv)) return pal_fail(2, "Could not read the report " + path);
+  TvDevice tv(config("expert1"));
+  Lut1D table;
+  std::string now_fnv;
+  if (!read_1d(tv, &table, &now_fnv)) return pal_fail(2, "Could not read the 1D table: " + tv.last_error());
+  if (now_fnv != fnv) return pal_fail(2, "The table in the TV is not the one this report measured: take a new grey-report.");
+  std::vector<std::string> notes;
+  PalAdjust a = pal_propose(levels, table, prim, pal_sdr_target(s), damp, s.index, &notes);
+  Lut1D next = pal_apply(table, a, s.index);
+  GateResult g = pal_gate(next, table);
+  s.proposals++;
+  save_session(s);
+  std::string j = "{\"ok\":true,\"kind\":\"proposal\",\"n\":" + std::to_string(s.proposals) + ",\"for_table\":\"" + fnv + "\",\"damp\":" + num(damp, 2) + ",\"pct\":[";
+  for (size_t i = 0; i < a.pct.size(); i++) j += (i ? "," : "") + std::to_string(a.pct[i]);
+  j += "],\"r\":" + list(a.mult[0]) + ",\"g\":" + list(a.mult[1]) + ",\"b\":" + list(a.mult[2]) + ",\"gate\":{\"ok\":" + (g.ok ? "true" : "false") +
+       ",\"why\":" + Json::quote(g.why) + ",\"max_step\":" + num(g.max_step, 4) + "},\"notes\":[";
+  for (size_t i = 0; i < notes.size(); i++) j += (i ? "," : "") + Json::quote(notes[i]);
+  j += "]}";
+  write_file(pal_dir() + "/proposal-" + std::to_string(s.proposals) + ".json", j);
+  write_file(pal_dir() + "/latest-proposal.json", j);
+  for (auto &n : notes) out("  %s\n", n.c_str());
+  out("  Proposal %d written (the gate %s).\n", s.proposals, g.ok ? "accepts it" : ("would refuse it: " + g.why).c_str());
+  return pal_result(0, j);
+}
+
+static bool parse_adjust(const Json &j, PalAdjust *a, std::string *why) {
+  a->pct.clear();
+  for (size_t i = 0; i < j["pct"].size(); i++) a->pct.push_back(static_cast<int>(j["pct"][i].as_int(-1)));
+  const char *names[3] = {"r", "g", "b"};
+  for (int c = 0; c < 3; c++) {
+    a->mult[c].clear();
+    for (size_t i = 0; i < j[names[c]].size(); i++) a->mult[c].push_back(j[names[c]][i].as_number(std::nan("")));
+  }
+  return pal_adjust_valid(*a, why);
+}
+
+static int cmd_apply_1d(const std::string &arg) {
+  PalSession s;
+  if (!load_session(&s)) return pal_fail(6, "No Pal session is open: run pal-start first.");
+  TvDevice tv(config("expert1"));
+  report_progress(tv);
+  Lut1D current;
+  std::string cur_fnv;
+  if (!read_1d(tv, &current, &cur_fnv)) return pal_fail(2, "Could not read the 1D table: " + tv.last_error());
+  Lut1D next;
+  std::string what;
+  GateResult g;
+  if (arg == "--start") {
+    // Back to the table pal-start measured from (Pal's "clear": a pass made a level worse).
+    bool ok = false;
+    Json j = Json::parse(slurp_file(pal_dir() + "/start-1d.json"), &ok);
+    auto v = ok ? u16_from_base64(j["data"].as_string()) : std::vector<uint16_t>();
+    if (v.size() != 3 * Lut1D::kSize) return pal_fail(2, "The start table is missing.");
+    next = Lut1D::decode(v);
+    g = pal_gate(next, current, 1.0, false);  // a table this TV already had: range and rising only
+    what = "the start table";
+  } else {
+    bool ok = false;
+    Json j = Json::parse(slurp_file(arg), &ok);
+    if (!ok) return pal_fail(4, "Could not read " + arg + " as JSON.");
+    if (j.has("for_table") && j["for_table"].as_string() != cur_fnv)
+      return pal_fail(4, "This adjustment was made for another table: the TV's table changed since its report.");
+    PalAdjust a;
+    std::string why;
+    if (!parse_adjust(j, &a, &why)) return pal_fail(4, "The adjustment is not valid: " + why);
+    next = pal_apply(current, a, s.index);
+    g = pal_gate(next, current);
+    what = arg;
+  }
+  out("== Applying %s\n", what.c_str());
+  if (!g.ok) return pal_fail(4, "The safety gate refused the table: " + g.why);
+  out("  The safety gate accepts it (largest change %.4f).\n", g.max_step);
+  std::vector<uint16_t> sent = next.encode();
+  std::string sent_fnv = hex64(fnv1a(sent)), err, got_fnv;
+  bool loaded = false;
+  for (int attempt = 0; attempt < 2 && !loaded; attempt++) {
+    if (attempt) out("  The table read back differently; sending it once more.\n");
+    if (!pal_write(tv, s, [&] { return tv.upload_1d(next); }, &err)) return pal_fail(2, "The TV refused the table: " + err);
+    Lut1D got;
+    loaded = read_1d(tv, &got, &got_fnv) && got_fnv == sent_fnv;
+  }
+  if (!loaded)
+    return pal_fail(5, "The TV did not load the table (it read back as " + got_fnv + ", not " + sent_fnv + ").",
+                    ",\"sent\":\"" + sent_fnv + "\",\"read_back\":\"" + got_fnv + "\"");
+  s.applied++;
+  save_session(s);
+  write_file(pal_dir() + "/applied-" + std::to_string(s.applied) + ".json",
+             "{\"from\":\"" + cur_fnv + "\",\"to\":\"" + sent_fnv + "\",\"source\":" + Json::quote(what) + ",\"data\":\"" + base64(sent) + "\"}");
+  out("  Loaded: the table read back equals the one sent.\n");
+  out("== After report\n");
+  PalReport r;
+  if (!meter_up(tv)) return pal_fail(2, "The meter did not answer.");
+  if (!pal_report(tv, s, &r, &err)) return pal_fail(2, err, ",\"loaded\":true");
+  tv.finish();
+  // Never worse (§9): compared with the session's first report.
+  std::vector<GreyLevel> first;
+  Vec3 p0[3];
+  std::string worse = "[";
+  if (load_report(pal_dir() + "/report-1.json", &first, p0, nullptr))
+    for (const GreyLevel &l : r.levels)
+      for (const GreyLevel &f : first)
+        if (f.pct == l.pct && l.scored && l.de > f.de + std::max(0.3, 0.1 * f.de)) worse += std::string(worse.size() > 1 ? "," : "") + std::to_string(l.pct);
+  worse += "]";
+  if (worse != "[]") out("  Worse than at the start at %s%%: clear back (apply-1d --start) and diagnose.\n", worse.c_str());
+  return pal_result(0, "{\"ok\":true,\"kind\":\"applied\",\"n\":" + std::to_string(s.applied) + ",\"loaded\":true,\"from\":\"" + cur_fnv + "\",\"to\":\"" +
+                           sent_fnv + "\",\"gate\":{\"max_step\":" + num(g.max_step, 4) + ",\"max_bend\":" + num(g.max_bend, 5) +
+                           "},\"worse_than_start\":" + worse + ",\"after\":" + r.json + "}");
+}
+
+static int cmd_pal_light(double goal) {
+  PalSession s;
+  if (!load_session(&s)) return pal_fail(6, "No Pal session is open: run pal-start first.");
+  TvDevice tv(config("expert1"));
+  report_progress(tv);
+  if (!meter_up(tv)) return pal_fail(2, "The meter did not answer.");
+  out("== Light: white to %.1f cd/m2\n", goal);
+  std::string err;
+  if (!pal_dial_light(tv, s, goal, &err)) return pal_fail(2, err);
+  Reading w;
+  if (!read_avg(tv, {940, 940, 940}, 2, &w)) return pal_fail(2, "The meter failed: " + tv.last_error());
+  save_session(s);
+  tv.finish();
+  return pal_result(0, "{\"ok\":true,\"kind\":\"light\",\"light\":" + std::to_string(s.light) + ",\"white_Y\":" + num(w.xyz.y, 3) + "}");
+}
+
+static int cmd_pal_end(const std::string &how) {
+  PalSession s;
+  if (!load_session(&s)) return pal_fail(6, "No Pal session is open.");
+  std::string result;
+  if (how == "undo") {
+    TvDevice tv(config("expert1"));
+    std::string note;
+    bool ok = undo_expert1(tv, &note);
+    out("== Undo: Expert 1 back to %s\n", note.c_str());
+    result = std::string("{\"ok\":") + (ok ? "true" : "false") + ",\"kind\":\"end\",\"kept\":false,\"undone\":" + (ok ? "true" : "false") + ",\"note\":" + Json::quote(note);
+  } else {
+    out("== Session ended: the calibration stays\n");
+    result = "{\"ok\":true,\"kind\":\"end\",\"kept\":true";
+  }
+  s.open = false;
+  save_session(s);
+  // Everything from this session moves to history/ (nothing is deleted).
+  std::string hist = data_dir() + "/history", dest = hist + "/pal-" + s.started;
+  mkdir(hist.c_str(), 0755);
+  if (g_log) {
+    std::fclose(g_log);
+    g_log = nullptr;
+  }
+  bool moved = ::rename(pal_dir().c_str(), dest.c_str()) == 0;
+  out("  Session files: %s\n", moved ? dest.c_str() : "left in pal/ (could not move them)");
+  return pal_result(0, result + ",\"history\":" + Json::quote(moved ? dest : pal_dir()) + "}");
+}
+
+// Read-only. Does LG's pipeline flicker after a pattern change, and does the pattern delay
+// clear it (B1)? Each change is read at once and again after the delay.
+static int cmd_flashcheck() {
+  TvDevice tv(config("expert1"));
+  report_progress(tv);
+  if (!meter_up(tv)) return pal_fail(2, "The meter did not answer.");
+  if (!squares_visible(tv)) return pal_fail(6, "The test squares are not reaching the meter.");
+  tv.set_grey_between(false);
+  int delay = tv.pattern_delay();
+  out("== Flicker check: %d pattern changes, each read at once and after %.1f s\n", 6, delay / 1000.0);
+  double worst_y = 0, worst_uv = 0;
+  const int codes[2] = {502, 721};
+  for (int i = 0; i < 6 && !g_stop; i++) {
+    Patch p{codes[i % 2], codes[i % 2], codes[i % 2]};
+    tv.set_pattern_delay(0);
+    Vec3 early, late;
+    if (!tv.measure(p, &early)) return pal_fail(2, "The meter failed: " + tv.last_error());
+    std::this_thread::sleep_for(std::chrono::milliseconds(getenv("BLOOB_CAL_FAST") ? 0 : delay));
+    if (!tv.read_shown(&late)) return pal_fail(2, "The meter failed: " + tv.last_error());
+    double dy = 100 * std::fabs(early.y / std::max(late.y, 1e-6) - 1), dl = duv(early, late);
+    worst_y = std::max(worst_y, dy);
+    worst_uv = std::max(worst_uv, dl);
+    out("  change %d: read at once, %.2f%% off in brightness and %.4f off in colour (u'v') from the settled reading\n", i + 1, dy, dl);
+  }
+  tv.set_pattern_delay(delay);
+  tv.finish();
+  bool flicker = worst_y > 1.0 || worst_uv > 0.003;
+  out("== %s\n", flicker ? "Readings taken at once are off: LG's pipeline is still settling then. The delay before every reading covers it."
+                         : "No flicker reached the meter.");
+  return pal_result(0, std::string("{\"ok\":true,\"kind\":\"flashcheck\",\"flicker_seen\":") + (flicker ? "true" : "false") + ",\"worst_brightness_pct\":" +
+                           num(worst_y, 2) + ",\"worst_colour_uv\":" + num(worst_uv, 4) + ",\"delay_ms\":" + std::to_string(delay) + "}");
+}
+
 // One run at a time: the pid of the running bloob-cal, or 0.
 static bool another_running(const std::string &pidfile) {
   std::ifstream f(pidfile);
@@ -760,8 +1524,12 @@ int main(int argc, char **argv) {
     out("Run bloob-cal on the TV as root.\n");
     return 1;
   }
-  if (cmd != "check" && cmd != "test" && cmd != "sdr" && cmd != "undo" && cmd != "patterns") {
-    out("usage: bloob-cal check | test | sdr [nits] [quick|thorough] | undo | patterns\n");
+  static const std::vector<std::string> kPal = {"pal-start", "grey-report", "pal-propose", "apply-1d", "pal-light", "pal-end", "flashcheck"};
+  bool pal = std::find(kPal.begin(), kPal.end(), cmd) != kPal.end();
+  if (cmd != "check" && cmd != "test" && cmd != "sdr" && cmd != "undo" && cmd != "patterns" && !pal) {
+    out("usage: bloob-cal check | test | sdr [nits] [quick|thorough] | undo | patterns\n"
+        "       bloob-cal pal-start [nits] | grey-report | pal-propose [report.json] [damp] | apply-1d <proposal.json>|--start\n"
+        "                 | pal-light <white cd/m2> | pal-end ok|undo | flashcheck\n");
     return 1;
   }
   mkdir(data_dir().c_str(), 0755);
@@ -773,7 +1541,12 @@ int main(int argc, char **argv) {
   { std::ofstream(pidfile) << getpid(); }
   // The run's own log, opened only now that this run holds the lock: a refused second
   // start must not wipe the log of the run that is going (seen on the TV).
-  if (!isatty(1)) {
+  // Pal's commands answer on their own output (Pal reads it over SSH) and keep a session log.
+  if (pal) {
+    mkdir(pal_dir().c_str(), 0755);
+    g_log = std::fopen((pal_dir() + "/session.log").c_str(), "a");
+    if (g_log) std::fprintf(g_log, "\n### %s %s\n", stamp_now().c_str(), cmd.c_str());
+  } else if (!isatty(1)) {
     int fd = ::open((data_dir() + "/last-run.log").c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
     if (fd >= 0) {
       dup2(fd, 1);
@@ -785,18 +1558,27 @@ int main(int argc, char **argv) {
   g_status.action = cmd;
   // Quick is the default for sdr: close to Calman's AutoCal, about a third of the readings.
   bool quick = !(argc > 3 && std::string(argv[3]) == "thorough");
-  g_status.expected = cmd == "check" ? 17 : cmd == "test" ? 28 : cmd == "sdr" ? (quick ? 1950 : 4200) : 0;
+  g_status.expected = cmd == "check" ? 17 : cmd == "test" ? 28 : cmd == "sdr" ? (quick ? 1950 : 4200) : cmd == "pal-start" ? 40 : cmd == "grey-report" ? 46
+                     : cmd == "apply-1d" ? 46 : cmd == "pal-light" ? 8 : cmd == "flashcheck" ? 16 : 0;
   g_status.write();
   int rc = 0;
   if (cmd == "check") rc = cmd_check();
   else if (cmd == "patterns") rc = cmd_patterns();
   else if (cmd == "test") rc = cmd_test();
   else if (cmd == "sdr") rc = cmd_sdr(argc > 2 ? std::max(80.0, std::min(250.0, std::atof(argv[2]))) : 140.0, quick);
+  else if (cmd == "pal-start") rc = cmd_pal_start(argc > 2 ? std::max(80.0, std::min(250.0, std::atof(argv[2]))) : 140.0);
+  else if (cmd == "grey-report") rc = cmd_grey_report();
+  else if (cmd == "pal-propose") rc = cmd_pal_propose(argc > 2 ? argv[2] : "", argc > 3 ? std::max(0.2, std::min(1.0, std::atof(argv[3]))) : 1.0);
+  else if (cmd == "apply-1d") rc = argc > 2 ? cmd_apply_1d(argv[2]) : pal_fail(1, "apply-1d needs a proposal file or --start");
+  else if (cmd == "pal-light") rc = argc > 2 ? cmd_pal_light(std::max(20.0, std::min(400.0, std::atof(argv[2])))) : pal_fail(1, "pal-light needs a white level in cd/m2");
+  else if (cmd == "pal-end") rc = cmd_pal_end(argc > 2 ? argv[2] : "ok");
+  else if (cmd == "flashcheck") rc = cmd_flashcheck();
   else rc = cmd_undo();
   g_status.state = g_stop ? "stopped" : rc == 0 ? "done" : "failed";
   if (cmd == "test") g_status.result = "{\"ok\":" + std::string(rc == 0 ? "true" : "false") + ",\"passed\":" + std::to_string(pass_count) +
                                        ",\"failed\":" + std::to_string(fail_count) + "}";
   g_status.write();
   { std::ofstream(pidfile) << 0; }
+  if (g_log) std::fclose(g_log);
   return rc;
 }

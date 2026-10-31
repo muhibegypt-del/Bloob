@@ -1,5 +1,7 @@
 #include "tv_device.h"
 
+#include <algorithm>
+#include <cstdlib>
 #include <poll.h>
 #include <signal.h>
 #include <sys/wait.h>
@@ -62,7 +64,12 @@ static std::string f32_data(const std::vector<float> &v, int opt = 1) {
 
 static std::string reset_data(const char *type) { return std::string(",\"data\":\"\",\"dataCount\":0,\"dataType\":\"") + type + "\",\"dataOpt\":2"; }
 
-TvDevice::TvDevice(const TvConfig &c) : cfg_(c) {}
+TvDevice::TvDevice(const TvConfig &c) : cfg_(c) {
+  if (const char *d = getenv("BLOOB_PATTERN_DELAY_MS")) cfg_.pattern_delay_ms = std::max(0, atoi(d));
+}
+
+// After a new patch: LG's pipeline settles (B1). BLOOB_CAL_FAST (desktop tests) skips it.
+static void settle_pattern(int ms) { std::this_thread::sleep_for(std::chrono::milliseconds(getenv("BLOOB_CAL_FAST") ? 0 : ms)); }
 
 // luna-send as a child process (no shell, so nothing in the payload is interpreted).
 bool TvDevice::luna(const std::string &uri, const std::string &payload, Json *reply) {
@@ -174,8 +181,27 @@ bool TvDevice::get_table(const std::string &command, Json *reply) {
 // The 10% window on a black background (Calman's OLED window), in the mode's range.
 bool TvDevice::show(const Patch &p) { return show_box(p, true); }
 
+static const int kWinW = 1214, kWinH = 683, kWinX = 1313, kWinY = 738;  // the 10% window, centred
+
+bool TvDevice::show_at(const Patch &p, int x, int y) {
+  int black = cfg_.family == Family::DolbyVision ? 0 : 64;
+  auto box = [&](int id, int r, int g, int b, int w, int h, int bx, int by) {
+    return pq("PTN_SINGLE_WINBOX_ATTR", ",\"fillR\":" + std::to_string(r) + ",\"fillG\":" + std::to_string(g) + ",\"fillB\":" + std::to_string(b) +
+                                            ",\"winId\":" + std::to_string(id) + ",\"width\":" + std::to_string(w) + ",\"height\":" +
+                                            std::to_string(h) + ",\"startX\":" + std::to_string(bx) + ",\"startY\":" + std::to_string(by));
+  };
+  x = std::max(0, std::min(x, 3840 - kWinW));
+  y = std::max(0, std::min(y, 2160 - kWinH));
+  if (!box(0, black, black, black, 3840, 2160, 0, 0) || !box(1, p.r, p.g, p.b, kWinW, kWinH, x, y)) return false;
+  if (!pq("PTN_CTRL", ",\"enable\":\"true\",\"numOfBox\":2,\"ptnType\":0")) return false;
+  patterns_on_ = true;
+  showing_ = false;  // the next measure() draws its own patch again
+  settle_pattern(cfg_.pattern_delay_ms);
+  return true;
+}
+
 bool TvDevice::show_box(const Patch &p, bool background) {
-  static const int W = 1214, H = 683, X = 1313, Y = 738;
+  const int W = kWinW, H = kWinH, X = kWinX, Y = kWinY;
   int black = cfg_.family == Family::DolbyVision ? 0 : 64;
   auto box = [&](int id, int r, int g, int b, int w, int h, int x, int y) {
     return pq("PTN_SINGLE_WINBOX_ATTR", ",\"fillR\":" + std::to_string(r) + ",\"fillG\":" + std::to_string(g) + ",\"fillB\":" + std::to_string(b) +
@@ -215,7 +241,7 @@ bool TvDevice::measure(const Patch &p, Vec3 *XYZ) {
     shown_ = p;
     showing_ = true;
     if (on_patch) on_patch(p);
-    std::this_thread::sleep_for(std::chrono::milliseconds(getenv("BLOOB_CAL_FAST") ? 0 : 400));  // desktop tests only
+    settle_pattern(cfg_.pattern_delay_ms);
   }
   std::string err;
   bool ok = meter_.read(XYZ, &err);
@@ -229,7 +255,7 @@ bool TvDevice::measure(const Patch &p, Vec3 *XYZ) {
     bool recovered = show(white) && meter_.open(cfg_.meter, &again) && meter_.read(&dummy, &again) && show(p);
     if (recovered) {
       shown_ = p;
-      std::this_thread::sleep_for(std::chrono::milliseconds(getenv("BLOOB_CAL_FAST") ? 0 : 400));
+      settle_pattern(cfg_.pattern_delay_ms);
       ok = meter_.read(XYZ, &again);
     }
     if (!ok) err += "; after restarting the meter on a white square: " + (again.empty() ? std::string("no reading") : again);
@@ -240,6 +266,18 @@ bool TvDevice::measure(const Patch &p, Vec3 *XYZ) {
     if (on_reading) on_reading(readings_);
   }
   return ok && !g_stop;
+}
+
+bool TvDevice::read_shown(Vec3 *XYZ) {
+  if (g_stop) return false;
+  std::string err;
+  if (!meter_.read(XYZ, &err)) {
+    error_ = err;
+    return false;
+  }
+  readings_++;
+  if (on_reading) on_reading(readings_);
+  return true;
 }
 
 // A new table takes a moment to reach the panel; readings wait for it.

@@ -27,6 +27,10 @@ struct TvConfig {
   std::string picture_mode = "expert1";
   Family family = Family::Sdr;
   bool grey_between = true;  // full-screen 18% grey after each reading (Calman's OLED default)
+  // How long a new patch settles before the meter reads it. LG's pipeline flickers pink or
+  // green for a moment after a pattern change; 1.5–2 s is the calibrators' figure
+  // (research/LG-calibration-best-practices.md B1). BLOOB_PATTERN_DELAY_MS overrides.
+  int pattern_delay_ms = 2000;
   bool verbose = false;
 };
 
@@ -42,6 +46,8 @@ class TvDevice : public Device {
   bool meter_session() const { return meter_.session(); }
 
   bool measure(const Patch &p, Vec3 *XYZ) override;
+  // A reading of whatever is on screen now, without drawing anything.
+  bool read_shown(Vec3 *XYZ);
   bool upload_1d(const Lut1D &lut) override;
   bool upload_3d(Slot slot, const Lut3D &lut) override;
   bool reset_factory() override;
@@ -61,6 +67,12 @@ class TvDevice : public Device {
   // One box in the middle (the 10% window), over a full-screen black background or on
   // its own over whatever is on screen (bscpylgtv's "overlay"). For bloob-cal patterns.
   bool show_box(const Patch &p, bool background);
+  // The measuring window moved to (x, y) (panel pixels, top left), on black: the
+  // meter-centring check draws it beside the meter and expects darkness.
+  bool show_at(const Patch &p, int x, int y);
+  void set_pattern_delay(int ms) { cfg_.pattern_delay_ms = ms; }
+  int pattern_delay() const { return cfg_.pattern_delay_ms; }
+  void set_grey_between(bool on) { cfg_.grey_between = on; }
   // Picture settings through the settings service.
   bool read_picture(Json *settings);
   bool set_picture_mode(const std::string &mode);

@@ -88,6 +88,12 @@ GateResult pal_gate(const Lut1D &next, const Lut1D &current, double max_step = 0
 PalAdjust pal_propose(const std::vector<GreyLevel> &levels, const Lut1D &current, const Vec3 primaries[3], const SdrTarget &t,
                       double damp, TableIndex m, std::vector<std::string> *notes);
 
+// How much light the corrected white needs: the target white in drive terms (the measured
+// primaries scaled so the measured white is 1, 1, 1); its largest channel is the factor the
+// light must rise by, since no channel can go above full. pal-start sets light with it before
+// any correction ("white first"), so a correction never has to be followed by more light.
+double pal_white_need(const Vec3 &white, const Vec3 prim[3], const SdrTarget &t);
+
 // A table equal to `current` except that entries from x0 to x1 hold the value at x0: a flat
 // step, so a patch landing there reads darker (pal-start's index check). Still rising.
 Lut1D pal_plateau(const Lut1D &current, double x0, double x1);

@@ -1,5 +1,6 @@
 #include "ssap.h"
 
+#include <cstdlib>
 #include <arpa/inet.h>
 #include <fcntl.h>
 #include <netinet/in.h>
@@ -144,7 +145,9 @@ bool Ssap::connect(const std::string &manifest_path, const std::string &key_path
   fd_ = socket(AF_INET, SOCK_STREAM, 0);
   sockaddr_in a{};
   a.sin_family = AF_INET;
-  a.sin_port = htons(3000);
+  // The TV's own port; BLOOB_SSAP_PORT moves it for the stand-in TV on a desktop.
+  const char *port = getenv("BLOOB_SSAP_PORT");
+  a.sin_port = htons(static_cast<uint16_t>(port ? atoi(port) : 3000));
   a.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
   if (fd_ < 0 || ::connect(fd_, reinterpret_cast<sockaddr *>(&a), sizeof a) != 0) {
     *error = "the TV's second-screen socket (port 3000) did not answer";
