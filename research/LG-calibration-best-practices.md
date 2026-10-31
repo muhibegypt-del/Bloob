@@ -21,4 +21,9 @@ A running ledger of practices for calibrating LG OLEDs, as the owner collects th
 ## Notes
 
 - **The magenta background in the one-box `patterns` test (30 October) was a still background, not a flicker.** Bloob always draws the black background box, which avoids it. The flashes between squares match B1.
-- **Planned for 3.4.0:** B1, and every later entry the owner adds.
+- **In 3.4.0:**
+  - B1: a 2 s delay before every reading, all commands; `flashcheck` measures the flicker.
+  - B3: Pal measures only outside calibration mode, with the viewing colour temperature and gamut put back.
+  - B4: `pal-start` waits until white holds steady over three readings.
+
+  B2 waits for a viewing check; B5 is held by the safety gate.

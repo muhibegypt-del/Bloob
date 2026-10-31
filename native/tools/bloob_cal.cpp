@@ -250,8 +250,8 @@ static bool squares_visible(TvDevice &tv) {
     return true;
   }
   out("  No. The meter read white %.1f cd/m2 (x %.3f y %.3f) and black %.2f cd/m2, which is not a test square.\n", w.xyz.y, w.x, w.y, k.xyz.y);
-  out("  The TV draws its squares only while a video plays: start runs from Bloob's Calibrate screen, which plays a black\n");
-  out("  video for them (over SSH, play something first), and keep the meter flat in the middle.\n");
+  out("  LG draws its squares under the apps' graphics, so whatever is on screen must be see-through: start runs from\n");
+  out("  Bloob's Calibrate screen (or its Pal session), and keep the meter flat in the middle.\n");
   out("  If squares still do not appear, send the log: nothing was changed.\n");
   return false;
 }
@@ -1170,7 +1170,9 @@ static int cmd_pal_start(double nits) {
   out("  Expert 1 active (light %d, colour temperature %s, gamut %s).\n", s.light, s.view_ct.c_str(), s.view_gamut.c_str());
   // 2. Meter and squares, before anything changes.
   if (!meter_up(tv)) return pal_fail(6, "The meter did not answer.");
-  if (!squares_visible(tv)) return pal_fail(6, "The test squares are not reaching the meter (is the Pal session open on Bloob's Calibrate screen?).");
+  if (!squares_visible(tv))
+    return pal_fail(6, "The test squares are not reaching the meter. Is the Pal session open on Bloob's Calibrate screen? If it is, try "
+                       "pal-screen video on (the black video under the squares) and pal-start again.");
   // 3. The meter sees the middle window and only it.
   out("== Is the meter in the middle?\n");
   Reading c;
@@ -1469,6 +1471,23 @@ static int cmd_pal_end(const std::string &how) {
   return pal_result(0, result + ",\"history\":" + Json::quote(moved ? dest : pal_dir()) + "}");
 }
 
+// Pal's reasons, in the session's own log (rubric 8: every decision explained).
+static int cmd_pal_note(const std::string &text) {
+  if (text.empty()) return pal_fail(1, "usage: pal-note \"why\"");
+  out("  Pal: %s\n", text.c_str());
+  return pal_result(0, "{\"ok\":true,\"kind\":\"note\"}");
+}
+
+// What Bloob's Calibrate screen does during a Pal session: with "video on" it plays the black
+// clip under the squares (3.3.6's way); off (the default) it is see-through only.
+static int cmd_pal_screen(const std::string &what, const std::string &value) {
+  if (what != "video" || (value != "on" && value != "off")) return pal_fail(1, "usage: pal-screen video on|off");
+  mkdir(pal_dir().c_str(), 0755);
+  write_file(pal_dir() + "/screen.json", std::string("{\"video\":") + (value == "on" ? "true" : "false") + "}");
+  out("  The Calibrate screen will %s the black video within a second.\n", value == "on" ? "play" : "stop");
+  return pal_result(0, "{\"ok\":true,\"kind\":\"screen\",\"video\":" + std::string(value == "on" ? "true" : "false") + "}");
+}
+
 // Read-only. Does LG's pipeline flicker after a pattern change, and does the pattern delay
 // clear it (B1)? Each change is read at once and again after the delay.
 static int cmd_flashcheck() {
@@ -1524,12 +1543,12 @@ int main(int argc, char **argv) {
     out("Run bloob-cal on the TV as root.\n");
     return 1;
   }
-  static const std::vector<std::string> kPal = {"pal-start", "grey-report", "pal-propose", "apply-1d", "pal-light", "pal-end", "flashcheck"};
+  static const std::vector<std::string> kPal = {"pal-start", "grey-report", "pal-propose", "apply-1d", "pal-light", "pal-end", "flashcheck", "pal-screen", "pal-note"};
   bool pal = std::find(kPal.begin(), kPal.end(), cmd) != kPal.end();
   if (cmd != "check" && cmd != "test" && cmd != "sdr" && cmd != "undo" && cmd != "patterns" && !pal) {
     out("usage: bloob-cal check | test | sdr [nits] [quick|thorough] | undo | patterns\n"
         "       bloob-cal pal-start [nits] | grey-report | pal-propose [report.json] [damp] | apply-1d <proposal.json>|--start\n"
-        "                 | pal-light <white cd/m2> | pal-end ok|undo | flashcheck\n");
+        "                 | pal-light <white cd/m2> | pal-end ok|undo | flashcheck | pal-screen video on|off | pal-note <why>\n");
     return 1;
   }
   mkdir(data_dir().c_str(), 0755);
@@ -1573,6 +1592,11 @@ int main(int argc, char **argv) {
   else if (cmd == "pal-light") rc = argc > 2 ? cmd_pal_light(std::max(20.0, std::min(400.0, std::atof(argv[2])))) : pal_fail(1, "pal-light needs a white level in cd/m2");
   else if (cmd == "pal-end") rc = cmd_pal_end(argc > 2 ? argv[2] : "ok");
   else if (cmd == "flashcheck") rc = cmd_flashcheck();
+  else if (cmd == "pal-note") {
+    std::string t;
+    for (int i = 2; i < argc; i++) t += (i > 2 ? " " : "") + std::string(argv[i]);
+    rc = cmd_pal_note(t);
+  } else if (cmd == "pal-screen") rc = cmd_pal_screen(argc > 2 ? argv[2] : "", argc > 3 ? argv[3] : "");
   else rc = cmd_undo();
   g_status.state = g_stop ? "stopped" : rc == 0 ? "done" : "failed";
   if (cmd == "test") g_status.result = "{\"ok\":" + std::string(rc == 0 ? "true" : "false") + ",\"passed\":" + std::to_string(pass_count) +

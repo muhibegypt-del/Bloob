@@ -50,7 +50,7 @@ class CalibrateScreen : public Screen {
   ~CalibrateScreen() override { stop_black(); }
   const char *name() const override { return "calibrate"; }
 
-  enum class Row { Check, Test, Calibrate, Thorough, Undo, Stop };
+  enum class Row { Pal, Check, Test, Calibrate, Thorough, Undo, Stop };
 
   // LG's pattern generator draws in the video plane, under Bloob's graphics (seen on the
   // owner's TV: the meter read Bloob's page, never a square). So while a run is going this
@@ -59,7 +59,7 @@ class CalibrateScreen : public Screen {
 
   std::vector<Row> rows() const {
     if (busy()) return {Row::Stop};
-    return {Row::Check, Row::Test, Row::Calibrate, Row::Thorough, Row::Undo};
+    return {Row::Pal, Row::Check, Row::Test, Row::Calibrate, Row::Thorough, Row::Undo};
   }
 
   std::string spoken() const override {
@@ -87,13 +87,14 @@ class CalibrateScreen : public Screen {
       case Key::Down: row_ = std::min(count - 1, row_ + 1); return true;
       case Key::Ok:
         if (repeat) return true;
-        // Calibrate and Undo change the picture for good: OK twice.
-        if ((r == Row::Calibrate || r == Row::Thorough || r == Row::Undo) && !confirm_) {
+        // Calibrate, Pal and Undo change the picture for good: OK twice.
+        if ((r == Row::Calibrate || r == Row::Thorough || r == Row::Undo || r == Row::Pal) && !confirm_) {
           confirm_ = true;
           return true;
         }
         confirm_ = false;
         if (r == Row::Stop) stop();
+        else if (r == Row::Pal) start_pal();
         else if (r == Row::Calibrate || r == Row::Thorough) start("sdr", std::to_string(kNits) + (r == Row::Thorough ? " thorough" : " quick"));
         else start(r == Row::Check ? "check" : r == Row::Test ? "test" : "undo");
         return true;
@@ -106,6 +107,11 @@ class CalibrateScreen : public Screen {
     using namespace theme;
     if (c.now >= next_poll_) poll();
     tend_black();
+    if (pal_hold_) {
+      draw_pal_card();
+      c.redraw_at(c.now + 1000);
+      return;
+    }
     if (busy()) {
       draw_running_card();
       c.redraw_at(c.now + 1000);
@@ -116,8 +122,9 @@ class CalibrateScreen : public Screen {
     text(Text::Title2, "Calibrate", x, 90, label(Label::Primary));
     paragraph(Text::Callout,
               "Your Spyder5 measures the screen and Bloob corrects Expert 1, the picture mode you watch in, to " + std::to_string(kNits) +
-                  " nits for a room with a small lamp on. Hang the meter flat in the middle of the screen first. While it works Bloob plays a "
-                  "black video, which the TV needs to draw its test squares, so keep Bloob open on this screen until it finishes.",
+                  " nits for a room with a small lamp on. Hang the meter flat in the middle of the screen first. The TV draws its test squares "
+                  "under Bloob's picture, so while a run goes this screen turns see-through with a small card in a corner: keep Bloob open on "
+                  "it until the run finishes.",
               x, 160, label(Label::Secondary), W - 2 * safe_x, 3);
     auto list = rows();
     for (size_t i = 0; i < list.size(); i++) {
@@ -148,6 +155,7 @@ class CalibrateScreen : public Screen {
 
   static std::string title(Row r) {
     switch (r) {
+      case Row::Pal: return "Pal session";
       case Row::Check: return "Check";
       case Row::Test: return "Test on Expert 2";
       case Row::Calibrate: return "Calibrate Expert 1";
@@ -159,6 +167,7 @@ class CalibrateScreen : public Screen {
   }
   static std::string subtitle(Row r) {
     switch (r) {
+      case Row::Pal: return "Pal calibrates from your computer; this screen shows the squares and Pal's progress";
       case Row::Check: return "About 3 minutes. Reads test squares; changes nothing";
       case Row::Test: return "About 10 minutes. Changes Expert 2, then puts it back";
       case Row::Calibrate: return "1½ to 2 hours, like Calman. Saves your settings; undone if stopped";
@@ -169,8 +178,89 @@ class CalibrateScreen : public Screen {
     return "";
   }
 
-  // Running, or just started and not yet reported (a second OK must not start a second run).
-  bool busy() const { return running() || !pending_.empty() || ctx().now < starting_until_; }
+  // Running, or just started and not yet reported (a second OK must not start a second run),
+  // or holding a Pal session.
+  bool busy() const { return pal_hold_ || running() || !pending_.empty() || ctx().now < starting_until_; }
+
+  // ---- Pal session (native/PAL-PLAYBOOK.md) ----
+  // Pal runs bloob-cal's Pal commands over SSH from the owner's computer; this screen only
+  // holds the TV ready: see-through, so LG's test squares show (they are drawn under Bloob's
+  // graphics, which hid them in 3.3.3), and the black video only if Pal asks for it
+  // (bloob-cal pal-screen video on writes pal/screen.json). Whether the squares need a video
+  // at all is what a session without it settles. OK ends the session: anything still running
+  // stops, and an open session is undone (pal-end undo).
+  void start_pal() {
+    pal_hold_ = true;
+    pal_ending_ = false;
+    pal_since_ = static_cast<long long>(time(nullptr));
+    row_ = 0;
+    logf("calibrate", "Pal session held");
+  }
+
+  void stop_pal() {
+    if (running()) {
+      long long pid = status_["pid"].as_int();
+      logf("calibrate", "stop Pal's command %lld", pid);
+      Luna::instance().call(kExec, "{\"command\":\"kill -TERM " + std::to_string(pid) + "\"}", nullptr);
+    }
+    if (pal_session_open_ && !pal_ending_) {
+      pal_ending_ = true;
+      launch("pal-end", "undo", 2);  // after the stopped command has let go of the lock
+      return;
+    }
+    if (!pal_session_open_) {
+      pal_hold_ = false;
+      logf("calibrate", "Pal session released");
+    }
+  }
+
+  void draw_pal_card() {
+    using namespace theme;
+    Ctx &c = ctx();
+    c.gfx.clear({0, 0, 0, 0});
+    const int w = 820, h = 210, x = safe_x, y = H - 60 - h;
+    c.gfx.fill_round(x, y, w, h, 30, rgba(0x1c1c1e, 235));
+    static const std::pair<const char *, const char *> names[] = {
+        {"pal-start", "getting the TV ready"}, {"grey-report", "measuring the greys"}, {"pal-propose", "working out a correction"},
+        {"apply-1d", "loading a correction"}, {"pal-light", "setting the light"}, {"pal-end", "finishing"}, {"flashcheck", "checking for flicker"}};
+    std::string action = status_["action"].as_string(), doing;
+    bool ours = status_["updated"].as_int() >= pal_since_;
+    for (auto &n : names)
+      if (action == n.first) doing = n.second;
+    int tx = x + 36, tw = w - 72, ty = y + 28;
+    std::string head = pal_ending_ ? "Pal session: ending, putting Expert 1 back"
+                       : running() && !doing.empty() ? "Pal: " + doing
+                                                     : "Pal session: waiting for your computer";
+    text(Text::Headline, head, tx, ty, label(Label::Primary), tw);
+    ty += 54;
+    long long readings = status_["readings"].as_int(), expected = status_["expected"].as_int();
+    if (running() && expected > 0) {
+      draw_progress(tx, ty, tw, 8, std::min(1.0, static_cast<double>(readings) / expected));
+      ty += 24;
+    }
+    std::string line;
+    const Json &res = status_["result"];
+    if (running()) line = !status_["note"].as_string().empty() ? status_["note"].as_string() : status_["step"].as_string();
+    else if (ours && res.is_object() && res["kind"].as_string() == "report")
+      line = "Last report: average " + fixed(res["summary"]["avg"].as_number()) + ", worst " + fixed(res["summary"]["max"].as_number()) + " \xCE\x94" "E";
+    else if (ours && res.is_object() && res["kind"].as_string() == "applied")
+      line = "After the correction: average " + fixed(res["after"]["summary"]["avg"].as_number()) + ", worst " +
+             fixed(res["after"]["summary"]["max"].as_number()) + " \xCE\x94" "E";
+    else if (ours && res.is_object() && res.has("error")) line = res["error"].as_string();
+    else line = "On your computer, ask Claude to run Pal's SDR grey flow";
+    text(Text::Caption1, line, tx, ty, label(Label::Secondary), tw);
+    ty += 44;
+    std::string hint = c.now < back_note_until_ ? "A Pal session is open: OK ends it, then Back leaves"
+                       : pal_session_open_     ? "OK ends the session and puts Expert 1 back"
+                                               : "OK ends the session";
+    text(Text::Caption1, hint + (pal_video_ ? "  \xC2\xB7  black video on" : ""), tx, ty, label(Label::Tertiary), tw);
+  }
+
+  static std::string fixed(double v) {
+    char b[16];
+    std::snprintf(b, sizeof b, "%.2f", v);
+    return b;
+  }
 
   // Over the patterns: transparent everywhere except a card in the bottom left.
   void draw_running_card() {
@@ -262,6 +352,7 @@ class CalibrateScreen : public Screen {
 
   void stop_black() {
     if (!black_) return;
+    logf("calibrate", "black video unloaded");
     black_->unload();
     black_.reset();
     black_playing_ = false;
@@ -285,6 +376,15 @@ class CalibrateScreen : public Screen {
       c.redraw_at(c.now + 200);
       return;
     }
+    if (pal_hold_) {
+      if (pal_video_ && !black_) start_black();
+      if (!pal_video_ && black_) stop_black();
+      if (pal_video_ && black_failed_ && c.now - black_started_at_ > 5000) {
+        stop_black();
+        start_black();
+      }
+      return;
+    }
     if (busy()) {
       if (black_failed_ && c.now - black_started_at_ > 5000) {
         stop_black();
@@ -297,7 +397,7 @@ class CalibrateScreen : public Screen {
 
   void background() override { stop_black(); }
   void foreground() override {
-    if (busy()) start_black();
+    if (busy() && (!pal_hold_ || pal_video_)) start_black();
   }
 
   // The status file's run is live only if its pid is still bloob-cal: a pid from an
@@ -316,6 +416,16 @@ class CalibrateScreen : public Screen {
     bool ok = false;
     Json s = Json::parse(text, &ok);
     if (ok) status_ = s;
+    Json screen = Json::parse(slurp(cal_dir() + "/pal/screen.json"), &ok);
+    pal_video_ = ok && screen["video"].as_bool();
+    Json session = Json::parse(slurp(cal_dir() + "/pal/session.json"), &ok);
+    pal_session_open_ = ok && session["open"].as_bool();
+    // A session ends when pal-end has run after it was held (from the computer, or from OK here).
+    if (pal_hold_ && status_["action"].as_string() == "pal-end" && status_["state"].as_string() != "running" &&
+        status_["updated"].as_int() >= pal_since_ && !running()) {
+      pal_hold_ = pal_ending_ = false;
+      logf("calibrate", "Pal session ended");
+    }
   }
 
   void start(const std::string &action, const std::string &args = "") {
@@ -328,14 +438,14 @@ class CalibrateScreen : public Screen {
     start_black();
   }
 
-  void launch(const std::string &action, const std::string &args) {
+  void launch(const std::string &action, const std::string &args, int delay_s = 0) {
     std::string bin = std::getenv("BLOOB_CAL_BIN") ? std::getenv("BLOOB_CAL_BIN") : ctx().dir + "/bin/bloob-cal";
     std::string dir = cal_dir();
     // Fixed words only: the action and its arguments come from this screen's own list.
     // bloob-cal writes last-run.log itself once it holds the lock; a refused start only
     // reaches start.log.
-    std::string cmd = "mkdir -p '" + dir + "' && cd '" + dir + "' && '" + bin + "' " + action + (args.empty() ? "" : " " + args) +
-                      " </dev/null >'" + dir + "/start.log' 2>&1 &";
+    std::string cmd = "mkdir -p '" + dir + "' && cd '" + dir + "' && " + (delay_s ? "sleep " + std::to_string(delay_s) + " && " : std::string()) + "'" +
+                      bin + "' " + action + (args.empty() ? "" : " " + args) + " </dev/null >'" + dir + "/start.log' 2>&1 &";
     logf("calibrate", "start %s", action.c_str());
     started_ = action;
     starting_until_ = ctx().now + 8000;
@@ -347,6 +457,10 @@ class CalibrateScreen : public Screen {
   }
 
   void stop() {
+    if (pal_hold_) {
+      stop_pal();
+      return;
+    }
     if (!pending_.empty()) {  // still waiting for the black video: nothing has started
       pending_.clear();
       starting_until_ = 0;
@@ -369,7 +483,8 @@ class CalibrateScreen : public Screen {
       paragraph(Text::Callout, "Start with Check: it confirms the squares appear and the meter reads them.", x, y + 56, label(Label::Tertiary), w, 3);
       return;
     }
-    static const std::pair<const char *, const char *> names[] = {{"check", "Check"}, {"test", "Test on Expert 2"}, {"sdr", "Calibrate Expert 1"}, {"undo", "Undo"}};
+    static const std::pair<const char *, const char *> names[] = {{"check", "Check"}, {"test", "Test on Expert 2"}, {"sdr", "Calibrate Expert 1"}, {"undo", "Undo"},
+                                                                   {"pal-start", "Pal"}, {"grey-report", "Pal"}, {"apply-1d", "Pal"}, {"pal-end", "Pal"}};
     std::string what = action;
     for (auto &n : names)
       if (action == n.first) what = n.second;
@@ -445,6 +560,8 @@ class CalibrateScreen : public Screen {
   bool black_playing_ = false, black_failed_ = false;
   long long black_started_at_ = 0;
   Json status_;
+  bool pal_hold_ = false, pal_ending_ = false, pal_video_ = false, pal_session_open_ = false;
+  long long pal_since_ = 0;
 };
 
 }  // namespace

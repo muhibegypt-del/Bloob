@@ -1,5 +1,7 @@
 # Pal in Bloob
 
+**Status (31 October 2026):** the SDR grey flow (§9–11) is built in Bloob 3.4.0. Pal is Claude Code on the owner's computer, following `native/PAL-PLAYBOOK.md`; it is proven against the simulated TV, not yet on the real one. The in-Bloob agent (§5–8) and the rest of the plan are still proposals.
+
 Written 30 October 2026. The owner shared a design called **Pal: an agentic OLED calibrator**: a frontier model as planner and operator, a numerical engine for the precision, a meter for the physics. It covers a calibration manifest, characterisation first, a learnt control model, a fixed correction order, an objective with uncertainty, auditable tools, safeguards, and a verification report. This note maps Pal onto what Bloob has, names the gaps, and sets the build order. It follows on from `research/Agentic-calibration-for-Bloob.md`, whose steps A0–A4 it replaces. Nothing here is built yet.
 
 Labels: **[have]** in Bloob 3.3.8; **[part]** partly there; **[gap]** missing; **[limit]** not possible with the owner's equipment; **[tv]** seen on the owner's G2.

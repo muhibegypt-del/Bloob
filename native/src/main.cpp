@@ -976,7 +976,7 @@ class App {
   // ---------------------------------------------------------------- scripted runs
 
   // BLOOB_SCRIPT: steps separated by '|': key:<name>, wait:<ms>, media:<event json>, window:<event>,
-  // background, foreground, pump, snap:<name>, quit.
+  // background, foreground, pump, snap:<name>, open:calibrate (straight to a screen, for its tests), quit.
   void load_script() {
     const char *spec = std::getenv("BLOOB_SCRIPT");
     const char *dir_env = std::getenv("BLOOB_SNAPSHOT_DIR");
@@ -1056,6 +1056,7 @@ class App {
       else if (step.kind == "background") background();
       else if (step.kind == "foreground") foreground();
       else if (step.kind == "window") window_event(step.arg);
+      else if (step.kind == "open" && step.arg == "calibrate") ctx().push(make_calibrate());
       else if (step.kind == "quit") running_ = false;
       apply_ops();
       dirty_ = true;

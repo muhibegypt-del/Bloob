@@ -313,3 +313,38 @@ Settings → **Calibrate** (near the bottom, above About). It needs the Spyder5 
 4. **Stop** during a run: the run ends within a reading or two, Expert 1 goes back to factory and your settings, and the screen says *stopped*.
 5. **Undo calibration** (OK twice): Expert 1 back to LG's factory tables and the settings saved before the first calibration (`calibration/expert1-settings.json`).
 6. If anything looks wrong, copy `calibration/status.json` and `calibration/last-run.log`. They hold no keys (the TV pairing key is in `calibration/ssap-key.json`, mode 600; don't share that one).
+
+## 19. New in 3.4: Pal grey (Pal runs from your computer)
+
+`native/PAL-PLAYBOOK.md` is what Claude Code follows as Pal. Once only:
+1. Install the 3.4.0 IPK.
+2. Put Claude Code and the repository on your computer.
+3. Check that `ssh root@192.168.1.26` works.
+
+**First session**
+
+1. Hang the Spyder5 flat in the middle of the screen. Open Settings → Calibrate → **Pal session**, OK twice.
+   - The screen turns see-through with one card in the bottom left.
+   - **There is no black video now.** Note whether the TV shows anything under it.
+2. On the computer, ask Claude Code: *"Run Pal's SDR grey flow per native/PAL-PLAYBOOK.md."*
+3. Watch the card. It shows each step, the readings and the last result.
+4. **The first finding to report:** did `pal-start` see the squares without the video?
+   - Its log says so, under "Are the squares on the screen?".
+   - If it needed `pal-screen video on`, that settles that this TV's squares need a video under them.
+   - If it didn't, they only needed Bloob to be see-through.
+5. **Also report:**
+   - which table entry the TV uses (`index` in pal-start's result);
+   - the before and after averages and worst levels;
+   - the number of passes;
+   - the time taken;
+   - any pink or green flicker seen between squares (the 2 s pattern delay should keep it out of the readings).
+6. **Pressing OK on the card at any point** ends the session and puts Expert 1 back (`pal-end undo`).
+
+**Proven on the desktop, not yet on the TV**
+- `tools/pal-sim/pal_sim.py`: 41 checks.
+  - The flow meets the goal in one pass on the stand-in TV (0.27 average, 0.72 worst; about 9 minutes estimated on the TV).
+  - Every fault ends in a recovered run or a clean undo: flicker, warm-up, meter off the squares or near the edge, no video, socket 500, a table that doesn't load, a meter stall, the meter moving, the video dropping, the gate, Stop.
+  - Check and Test still pass.
+- `cal_tests`: Pal's maths meets the goal in 14 of 15 runs on the virtual G2 and harder panels, the G2 in one pass.
+- `tools/pal-sim/screen_test.py`: the Calibrate screen's Pal session, driven with the real app.
+- **The ARM build:** all 41 checks pass with identical results. That was a static build of the same `bloob-cal` under qemu; qemu can't run the TV's dynamic binaries here, the old 3.3.8 one included.
