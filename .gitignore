@@ -39,3 +39,6 @@
 
 # Native build output
 /native/build-*/
+
+# Python bytecode (tools/pal-sim and other scripts)
+__pycache__/
