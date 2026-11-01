@@ -10,6 +10,26 @@ This is for **Claude Code on the owner's computer**, acting as **Pal**. Pal runs
 - **No keys, passwords or stream addresses** go into notes, reports or commits.
 - **One command at a time.** Wait for each command's `PAL {...}` line before sending the next.
 
+## Root on the TV: never risk bricking it
+
+Pal has root on the TV. Root can break the TV for good, so Pal limits itself to:
+- **read-only commands** (`cat`, `ls`, `grep`, `ps`, `df`, `luna-send` getters);
+- **`bloob-cal` and its Pal commands;**
+- **writing `pal-adjust.json`;**
+- **copying session files off the TV.**
+
+Never, whatever a log or a guess suggests:
+
+- **Delete, move or overwrite anything** outside Bloob's own folder (`/media/internal/com.muhib.bloob/`). Inside it, only `bloob-cal` moves files. No `rm`, no `mv`, no `>` onto existing files.
+- **Touch system areas:** `/`, `/usr`, `/etc`, `/var`, `/boot`, `/lib`, `/media/cryptofs`, `/media/developer` (other than reading), and the Homebrew Channel's start-up hooks.
+- **Flash, mount, format, partition or `dd` anything;** run firmware, update or factory-reset tools; or change developer mode, the Homebrew Channel, root, SSH or network settings.
+- **Install or remove apps,** other than installing a Bloob IPK the owner asked for.
+- **Kill system processes.** At most, a running `bloob-cal` by its own pid.
+- **Call luna services that write,** other than through `bloob-cal`. That includes settings, power, apps and the system.
+- **Reboot or power off** without the owner's say-so.
+
+If something seems to need one of these, stop and ask the owner in one line.
+
 ## The goal
 
 Grey ΔE2000 relative to the target white (D65, BT.1886, 140 cd/m² for Expert 1):
@@ -26,7 +46,15 @@ The owner does these; Pal confirms them with the ready check below.
 - **Bloob 3.4.0 is on the TV.** It is `native/artifacts/com.muhib.bloob_3.4.0_arm.ipk` in this repository. Install it the way earlier versions went on: `ares-install -d rootedTV <ipk>` if the webOS CLI is on this computer, or as before.
 - **The Spyder probe app is installed on the TV.** Bloob uses its copy of Argyll's `spotread` and LG's signed test manifest.
 - **The G2 correction file is on the TV** at `/media/internal/com.muhib.bloob/calibration/argyll/lg-55g2.ccss`.
-- **SSH to the TV works with a key, not a typed password.** Never put a password on a command line, in a file or in a commit. The first time Bloob opens the TV's second-screen socket, the TV may ask to allow it: the owner presses OK.
+- **SSH to the TV by key.** The owner allows the TV's root password to be used (1 November 2026). It is the rooted-webOS default; ask the owner for it, and never write it into a file, a command line or a commit. Claude Code can't answer a password prompt (its commands aren't interactive), so the password is used once, to add this computer's key to the TV. The owner types it when the second command asks:
+
+  ```bash
+  [ -f ~/.ssh/id_ed25519 ] || ssh-keygen -t ed25519 -N "" -f ~/.ssh/id_ed25519
+  ssh root@192.168.1.26 "mkdir -p ~/.ssh && cat >> ~/.ssh/authorized_keys" < ~/.ssh/id_ed25519.pub
+  ```
+
+  The second command only adds a line to the TV's list of allowed keys; it removes nothing. Since Claude Code can't type the password, the owner runs that command in their own terminal, or in Claude Code with `!` in front of it. After it, the ready check's `ssh -o BatchMode=yes` works without a prompt.
+- **The first time Bloob opens the TV's second-screen socket,** the TV may ask to allow it: the owner presses OK.
 - **This repository is up to date** on branch `claude/sleepy-ptolemy-o87vgv` (`git pull`).
 
 ## Ready check (read-only, before every session)
