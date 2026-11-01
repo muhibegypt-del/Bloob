@@ -1,10 +1,17 @@
 # Bloob and Buna: complete project handoff
 
+## Start here (1 November 2026)
+
+- **A Pal calibration session on the owner's computer:** follow [`native/PAL-PLAYBOOK.md`](native/PAL-PLAYBOOK.md) from top to bottom. It is complete on its own; the rest of this file is background. The safe working rules at the end of this file apply as well.
+- **The latest work** is the 3.4.0 entry under "Native track" below.
+- **"Immediate work order for the next assistant"** further down dates from the web app (October 2026) and is history.
+
+
 Read this file before changing the application. This repository contains an independent LG webOS TV streaming prototype, research notes about a reference app called **Elements of A**, and a plan for **Buna**, our own playback and UI runtime. The user wants a polished television experience with excellent browsing, source choice, reliable playback, accurate seeking, working audio/subtitle controls, and efficient use of the LG media pipeline. The user explicitly wants no protected-content investigation. Do not present static code analysis as a live trace.
 
 ## Current review handoff — 15 October 2026
 
-Before choosing the next engine work, read [the independent branch review](docs/Claude-branch-review-2026-10-15.md) and [the review and planning instructions for Claude](docs/Claude-review-and-planning-handoff.md). The review examined commit `8790488` on `claude/sleepy-ptolemy-o87vgv`; it identifies ten concrete reliability findings as well as strengths worth preserving. Verify each finding against the current code, correct anything unsupported or already fixed, then write the implementation plan specified in the handoff. **The current request is to review and plan; stop before implementing application changes.** Historical completion claims below are not substitutes for this verification.
+*History; this request is finished (see Done below).* On 15 October the owner asked for a review and a plan, with no application changes: [the independent branch review](docs/Claude-branch-review-2026-10-15.md) and [the review and planning instructions for Claude](docs/Claude-review-and-planning-handoff.md). Read them before choosing the next engine work.
 
 **Done (15 October 2026, docs only):** [`docs/Claude-review-validation.md`](docs/Claude-review-validation.md) confirms all ten findings at `fb4f412`, with corrections and five additional findings (A1–A5). [`native/RELIABILITY-IMPLEMENTATION-PLAN.md`](native/RELIABILITY-IMPLEMENTATION-PLAN.md) sequences the fixes as R1–R7 (all planned, none implemented) and comes before `native/ENGINE-PLAN.md`, whose status marks were corrected. Start implementation with R1.
 
@@ -397,7 +404,7 @@ Keep data flow one way: backend events update the session; session state updates
 
 Start with the current public HTML video path because it has already played a resolved file and reportedly delivered HDR/Atmos. Do not assume that means it meets track, subtitle, seek, trick-play, output matching, or telemetry requirements. Measure those properties on representative content. A segmented/HLS adapter or native LG ES integration is justified only for a concrete, measured gap that supported public APIs cannot close. Keep native investigation focused on ordinary media behavior and do not copy extracted implementation text into the app.
 
-## Immediate work order for the next assistant
+## Immediate work order for the next assistant (October 2026, web app; history)
 
 1. Read `research/Elements-of-A-system-map.md`, `research/Buna-player-study.md`, and `research/live-episode-study.md`. Inspect current `tv-app/src/screens/Player.tsx`, `Sources.tsx`, `keys.ts`, and the local service. Preserve the distinction between implemented features, user reports, static findings, and TV observations.
 2. Finish the controlled runtime study. SSH `/proc` sampling works. A network-input service and capture service exist, and the TV's second-screen WebSocket port is reachable, but no paired input or screenshot client has been verified. Establish a least-privilege paired client if needed, keeping its bearer key out of Git. A TV prompt may require the user to accept it. Then capture visible control behavior and timestamps for play, pause, repeated seeking, audio/subtitle menus, Back, and exit. Do not claim autonomous control before it works.
