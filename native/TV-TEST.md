@@ -316,8 +316,13 @@ Settings → **Calibrate** (near the bottom, above About). It needs the Spyder5 
 
 ## 19. New in 3.4: Pal grey (Pal runs from your computer)
 
+**3.4.1:**
+- No warm-up wait by default: three quick readings only check that white is steady (`pal-start --warmup` waits as before).
+- Pal on your computer makes each 1D adjustment itself from the report (`native/PAL-PLAYBOOK.md`, *Making the adjustment*); `pal-propose` is its cross-check.
+- Install `com.muhib.bloob_3.4.1_arm.ipk`.
+
 `native/PAL-PLAYBOOK.md` is what Claude Code follows as Pal. Once only:
-1. Install the 3.4.0 IPK.
+1. Install the 3.4.1 IPK.
 2. Put Claude Code and the repository on your computer.
 3. Check that `ssh root@192.168.1.26` works.
 

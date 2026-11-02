@@ -1140,7 +1140,7 @@ static bool pal_dial_light(TvDevice &tv, PalSession &s, double goal, std::string
   return true;  // as close as whole light steps get; the report says how close
 }
 
-static int cmd_pal_start(double nits) {
+static int cmd_pal_start(double nits, bool warmup) {
   mkdir(pal_dir().c_str(), 0755);
   PalSession old;
   if (load_session(&old)) return pal_fail(6, "A Pal session is already open: end it first (pal-end ok, or pal-end undo).");
@@ -1201,10 +1201,12 @@ static int cmd_pal_start(double nits) {
     if (now[p.category].has(p.key) && now[p.category][p.key].as_string() != p.off)
       return restore_processing(tv), pal_fail(6, std::string("Picture processing still on after switching it off: ") + p.key);
   out("  Read back: all off.\n");
-  // 5. Warm-up: white steady over three readings an interval apart (B4: panel and meter together).
-  out("== Warming up: waiting for white to hold steady\n");
-  int interval = getenv("BLOOB_PAL_WARMUP_INTERVAL_S") ? atoi(getenv("BLOOB_PAL_WARMUP_INTERVAL_S")) : 60;
-  int most = getenv("BLOOB_PAL_WARMUP_MAX_S") ? atoi(getenv("BLOOB_PAL_WARMUP_MAX_S")) : 1800;
+  // 5. Steady white. By default three readings back to back: the owner's panel is warm before a
+  //    session, so only the meter's steadiness is checked. With --warmup, white must hold steady
+  //    over readings an interval apart (B4: a panel and meter just switched on).
+  out(warmup ? "== Warming up: waiting for white to hold steady\n" : "== Is white steady? (the panel is warm; three readings)\n");
+  int interval = !warmup ? 0 : getenv("BLOOB_PAL_WARMUP_INTERVAL_S") ? atoi(getenv("BLOOB_PAL_WARMUP_INTERVAL_S")) : 60;
+  int most = !warmup ? 120 : getenv("BLOOB_PAL_WARMUP_MAX_S") ? atoi(getenv("BLOOB_PAL_WARMUP_MAX_S")) : 1800;
   std::vector<double> whites;
   auto w0 = std::chrono::steady_clock::now();
   for (;;) {
@@ -1220,7 +1222,8 @@ static int cmd_pal_start(double nits) {
       out("  white %.2f cd/m2\n", w.xyz.y);
     }
     if (std::chrono::duration<double>(std::chrono::steady_clock::now() - w0).count() > most)
-      return restore_processing(tv), pal_fail(6, "White did not hold steady within the warm-up time: the panel or the meter is still drifting.");
+      return restore_processing(tv), pal_fail(6, warmup ? "White did not hold steady within the warm-up time: the panel or the meter is still drifting."
+                                                         : "White is not steady: the panel or the meter is still settling. Try pal-start --warmup.");
     for (int i = 0; i < interval && !g_stop; i++) sleep(1);
     if (g_stop) return restore_processing(tv), pal_fail(2, "Stopped.");
   }
@@ -1547,7 +1550,7 @@ int main(int argc, char **argv) {
   bool pal = std::find(kPal.begin(), kPal.end(), cmd) != kPal.end();
   if (cmd != "check" && cmd != "test" && cmd != "sdr" && cmd != "undo" && cmd != "patterns" && !pal) {
     out("usage: bloob-cal check | test | sdr [nits] [quick|thorough] | undo | patterns\n"
-        "       bloob-cal pal-start [nits] | grey-report | pal-propose [report.json] [damp] | apply-1d <proposal.json>|--start\n"
+        "       bloob-cal pal-start [nits] [--warmup] | grey-report | pal-propose [report.json] [damp] | apply-1d <proposal.json>|--start\n"
         "                 | pal-light <white cd/m2> | pal-end ok|undo | flashcheck | pal-screen video on|off | pal-note <why>\n");
     return 1;
   }
@@ -1585,7 +1588,15 @@ int main(int argc, char **argv) {
   else if (cmd == "patterns") rc = cmd_patterns();
   else if (cmd == "test") rc = cmd_test();
   else if (cmd == "sdr") rc = cmd_sdr(argc > 2 ? std::max(80.0, std::min(250.0, std::atof(argv[2]))) : 140.0, quick);
-  else if (cmd == "pal-start") rc = cmd_pal_start(argc > 2 ? std::max(80.0, std::min(250.0, std::atof(argv[2]))) : 140.0);
+  else if (cmd == "pal-start") {
+    double nits = 140;
+    bool warmup = false;
+    for (int i = 2; i < argc; i++) {
+      if (std::string(argv[i]) == "--warmup") warmup = true;
+      else nits = std::max(80.0, std::min(250.0, std::atof(argv[i])));
+    }
+    rc = cmd_pal_start(nits, warmup);
+  }
   else if (cmd == "grey-report") rc = cmd_grey_report();
   else if (cmd == "pal-propose") rc = cmd_pal_propose(argc > 2 ? argv[2] : "", argc > 3 ? std::max(0.2, std::min(1.0, std::atof(argv[3]))) : 1.0);
   else if (cmd == "apply-1d") rc = argc > 2 ? cmd_apply_1d(argv[2]) : pal_fail(1, "apply-1d needs a proposal file or --start");

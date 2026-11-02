@@ -227,7 +227,10 @@ The owner chose native. `native/` is a C++ webOS app (`com.muhib.bloob`, "Bloob 
     - `tools/pal-sim/pal_sim.py`: 41 checks against the stand-in TV, which now has a WOLED panel, an area meter with noise, flicker, warm-up and fault switches. The happy path is one pass, 0.27/0.72, about 9 minutes estimated on the TV; every fault is recovered or cleanly undone; Check and Test still pass.
     - `tools/pal-sim/screen_test.py`: the real app's Pal session.
     - **The ARM build:** the same 41 checks pass with a static `bloob-cal` under qemu.
-  - **TV pass:** `native/TV-TEST.md` §19. The IPK is `native/artifacts/com.muhib.bloob_3.4.0_arm.ipk`.
+  - **3.4.1 (2 November 2026):**
+    - No warm-up wait by default; the owner's panel is warm before a session. Three readings back to back check white is steady, and `pal-start --warmup` waits.
+    - Pal (the Claude session on the owner's computer) reads each report and makes the 1D adjustment itself, by the playbook's *Making the adjustment* method; `pal-propose` is its cross-check. That method, written from the text alone, meets the goal in one pass on the stand-in TV (0.25/0.67) and agrees with `pal-propose` within 0.045.
+  - **TV pass:** `native/TV-TEST.md` §19. The IPK is `native/artifacts/com.muhib.bloob_3.4.1_arm.ipk`.
 
   **Agentic calibration (proposal, 30 October 2026, not built):** `research/Agentic-calibration-for-Bloob.md`. A Claude agent in the service runs the session through `bloob-cal serve` tools; the solver still makes every table, and a write gate checks them. The owner's **Pal** design is mapped onto Bloob in `research/Pal-in-Bloob.md`: manifest, characterisation, checkpoints, report; session state stays in `bloob-cal`, so a dropped Pal still ends in verify or undo. Steps P0–P6.
 - **Design (2.0, Glass):** the visual system, with materials, tokens, type, focus, motion, states, the spoken interface and per-screen layouts, is in `native/DESIGN.md`. The tokens live in `native/src/theme.h`, the type scale, label roles and components in `ui.cpp`, and the frost bake in `images.cpp`.
@@ -246,7 +249,7 @@ The owner chose native. `native/` is a C++ webOS app (`com.muhib.bloob`, "Bloob 
   - watch progress and settings.
   If the bus will not start the service, the app runs it directly with the TV's Node and stops it on exit.
 - **Build and test scripts:**
-  - `native/scripts/build.sh`: tests, cross-build, ABI guards (no GLIBCXX, and since 2.4 no glibc symbol newer than GLIBC_2.4), service staging, IPK with fixed modes (`native/artifacts/com.muhib.bloob_3.4.0_arm.ipk`).
+  - `native/scripts/build.sh`: tests, cross-build, ABI guards (no GLIBCXX, and since 2.4 no glibc symbol newer than GLIBC_2.4), service staging, IPK with fixed modes (`native/artifacts/com.muhib.bloob_3.4.1_arm.ipk`).
   - `native/scripts/tv-inspect.sh`: reads the runtime inspector snapshot `/tmp/bloob-state.json` from the TV, read-only.
   - `native/scripts/ui-tour.sh`: drives the whole app on the desktop through the acceptance task, plus quick-menu, Home and pipeline-lost events, against the real service with fixture sources.
   - `native/scripts/ui-snapshots.sh`: covers player states.

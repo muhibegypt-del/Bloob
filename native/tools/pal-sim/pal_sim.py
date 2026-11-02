@@ -285,19 +285,120 @@ def sc_warmup():
     tv = Tv("warm", {"FAKE_TV_WARMUP_S": "1.5", "BLOOB_PAL_WARMUP_INTERVAL_S": "1"})
     try:
         tv.patch_state(power_on=time.time())
-        rc, r, out = tv.run("pal-start", "140")
-        check("warm-up: waited for a steady white", rc == 0 and r["warmup_readings"] >= 4, "%s white readings" % (r or {}).get("warmup_readings"))
+        rc, r, out = tv.run("pal-start", "140", "--warmup")
+        check("warm-up: --warmup waited for a steady white", rc == 0 and r["warmup_readings"] >= 4, "%s white readings" % (r or {}).get("warmup_readings"))
     finally:
         tv.close()
     tv = Tv("warm-timeout", {"FAKE_TV_WARMUP_S": "4", "BLOOB_PAL_WARMUP_INTERVAL_S": "1", "BLOOB_PAL_WARMUP_MAX_S": "2"})
     try:
         tv.patch_state(power_on=time.time())
-        rc, r, _ = tv.run("pal-start", "140")
+        rc, r, _ = tv.run("pal-start", "140", "--warmup")
         st = tv.st()
         check("warm-up: never steady -> refuses, processing put back, nothing written", rc == 6 and st.get("uploads_1d", 0) == 0
               and st["settings"]["picture"].get("energySaving") == "min", (r or {}).get("error", ""))
     finally:
         tv.close()
+
+
+def sc_warm_default():
+    """The default: the panel is already warm, so pal-start only checks white is steady, at once."""
+    tv = Tv("warm-default", {"BLOOB_PAL_WARMUP_INTERVAL_S": "30"})
+    try:
+        t0 = time.time()
+        rc, r, _ = tv.run("pal-start", "140")
+        check("warm panel: no waiting by default (three readings back to back)", rc == 0 and r["warmup_readings"] == 3 and time.time() - t0 < 25,
+              "%s readings, %.0f s" % ((r or {}).get("warmup_readings"), time.time() - t0))
+    finally:
+        tv.close()
+
+
+def playbook_adjust(report, damp):
+    """The playbook's "Making the adjustment" method, written from its text alone: what the
+    Claude session on the owner's computer does with a report. Used to prove the text works."""
+    def inv(m):
+        a, b, c = m[0]; d, e, f = m[1]; g, h, i = m[2]
+        det = a * (e * i - f * h) - b * (d * i - f * g) + c * (d * h - e * g)
+        return [[(e * i - f * h) / det, (c * h - b * i) / det, (b * f - c * e) / det],
+                [(f * g - d * i) / det, (a * i - c * g) / det, (c * d - a * f) / det],
+                [(d * h - e * g) / det, (b * g - a * h) / det, (a * e - b * d) / det]]
+    def mul(m, v):
+        return [sum(m[r][k] * v[k] for k in range(3)) for r in range(3)]
+    lv = report["levels"]
+    pts = report["table"]["points"]
+    prim = [report["primaries"][c] for c in "rgb"]
+    white = next(l for l in lv if l["pct"] == 100)["XYZ"]
+    M = [[prim[c][r] for c in range(3)] for r in range(3)]          # columns R, G, B
+    sc = mul(inv(M), white)
+    Ms = [[prim[c][r] * sc[c] for c in range(3)] for r in range(3)]  # scaled so white is (1, 1, 1)
+    Mi = inv(Ms)
+    d65 = (0.3127 / 0.3290, 1.0, (1 - 0.3127 - 0.3290) / 0.3290)
+    ymin = max(0.05, 0.002 * white[1])
+    readable = [k for k, l in enumerate(lv) if l["measured"] and l["pct"] > 0 and l["Y"] >= ymin]
+    curves = []
+    for c in range(3):
+        pairs = sorted([(0.0, pts["rgb"[c]][0])] + [(mul(Mi, lv[k]["XYZ"])[c], pts["rgb"[c]][k]) for k in readable])
+        for i in range(1, len(pairs)):  # table value never falls as drive rises
+            pairs[i] = (pairs[i][0], max(pairs[i][1], pairs[i - 1][1]))
+        curves.append(pairs)
+    def table_for(c, d):
+        p = curves[c]
+        for i in range(1, len(p)):
+            if d <= p[i][0] or i == len(p) - 1:
+                (d0, o0), (d1, o1) = p[i - 1], p[i]
+                return o0 + (o1 - o0) * (d - d0) / (d1 - d0) if d1 != d0 else o1
+    def drive_at_full(c):
+        p = curves[c]
+        (d0, o0), (d1, o1) = p[-2], p[-1]
+        return d1 + (1.0 - o1) * (d1 - d0) / (o1 - o0) if o1 != o0 else d1
+    dmax = [drive_at_full(c) for c in range(3)]
+    mult = {c: [1.0] * len(lv) for c in "rgb"}
+    for k in readable:
+        want = mul(Mi, [lv[k]["target_Y"] * x for x in d65])
+        reach = min([1.0] + [dmax[c] / want[c] for c in range(3) if want[c] > 1e-9])
+        want = [w * reach for w in want]
+        for c in range(3):
+            o = pts["rgb"[c]][k]
+            o_new = min(table_for(c, want[c]), 1.0)
+            m = o_new / o if o > 1e-4 else 1.0
+            mult["rgb"[c]][k] = min(1.25, max(0.75, 1 + damp * (m - 1)))
+    i5 = next(k for k, l in enumerate(lv) if l["pct"] == 5)
+    i10 = next(k for k, l in enumerate(lv) if l["pct"] == 10)
+    if i5 not in readable:
+        for c in "rgb":
+            mult[c][i5] = 1 + 0.5 * (mult[c][i10] - 1)
+    return {"pct": [l["pct"] for l in lv], "r": mult["r"], "g": mult["g"], "b": mult["b"], "for_table": report["table"]["fnv"]}
+
+
+def sc_playbook_method():
+    """The Claude on the owner's computer makes the adjustment itself, from the report, by the
+    playbook's method: the method as written meets the goal, and agrees with pal-propose."""
+    for name, extra in (("signal", {}), ("code", {"FAKE_TV_1D_INDEX": "code"})):
+        tv = Tv("playbook-" + name, extra)
+        try:
+            tv.run("pal-start", "140")
+            rc, rep, _ = tv.run("grey-report")
+            before = rep["summary"]
+            now = rep
+            passes = 0
+            for p in range(1, 4):
+                if now["summary"]["goal_met"]:
+                    break
+                adj = playbook_adjust(now, 1.0 if p == 1 else 0.8)
+                rc, prop, _ = tv.run("pal-propose", os.path.join(tv.data, "pal", "latest-report.json"), "1.0" if p == 1 else "0.8")
+                gap = max(abs(adj[c][k] - prop[c][k]) for c in "rgb" for k in range(len(adj["pct"])) if adj["pct"][k] >= 10)
+                path = os.path.join(tv.data, "pal", "pal-adjust.json")
+                json.dump(adj, open(path, "w"))
+                rc, ap, _ = tv.run("apply-1d", path)
+                if rc != 0:
+                    break
+                passes = p
+                now = ap["after"]
+                print("    %s pass %d: Claude's method vs pal-propose differ by at most %.4f; after %.2f/%.2f" % (name, p, gap, now["summary"]["avg"], now["summary"]["max"]))
+            a = now["summary"]
+            check("playbook method (%s table): Claude's own adjustment meets the goal" % name, rc == 0 and a["goal_met"],
+                  "before %.2f/%.2f -> after %.2f/%.2f in %d pass(es)" % (before["avg"], before["max"], a["avg"], a["max"], passes))
+        finally:
+            tv.close()
 
 
 def sc_meter_placement():
@@ -470,7 +571,7 @@ def sc_legacy():
         tv.close()
 
 
-SCENARIOS = [sc_happy, sc_repeat, sc_code_index, sc_flicker, sc_warmup, sc_meter_placement, sc_no_video, sc_socket_500,
+SCENARIOS = [sc_happy, sc_playbook_method, sc_repeat, sc_code_index, sc_flicker, sc_warmup, sc_warm_default, sc_meter_placement, sc_no_video, sc_socket_500,
              sc_not_loaded, sc_meter_stall, sc_meter_moved, sc_gate, sc_clear_and_stop, sc_one_session, sc_legacy]
 
 if __name__ == "__main__":

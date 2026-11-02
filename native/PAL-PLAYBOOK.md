@@ -1,6 +1,13 @@
 # Pal playbook: SDR grey calibration
 
-This is for **Claude Code on the owner's computer**, acting as **Pal**. Pal runs `bloob-cal`'s Pal commands on the TV over SSH, reads each result, decides the next step and explains every decision. The design is in `research/Pal-in-Bloob.md` §7–11. Bloob 3.4.0 carries the commands.
+This is for **Claude Code on the owner's computer**, acting as **Pal**.
+
+- **The TV measures.** `bloob-cal` takes the readings and writes each grey report as JSON.
+- **Pal reads every report the moment it is written** (over SSH) and **makes the 1D adjustment itself** from it, by the method in "Making the adjustment" below.
+- **`bloob-cal` checks the adjustment and loads it.** It builds the full table from Pal's 21 numbers per colour, runs the safety gate, confirms the TV read it back, and measures the after report, which goes back to Pal for the next decision.
+- **After the session,** Pal pushes everything to the repository, where the cloud Claude session reviews it.
+
+The design is in `research/Pal-in-Bloob.md` §7–11. Bloob 3.4.1 carries the commands.
 
 ## Rules that never bend
 
@@ -80,7 +87,7 @@ If an old session is still open, finish it first with `pal-end undo` (step 7).
 ## Talking to the TV
 
 **Run every command detached on the TV, then poll its status.** Two reasons:
-- `pal-start` can take up to 30 minutes (its warm-up), longer than a Claude Code command may run.
+- `pal-start` takes minutes (and up to 30 more with `--warmup`); a Claude Code command may run for 10 at most.
 - `bloob-cal` treats a dropped SSH connection as Stop.
 
 ```bash
@@ -125,7 +132,7 @@ An adjustment is `{"pct":[0,5,…,100], "r":[21 multipliers], "g":[…], "b":[�
 
 | Command | Time |
 | --- | --- |
-| `pal-start` | 5–35 min, most of it warm-up |
+| `pal-start` | About 5 min (`--warmup` adds up to 30) |
 | `grey-report` | 3–5 min (dark levels read slowly) |
 | `apply-1d` | 4–6 min, including its after report |
 
@@ -143,7 +150,7 @@ An adjustment is `{"pct":[0,5,…,100], "r":[21 multipliers], "g":[…], "b":[�
    - checks Expert 1;
    - checks the meter is on the squares and centred (a window drawn beside it must stay dark);
    - switches off the processing that moves readings, and reads it back;
-   - warms up until white holds steady;
+   - checks white is steady over three readings back to back. The owner's panel is warm before a session, so there is no warm-up wait; `pal-start 140 --warmup` waits until white holds steady over readings a minute apart, for a TV just switched on;
    - starts from LG's factory data with the gamma switches off;
    - finds out which table entry each level uses;
    - sets the light so the corrected white will reach the target ("white first");
@@ -153,22 +160,28 @@ An adjustment is `{"pct":[0,5,…,100], "r":[21 multipliers], "g":[…], "b":[�
    1. Run `pal-screen video on`; the screen plays a black clip under the squares.
    2. Run `pal-start` again.
    3. Note which way worked: it settles whether LG's squares need a video under them on this TV (`research/LG-calibration-best-practices.md`).
-3. **`grey-report`**: the before report, measured as the owner watches (outside calibration mode).
-   - Read `summary`, then any level with `suspect: true` and its `note`.
+3. **`grey-report`**: the before report, measured as the owner watches (outside calibration mode). Then read the report in full:
+   - `ssh $TV "cat $DIR/latest-report.json"`;
+   - read `summary` first, then any level with `suspect: true` and its `note`.
 4. **Decide.**
    - If `goal_met`, go to step 7.
-   - Otherwise run **`pal-propose`** for the reference correction. Read its `notes`. If it says white can't reach the target, run `pal-light <cd/m²>` first, then a new `grey-report`.
-   - Accept the proposal, change it (damp it, leave a doubtful level alone), or write your own.
-   - Record why with `pal-note "<reason>"`.
-5. **`apply-1d $DIR/latest-proposal.json`** (or your own file). It:
-   - checks the table;
+   - Otherwise **make the adjustment yourself** from this report ("Making the adjustment" below), with damping 1.0 on the first pass and 0.8 on later ones.
+   - **Cross-check it:** run `pal-propose $DIR/latest-report.json <damping>`, `bloob-cal`'s own method. The two use slightly different interpolation, so expect them to differ by up to about 0.05 at a level.
+     - A bigger gap means one of them misread something: check that level's readings before going on.
+     - If its `notes` say white can't reach the target, run `pal-light <cd/m²>` first, then a new `grey-report`.
+   - Record what you decided and why with `pal-note "<reason>"`. For example: *"pass 1: my adjustment, within 0.03 of pal-propose; 5% softened"*.
+   - Send yours: `ssh $TV "cat > $DIR/pal-adjust.json" < adjust.json`.
+5. **`apply-1d $DIR/pal-adjust.json`**. It:
+   - checks the table (the gate);
    - sends it;
    - confirms the read-back equals what was sent;
-   - measures the after report, returned in `after`.
+   - measures the after report and returns it in `after`.
+
+   That is the next report you work from.
 6. **Read the after report and diagnose before the next pass.**
-   - The default is to build on the table now in the TV: the next `pal-propose` measures from it.
+   - The default is to build on the table now in the TV: the after report carries that table's values (`table.points`) and its `fnv`, so the next adjustment is made on top of it.
    - Clear back to the start (`apply-1d --start`) only when a pass made a level worse than at the start.
-   - Use `damp` 0.8 for passes 2 and 3 (`pal-propose $DIR/latest-report.json 0.8`).
+   - Use damping 0.8 for passes 2 and 3.
 
    | What the after report shows | Likely cause | What to do |
    | --- | --- | --- |
@@ -184,6 +197,45 @@ An adjustment is `{"pct":[0,5,…,100], "r":[21 multipliers], "g":[…], "b":[�
    - On success: `pal-end ok`. The table stays, and every file moves to `calibration/history/pal-<started>`.
    - On failure: `pal-end undo`. Expert 1 goes back to factory tables, the owner's saved settings and their picture processing.
 8. **Tell the owner one line:** the result, or what you need. For example: *"Done: grey 0.27 average, worst 0.72. You can take the meter off."*
+
+## Making the adjustment
+
+This is Pal's own calculation, from one report. Use a script for the arithmetic, Python if the computer has it, otherwise PowerShell (`powershell.exe -Command ...` from Git Bash). Don't do the sums in your head.
+
+**What the report gives you:**
+- `levels[k]`: `pct`, `measured`, `XYZ`, `Y`, `target_Y`;
+- `table.points.r|g|b[k]`: the table's value at each level, 0–1;
+- `primaries.r|g|b`: the XYZ of 100% red, green and blue;
+- `table.fnv`.
+
+The target white is D65: x 0.3127, y 0.3290.
+
+1. **Drive space.**
+   - M is the 3×3 matrix whose columns are the red, green and blue primaries' XYZ.
+   - s = M⁻¹ × (the XYZ measured at 100%). Ms is M with each column multiplied by its s, so 100% grey is drive (1, 1, 1).
+   - Every XYZ becomes a drive with Ms⁻¹.
+2. **Readable levels.** Use levels with `measured` true, above 0%, and with Y ≥ the larger of 0.05 cd/m² and 0.2% of white.
+3. **Each channel's curve.** For each colour, pair each readable level's drive (that colour's part of Ms⁻¹ × XYZ) with its table value (`table.points`). Add the pair (0, the table value at 0%). Sort by drive; a table value may never fall as drive rises.
+4. **Full drive.** For each colour, extend the curve's last two points in a straight line to table value 1. That is the most drive the colour can give.
+5. **Each level's target drive.**
+   - The target XYZ is `target_Y` × (0.3127/0.3290, 1, (1 − 0.3127 − 0.3290)/0.3290). Turn it into drive with Ms⁻¹.
+   - If any colour would need more than its full drive, scale all three down by the same factor, so the grey keeps its colour and is a little dim. At 100%, that means the light needs raising (`pal-light`) before the next pass.
+6. **New table value.** On each colour's curve, interpolate the table value that gives the target drive: straight lines between neighbouring points, capped at 1.
+7. **Multiplier.** m = new ÷ current table value at that level.
+   - Then apply damping: m = 1 + damping × (m − 1).
+   - Then keep it within 0.75–1.25.
+   - 0% stays at 1. If 5% wasn't readable, it gets half of 10%'s correction: 1 + 0.5 × (m₁₀ − 1).
+8. **Write `adjust.json`:**
+   - `pct` from the report;
+   - `r`, `g`, `b`: 21 multipliers each;
+   - `for_table`: the report's `table.fnv`.
+
+**Proven on the simulated TV** (`tools/pal-sim/pal_sim.py`, scenario `playbook_method`): this method, written from this text alone, meets the goal in one pass on both kinds of table, at 0.25 average and 0.67 worst. It agrees with `pal-propose` to within 0.045 per level.
+
+**What only Pal can judge:**
+- **A suspect level:** leave its multiplier at 1, or take its neighbours' average, and say so.
+- **A level that moved against the correction last pass:** use a smaller damping there.
+- **Whether a remaining error is real or the meter's wobble:** compare it with `wobble` in the report.
 
 ## Recording the run
 
