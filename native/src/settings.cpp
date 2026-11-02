@@ -84,6 +84,7 @@ class SettingsScreen : public Screen {
       case Row::HeadphoneEq: say = std::string("Earbud correction, ") + (c.headphone_xm5 ? "Sony WF-1000XM5" : "off") + ", adjustable"; break;
       case Row::HeadphoneSync: say = "Headphone lip-sync, " + std::to_string(c.headphone_lead_ms) + " milliseconds, adjustable"; break;
       case Row::Autoplay: say = std::string("Play the next episode automatically, switch, ") + (c.autoplay_next ? "on" : "off"); break;
+      case Row::TextRendering: say = std::string("Text rendering, ") + (c.text_crisp ? "Crisp" : "Smooth") + ", adjustable"; break;
       case Row::Privacy: say = std::string("Block LG tracking and adverts, switch, ") + (privacy_on() ? "on" : "off"); break;
       case Row::SkipIntros: say = std::string("Skip intros and recaps, ") + skip_name(c.skip_intros) + ", adjustable"; break;
       case Row::Motion: say = std::string("Reduce motion, switch, ") + (c.reduce_motion ? "on" : "off"); break;
@@ -121,7 +122,7 @@ class SettingsScreen : public Screen {
   }
 
   enum class Row { Account, Disconnect, Audio, Subtitles, SubtitleSize, SubtitleBackground, SubtitleStyle, Picture, Sources, Headphones,
-                   HeadphoneRoom, HeadphoneBoost, HeadphoneNight, HeadphoneEq, HeadphoneSync, Autoplay, SkipIntros, Privacy, Motion,
+                   HeadphoneRoom, HeadphoneBoost, HeadphoneNight, HeadphoneEq, HeadphoneSync, Autoplay, SkipIntros, Privacy, TextRendering, Motion,
                    Transparency, Contrast, Calibrate, About, Diagnostics };
 
   std::vector<Row> rows() const {
@@ -132,7 +133,7 @@ class SettingsScreen : public Screen {
     // The headphone details only matter while Headphones mode can be on.
     if (ctx().headphones != "off")
       for (Row r : {Row::HeadphoneRoom, Row::HeadphoneBoost, Row::HeadphoneNight, Row::HeadphoneEq, Row::HeadphoneSync}) list.push_back(r);
-    for (Row r : {Row::Autoplay, Row::SkipIntros, Row::Privacy, Row::Motion, Row::Transparency, Row::Contrast, Row::Calibrate, Row::About, Row::Diagnostics}) list.push_back(r);
+    for (Row r : {Row::Autoplay, Row::SkipIntros, Row::Privacy, Row::TextRendering, Row::Motion, Row::Transparency, Row::Contrast, Row::Calibrate, Row::About, Row::Diagnostics}) list.push_back(r);
     return list;
   }
 
@@ -194,7 +195,11 @@ class SettingsScreen : public Screen {
     else if (r == Row::HeadphoneEq) c.headphone_xm5 = !c.headphone_xm5;
     else if (r == Row::HeadphoneSync) c.headphone_lead_ms = std::max(0, std::min(500, c.headphone_lead_ms + 20 * d));
     else if (r == Row::Autoplay) c.autoplay_next = !c.autoplay_next;
-    else if (r == Row::Privacy) {
+    else if (r == Row::TextRendering) {
+      c.text_crisp = !c.text_crisp;
+      Font::set_crisp(c.text_crisp);
+      c.invalidate();
+    } else if (r == Row::Privacy) {
       set_privacy(!privacy_on());
       return;  // saved on the TV by the script, not by the service
     } else if (r == Row::SkipIntros) {
@@ -419,6 +424,11 @@ class SettingsScreen : public Screen {
         case Row::SkipIntros:
           title = "Skip intros and recaps";
           value = skip_name(c.skip_intros);
+          choice = true;
+          break;
+        case Row::TextRendering:
+          title = "Text rendering";
+          value = c.text_crisp ? "Crisp: letters start on whole pixels" : "Smooth: letters at their exact positions";
           choice = true;
           break;
         case Row::Privacy:

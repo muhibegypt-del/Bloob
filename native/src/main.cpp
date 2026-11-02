@@ -290,6 +290,8 @@ class App {
           x.subtitle_size = static_cast<int>(std::max<long long>(0, std::min<long long>(4, r.json["subtitleSize"].as_int(0))));
           x.subtitle_background = r.json["subtitleBackground"].as_bool(false);
           x.subtitle_styled = r.json["subtitleStyled"].as_bool(true);
+          x.text_crisp = r.json["textCrisp"].as_bool(false);
+          Font::set_crisp(x.text_crisp);
           x.picture = r.json["picture"].as_string("best");
           x.sources = r.json["sources"].as_string("all");
           x.preferred_cut = r.json["cut"].as_string("Theatrical");
@@ -581,6 +583,7 @@ class App {
     }
     dirty_ = true;
     input_ = true;
+    last_activity_ = now_ms();
     // Scripted presses carry no timestamp; real ones are stamped when queued.
     perf_.key(event.timestamp ? static_cast<long long>(event.timestamp) + sdl_offset_ : now_ms());
     if (key == Key::Exit) {
@@ -1271,6 +1274,9 @@ class App {
           deferred_frames_++;
         }
       }
+      // Still: no key or pointer, no page coming or going (an ambient hero drift doesn't count).
+      if (!stack_.empty() || leaving_ || entering_.value < 1.0f) last_activity_ = now_ms();
+      maybe_prewarm(now_ms());
       inspect(now_ms());
     }
   }
@@ -1331,6 +1337,42 @@ class App {
   bool tabs_focus_ = false;
   bool tabs_wanted_ = true;
   bool in_background_ = false;
+  // Idle preparation (4.0, as Luma does): once the screen has been still for
+  // 1.5 s, the other pages are built (their data asked for) and then drawn once
+  // out of sight (glyphs baked, artwork requested), one step per still moment,
+  // so a first visit to Films, Series or Search shows at once.
+  long long last_activity_ = 0;
+  int prewarm_step_ = 0;
+  static constexpr long long kPrewarmIdleMs = 1500;
+  void maybe_prewarm(long long now) {
+    static const int kOrder[] = {2, 3, 0};  // Films, Series, Search
+    constexpr int kSteps = 2 * static_cast<int>(sizeof kOrder / sizeof kOrder[0]);
+    if (prewarm_step_ >= kSteps) return;
+    Ctx &c = ctx();
+    if (!stack_.empty() || in_background_ || leaving_ || !c.api.ready() || !c.marks.count("home-frame")) return;
+    if (now - last_activity_ < kPrewarmIdleMs) {
+      c.redraw_at(last_activity_ + kPrewarmIdleMs);
+      return;
+    }
+    int index = kOrder[prewarm_step_ / 2];
+    bool build = prewarm_step_ % 2 == 0;
+    prewarm_step_++;
+    last_activity_ = now;  // one step per still moment
+    if (index == root_) return;
+    if (build) {
+      bool had = static_cast<bool>(roots_[static_cast<size_t>(index)]);
+      ensure_root(index);
+      if (!had) logf("prewarm", "%s page built", roots_[static_cast<size_t>(index)]->name());
+      return;
+    }
+    Screen *s = roots_[static_cast<size_t>(index)].get();
+    if (!s || !c.gfx.begin_cached("prewarm")) return;
+    long long t0 = now_ms();
+    s->draw();
+    c.gfx.end_cached("prewarm", "");
+    c.gfx.drop_cached("prewarm");
+    logf("prewarm", "%s page drawn out of sight in %lld ms", s->name(), now_ms() - t0);
+  }
   long long exit_armed_at_ = 0;
   bool youtube_ = false, youtube_focus_ = false;
   int focused_tab() const { return youtube_focus_ ? kYouTubeTab : root_; }

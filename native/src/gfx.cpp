@@ -410,7 +410,8 @@ int Font::draw(const std::string &text, int x, int y, int size, Color color) {
       // whole pixels (as before) stretched or squeezed it by up to a pixel and
       // threw the oversampling away: uneven stems, blotchy, "pixelated" text.
       if (copy_f) {
-        SDL_FRect dst{pen + g.xoff, std::round(baseline + g.yoff), g.xoff2 - g.xoff, g.yoff2 - g.yoff};
+        float left = crisp_ ? std::round(pen + g.xoff) : pen + g.xoff;
+        SDL_FRect dst{left, std::round(baseline + g.yoff), g.xoff2 - g.xoff, g.yoff2 - g.yoff};
         copy_f(renderer_, a->texture, &g.src, &dst);
       } else {
         int x0 = static_cast<int>(std::lround(pen + g.xoff)), y0 = static_cast<int>(std::lround(baseline + g.yoff));

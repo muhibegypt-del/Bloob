@@ -82,6 +82,7 @@ struct Ctx {
   int subtitle_size = 0;                        // the TV's subtitle size level, 0 smallest .. 4 (TV default 2)
   bool subtitle_background = false;             // a dark box behind subtitles
   bool subtitle_styled = true;                  // 4.0: ASS/SSA subtitles as their authors styled them
+  bool text_crisp = false;                      // 4.0: glyphs on whole pixels (a test against the default, Smooth)
   std::string preferred_cut = "Theatrical";     // the edition the versions list opens on (2.8): the last one chosen
   std::string picture = "best";                 // picture preference: "best", "hdr10" or "sdr"
   std::string sources = "all";                  // source indexes: "all" or "torrentio"

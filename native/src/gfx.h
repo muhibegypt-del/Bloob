@@ -29,6 +29,11 @@ class Font {
   int measure(const std::string &text, int size);
   // Draws with the top of the line box at `y`. Returns the advance width.
   int draw(const std::string &text, int x, int y, int size, Color color);
+  // 4.0: glyphs start on whole pixels ("Crisp", Luma's advice for TVs that scale
+  // a 1080p picture up: a half-covered edge pixel becomes a soft two-pixel band),
+  // or at their exact sub-pixel positions ("Smooth", 3.1.4, the default).
+  static void set_crisp(bool crisp) { crisp_ = crisp; }
+  static bool crisp() { return crisp_; }
   int line_height(int size);
   // Distance from the top of the line box to the baseline, and the height of a
   // capital letter above it: what optical centring needs.
@@ -36,6 +41,7 @@ class Font {
   float cap_height(int size);
 
  private:
+  static inline bool crisp_ = false;
   struct Glyph {
     SDL_Rect src;                   // in the (horizontally oversampled) atlas
     float xoff, yoff, xoff2, yoff2;  // destination box relative to the pen, in pixels
