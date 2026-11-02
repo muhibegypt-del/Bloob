@@ -2,9 +2,12 @@
 // About (version, credits, licences) and the Diagnostics page (display, renderer, LG extensions, remote key codes, log).
 #include <algorithm>
 #include <cmath>
+#include <fstream>
+#include <sstream>
 
 #include "common.h"
 #include "log.h"
+#include "luna.h"
 #include "pairing.h"
 #include "screens.h"
 
@@ -81,6 +84,7 @@ class SettingsScreen : public Screen {
       case Row::HeadphoneEq: say = std::string("Earbud correction, ") + (c.headphone_xm5 ? "Sony WF-1000XM5" : "off") + ", adjustable"; break;
       case Row::HeadphoneSync: say = "Headphone lip-sync, " + std::to_string(c.headphone_lead_ms) + " milliseconds, adjustable"; break;
       case Row::Autoplay: say = std::string("Play the next episode automatically, switch, ") + (c.autoplay_next ? "on" : "off"); break;
+      case Row::Privacy: say = std::string("Block LG tracking and adverts, switch, ") + (privacy_on() ? "on" : "off"); break;
       case Row::SkipIntros: say = std::string("Skip intros and recaps, ") + skip_name(c.skip_intros) + ", adjustable"; break;
       case Row::Motion: say = std::string("Reduce motion, switch, ") + (c.reduce_motion ? "on" : "off"); break;
       case Row::Transparency: say = std::string("Reduce transparency, switch, ") + (c.reduce_transparency ? "on" : "off"); break;
@@ -93,6 +97,7 @@ class SettingsScreen : public Screen {
   }
 
   void refresh() {
+    read_privacy();
     if (!ctx().api.ready()) return;
     ctx().api.get("/api/account", [this](const ApiResult &r) {
       if (!r.ok()) {
@@ -116,7 +121,7 @@ class SettingsScreen : public Screen {
   }
 
   enum class Row { Account, Disconnect, Audio, Subtitles, SubtitleSize, SubtitleBackground, SubtitleStyle, Picture, Sources, Headphones,
-                   HeadphoneRoom, HeadphoneBoost, HeadphoneNight, HeadphoneEq, HeadphoneSync, Autoplay, SkipIntros, Motion,
+                   HeadphoneRoom, HeadphoneBoost, HeadphoneNight, HeadphoneEq, HeadphoneSync, Autoplay, SkipIntros, Privacy, Motion,
                    Transparency, Contrast, Calibrate, About, Diagnostics };
 
   std::vector<Row> rows() const {
@@ -127,7 +132,7 @@ class SettingsScreen : public Screen {
     // The headphone details only matter while Headphones mode can be on.
     if (ctx().headphones != "off")
       for (Row r : {Row::HeadphoneRoom, Row::HeadphoneBoost, Row::HeadphoneNight, Row::HeadphoneEq, Row::HeadphoneSync}) list.push_back(r);
-    for (Row r : {Row::Autoplay, Row::SkipIntros, Row::Motion, Row::Transparency, Row::Contrast, Row::Calibrate, Row::About, Row::Diagnostics}) list.push_back(r);
+    for (Row r : {Row::Autoplay, Row::SkipIntros, Row::Privacy, Row::Motion, Row::Transparency, Row::Contrast, Row::Calibrate, Row::About, Row::Diagnostics}) list.push_back(r);
     return list;
   }
 
@@ -189,7 +194,10 @@ class SettingsScreen : public Screen {
     else if (r == Row::HeadphoneEq) c.headphone_xm5 = !c.headphone_xm5;
     else if (r == Row::HeadphoneSync) c.headphone_lead_ms = std::max(0, std::min(500, c.headphone_lead_ms + 20 * d));
     else if (r == Row::Autoplay) c.autoplay_next = !c.autoplay_next;
-    else if (r == Row::SkipIntros) {
+    else if (r == Row::Privacy) {
+      set_privacy(!privacy_on());
+      return;  // saved on the TV by the script, not by the service
+    } else if (r == Row::SkipIntros) {
       static const char *order[] = {"button", "auto", "off"};
       int i = c.skip_intros == "off" ? 2 : c.skip_intros == "auto" ? 1 : 0;
       c.skip_intros = order[(i + d + 3) % 3];
@@ -230,9 +238,59 @@ class SettingsScreen : public Screen {
     }, alive_);
   }
 
+  // ---------------------------------------------------------------- privacy (4.0)
+  // launcher/privacy.sh, packaged as bin/bloob-privacy.sh, run as root through
+  // the Homebrew Channel. Its status.json is the truth; the row shows it.
+  static std::string privacy_dir() {
+    const char *d = std::getenv("BLOOB_PRIVACY_DIR");
+    return d && *d ? d : "/media/internal/com.muhib.bloob/privacy";
+  }
+  void read_privacy() {
+    std::ifstream f(privacy_dir() + "/status.json");
+    std::stringstream ss;
+    ss << f.rdbuf();
+    privacy_status_ = Json::parse(ss.str());
+  }
+  bool privacy_on() const {
+    if (privacy_wait_until_) return privacy_want_;
+    return privacy_status_["state"].as_string() == "on";
+  }
+  std::string privacy_text() const {
+    if (privacy_wait_until_) return privacy_want_ ? "Switching on\xE2\x80\xA6" : "Switching off\xE2\x80\xA6";
+    if (privacy_status_["state"].as_string() != "on") return "Off: LG's servers see what the TV normally sends";
+    std::string lp = privacy_status_["livePlus"].as_string();
+    return std::to_string(privacy_status_["blocked"].as_int()) + " ad and tracking servers blocked" +
+           (lp == "off" ? std::string(" \xC2\xB7 Live Plus off") : lp.empty() ? std::string() : " \xC2\xB7 Live Plus " + lp);
+  }
+  void set_privacy(bool on) {
+    read_privacy();
+    privacy_seen_at_ = privacy_status_["at"].as_string();
+    privacy_want_ = on;
+    privacy_wait_until_ = ctx().now + 15000;
+    privacy_next_read_ = ctx().now + 1000;
+    std::string bin = std::getenv("BLOOB_PRIVACY_BIN") ? std::getenv("BLOOB_PRIVACY_BIN") : ctx().dir + "/bin/bloob-privacy.sh";
+    std::string cmd = "sh '" + bin + "' " + (on ? "on" : "off") + " </dev/null >/dev/null 2>&1 &";
+    logf("settings", "privacy %s", on ? "on" : "off");
+    Luna::instance().call("luna://org.webosbrew.hbchannel.service/exec", "{\"command\":" + Json::quote(cmd) + "}", [](const std::string &reply) {
+      if (!Json::parse(reply)["returnValue"].as_bool()) logf("settings", "privacy script could not start: %s", reply.c_str());
+    });
+  }
+  Json privacy_status_;
+  std::string privacy_seen_at_;
+  bool privacy_want_ = false;
+  long long privacy_wait_until_ = 0, privacy_next_read_ = 0;
+
   void update(double dt) override {
     ctx().show_tabs(true);
     pairing_.update();
+    // The privacy script's answer (4.0), read once a second while one is awaited.
+    if (privacy_wait_until_ && ctx().now >= privacy_next_read_) {
+      read_privacy();
+      privacy_next_read_ = ctx().now + 1000;
+      if (ctx().now > privacy_wait_until_ || privacy_status_["at"].as_string() != privacy_seen_at_) privacy_wait_until_ = 0;
+      ctx().invalidate();
+    }
+    if (privacy_wait_until_) ctx().redraw_at(privacy_next_read_);
     // Keep the focused row on screen.
     int top = row_top(row_), bottom = top + kRowH;
     float target = scroll_.target;
@@ -362,6 +420,11 @@ class SettingsScreen : public Screen {
           title = "Skip intros and recaps";
           value = skip_name(c.skip_intros);
           choice = true;
+          break;
+        case Row::Privacy:
+          title = "Block LG tracking and adverts";
+          value = privacy_text();
+          toggle = privacy_on();
           break;
         case Row::Motion:
           title = "Reduce motion";

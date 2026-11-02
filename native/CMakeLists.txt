@@ -102,6 +102,8 @@ if (CMAKE_CROSSCOMPILING)
     COMMAND ${CMAKE_STRIP} ${PKG}/bin/bloob
     COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:bloob-cal> ${PKG}/bin/bloob-cal
     COMMAND ${CMAKE_STRIP} ${PKG}/bin/bloob-cal
+    COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_SOURCE_DIR}/launcher/privacy.sh ${PKG}/bin/bloob-privacy.sh
+    COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_SOURCE_DIR}/launcher/LICENSE-native-tv ${PKG}/bin/
     COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_SOURCE_DIR}/package/appinfo.json ${CMAKE_SOURCE_DIR}/package/icon.png ${PKG}/
     COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_SOURCE_DIR}/package/media/black.mp4 ${PKG}/assets/media/
     COMMAND ${CMAKE_COMMAND} -E copy

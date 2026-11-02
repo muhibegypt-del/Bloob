@@ -1141,6 +1141,7 @@ class App {
       else if (step.kind == "foreground") foreground();
       else if (step.kind == "window") window_event(step.arg);
       else if (step.kind == "open" && step.arg == "calibrate") ctx().push(make_calibrate());
+      else if (step.kind == "open" && step.arg == "settings") ctx().push(make_settings());
       else if (step.kind == "quit") running_ = false;
       apply_ops();
       dirty_ = true;
