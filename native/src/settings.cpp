@@ -37,6 +37,11 @@ std::string headphones_note(const Ctx &c) {
   return "Automatic: surround for two ears whenever the TV's sound goes to Bluetooth" + now;
 }
 
+// 4.0: what the player does in an intro or recap (skips.h).
+const char *skip_name(const std::string &s) {
+  return s == "auto" ? "Skip them automatically" : s == "off" ? "Off" : "Offer a Skip button";
+}
+
 #ifndef BLOOB_VERSION
 #define BLOOB_VERSION "dev"
 #endif
@@ -75,6 +80,7 @@ class SettingsScreen : public Screen {
       case Row::HeadphoneEq: say = std::string("Earbud correction, ") + (c.headphone_xm5 ? "Sony WF-1000XM5" : "off") + ", adjustable"; break;
       case Row::HeadphoneSync: say = "Headphone lip-sync, " + std::to_string(c.headphone_lead_ms) + " milliseconds, adjustable"; break;
       case Row::Autoplay: say = std::string("Play the next episode automatically, switch, ") + (c.autoplay_next ? "on" : "off"); break;
+      case Row::SkipIntros: say = std::string("Skip intros and recaps, ") + skip_name(c.skip_intros) + ", adjustable"; break;
       case Row::Motion: say = std::string("Reduce motion, switch, ") + (c.reduce_motion ? "on" : "off"); break;
       case Row::Transparency: say = std::string("Reduce transparency, switch, ") + (c.reduce_transparency ? "on" : "off"); break;
       case Row::Contrast: say = std::string("Increase contrast, switch, ") + (c.high_contrast ? "on" : "off"); break;
@@ -109,7 +115,7 @@ class SettingsScreen : public Screen {
   }
 
   enum class Row { Account, Disconnect, Audio, Subtitles, SubtitleSize, SubtitleBackground, Picture, Sources, Headphones,
-                   HeadphoneRoom, HeadphoneBoost, HeadphoneNight, HeadphoneEq, HeadphoneSync, Autoplay, Motion,
+                   HeadphoneRoom, HeadphoneBoost, HeadphoneNight, HeadphoneEq, HeadphoneSync, Autoplay, SkipIntros, Motion,
                    Transparency, Contrast, Calibrate, About, Diagnostics };
 
   std::vector<Row> rows() const {
@@ -120,7 +126,7 @@ class SettingsScreen : public Screen {
     // The headphone details only matter while Headphones mode can be on.
     if (ctx().headphones != "off")
       for (Row r : {Row::HeadphoneRoom, Row::HeadphoneBoost, Row::HeadphoneNight, Row::HeadphoneEq, Row::HeadphoneSync}) list.push_back(r);
-    for (Row r : {Row::Autoplay, Row::Motion, Row::Transparency, Row::Contrast, Row::Calibrate, Row::About, Row::Diagnostics}) list.push_back(r);
+    for (Row r : {Row::Autoplay, Row::SkipIntros, Row::Motion, Row::Transparency, Row::Contrast, Row::Calibrate, Row::About, Row::Diagnostics}) list.push_back(r);
     return list;
   }
 
@@ -181,6 +187,11 @@ class SettingsScreen : public Screen {
     else if (r == Row::HeadphoneEq) c.headphone_xm5 = !c.headphone_xm5;
     else if (r == Row::HeadphoneSync) c.headphone_lead_ms = std::max(0, std::min(500, c.headphone_lead_ms + 20 * d));
     else if (r == Row::Autoplay) c.autoplay_next = !c.autoplay_next;
+    else if (r == Row::SkipIntros) {
+      static const char *order[] = {"button", "auto", "off"};
+      int i = c.skip_intros == "off" ? 2 : c.skip_intros == "auto" ? 1 : 0;
+      c.skip_intros = order[(i + d + 3) % 3];
+    }
     else if (r == Row::Motion) c.reduce_motion = !c.reduce_motion;
     else if (r == Row::Transparency) c.reduce_transparency = !c.reduce_transparency;
     else if (r == Row::Contrast) c.high_contrast = !c.high_contrast;
@@ -339,6 +350,11 @@ class SettingsScreen : public Screen {
           title = "Play the next episode automatically";
           value = c.autoplay_next ? "Starts after a 10 second countdown" : "Off";
           toggle = c.autoplay_next;
+          break;
+        case Row::SkipIntros:
+          title = "Skip intros and recaps";
+          value = skip_name(c.skip_intros);
+          choice = true;
           break;
         case Row::Motion:
           title = "Reduce motion";

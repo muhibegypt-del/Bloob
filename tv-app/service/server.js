@@ -20,6 +20,7 @@ const bridge = require('./bridge');
 const anime = require('./anime');
 const sources = require('./sources');
 const hrir = require('./hrir');
+const skips = require('./skips');
 
 const PORT = config.port;
 const VERSION = require('./package.json').version;
@@ -283,6 +284,13 @@ async function handleApi(req, res, url) {
     if (pathname === '/api/resolve/status') {
       const job = resolver.status(query.get('id'));
       return job ? reply(res, 200, job) : reply(res, 404, { error: 'This request has expired. Choose the source again.' });
+    }
+    // Skip intro, recap and credits (4.0): each community database's answer, best first.
+    if (pathname === '/api/skips') {
+      const type = query.get('type') === 'series' ? 'series' : 'movie';
+      const duration = Number(query.get('durationMs')) || 0;
+      if (devFixtures && devFixtures.skips) return reply(res, 200, devFixtures.skips(type, String(query.get('id') || ''), duration));
+      return reply(res, 200, await skips.skipsFor(type, String(query.get('id') || ''), duration));
     }
     // Headphones mode's measured responses (3.2.1): the list, then one file's bytes.
     if (pathname === '/api/headphones') return reply(res, 200, { responses: hrir.publicList() });

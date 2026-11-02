@@ -95,6 +95,10 @@ class EsPlayer : public MediaBackend {
   bool converts_audio() const override { return true; }
   // Reloads the sound at the current time when the options change.
   void set_headphones(const HeadphoneOptions &options) override;
+  void set_dolby_vision(bool convert_p7) override {
+    std::lock_guard<std::mutex> lock(mutex_);
+    dolby_vision_ = convert_p7;
+  }
   std::string audio_note() const override { return audio_note_; }
   std::string decoder_note() const override { return decoder_note_; }
   const char *engine_name() const override;
@@ -133,6 +137,7 @@ class EsPlayer : public MediaBackend {
   std::condition_variable cv_;
   std::deque<Command> commands_;
   HeadphoneOptions headphones_;  // under mutex_
+  bool dolby_vision_ = true;      // under mutex_; read when the file opens
   std::mutex sink_mutex_;  // every sink call
   Demuxer demux_;
 

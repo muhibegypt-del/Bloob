@@ -29,6 +29,64 @@ static void test_strip_nals() {
   CHECK(keep == want);
 }
 
+static std::vector<uint8_t> read_bytes(const std::string &path) {
+  std::ifstream in(path, std::ios::binary);
+  return std::vector<uint8_t>((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+}
+
+// 4.0: Dolby Vision profile 7 → 8.1 on an access unit, against dovi_tool's own
+// answer for the same RPU (tests/fixtures/dovi, MIT).
+static void test_dolby_vision_81() {
+  // The pure part, with a stand-in converter: EL units go, RPUs are replaced, the rest stays.
+  auto fake = [](const uint8_t *nal, size_t len, std::vector<uint8_t> &out) {
+    if (len < 3 || nal[2] == 0xEE) return false;  // "unreadable"
+    out = {62 << 1, 1, 0x81};
+    return true;
+  };
+  std::vector<uint8_t> au = {0, 0, 0, 1, 32 << 1, 1, 0xAA,   // VPS
+                             0, 0, 1, 1 << 1, 1, 0xCC,      // slice
+                             0, 0, 1, 63 << 1, 1, 0xDD,     // enhancement layer
+                             0, 0, 1, 62 << 1, 1, 0x19, 0}; // RPU (a padding zero after it)
+  long long ok = 0, bad = 0;
+  demux::dv_p7_to_81(au, fake, ok, bad);
+  std::vector<uint8_t> want = {0, 0, 0, 1, 32 << 1, 1, 0xAA, 0, 0, 1, 1 << 1, 1, 0xCC, 0, 0, 0, 1, 62 << 1, 1, 0x81};
+  CHECK(au == want);
+  CHECK(ok == 1 && bad == 0);
+  std::vector<uint8_t> refused = {0, 0, 1, 1 << 1, 1, 0xCC, 0, 0, 1, 62 << 1, 1, 0xEE};
+  demux::dv_p7_to_81(refused, fake, ok, bad);
+  CHECK(refused == std::vector<uint8_t>({0, 0, 1, 1 << 1, 1, 0xCC}));
+  CHECK(bad == 1);
+
+  if (!demux::dovi_available()) {
+    std::printf("demux: Dolby Vision converter not built (scripts/build-dovi.sh host); real RPUs skipped\n");
+    return;
+  }
+  for (const char *name : {"fel", "mel"}) {
+    std::string dir = BLOOB_TEST_FIXTURES "/dovi/";
+    std::vector<uint8_t> orig = read_bytes(dir + name + "_orig.bin"), to81 = read_bytes(dir + name + "_to_81.bin");
+    CHECK(orig.size() > 30 && to81.size() > 30);
+    if (orig.size() <= 30 || to81.size() <= 30) continue;
+    // The samples are start code + RPU payload; in a stream the unit carries its 0x7C 0x01 header.
+    std::vector<uint8_t> unit = {0x7C, 0x01};
+    unit.insert(unit.end(), orig.begin() + 4, orig.end());
+    CHECK(demux::dovi_profile(unit.data(), unit.size()) == 7);
+    std::vector<uint8_t> frame = {0, 0, 1, 1 << 1, 1, 0xCC, 0, 0, 1, 63 << 1, 1, 0xDD, 0, 0, 0, 1};
+    frame.insert(frame.end(), unit.begin(), unit.end());
+    long long good = 0, failed = 0;
+    demux::dv_p7_to_81(frame, demux::dovi_convert, good, failed);
+    std::vector<uint8_t> expect = {0, 0, 1, 1 << 1, 1, 0xCC, 0, 0, 0, 1, 0x7C, 0x01};
+    expect.insert(expect.end(), to81.begin() + 4, to81.end());
+    CHECK(good == 1 && failed == 0);
+    // MEL: byte for byte what dovi_tool's mode 2 makes. FEL: dovi_tool's sample
+    // keeps the mapping (via MEL, or mode 5); mode 2 sets it to no-op, as when the
+    // enhancement layer is dropped, so it is checked as profile 8 only.
+    if (std::string(name) == "mel") CHECK(frame == expect);
+    std::vector<uint8_t> out_unit(frame.begin() + 10, frame.end());
+    CHECK(demux::dovi_profile(out_unit.data(), out_unit.size()) == 8);
+    if (std::string(name) == "mel" && frame != expect) std::printf("  %s: got %zu bytes, dovi_tool %zu\n", name, frame.size(), expect.size());
+  }
+}
+
 static bool make_file(const std::string &path) {
   if (std::system("ffmpeg -version >/dev/null 2>&1") != 0) return false;
   std::ofstream("/tmp/bloob-demux-test.srt") << "1\n00:00:01,000 --> 00:00:02,500\n<i>First line</i>\n\n2\n00:00:05,000 --> 00:00:06,000\nSecond\n";
@@ -150,6 +208,7 @@ int run_demux_tests() {
   failures = 0;
   test_cue_text();
   test_strip_nals();
+  test_dolby_vision_81();
   test_file();
   if (!failures) std::printf("demux tests passed\n");
   return failures;

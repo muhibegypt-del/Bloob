@@ -97,12 +97,25 @@ describe('service ranking', () => {
     expect(byId(rank([truehd, ddp], { profile: verified }), 'truehd').notes).toContain('Dolby Atmos');
   });
 
-  it('scores disc Dolby Vision as HDR10 and keeps web Dolby Vision ahead', () => {
+  it('plays disc Dolby Vision as 8.1 through Bloob\'s engine, and as HDR10 where it can\'t', () => {
+    const disc = candidate({ id: 'disc', release: 'Film.2024.2160p.UHD.BluRay.REMUX.DV.HDR10.HEVC.DDP5.1', claims: { resolution: '4K', hdr: ['DV', 'HDR10'], audio: ['Dolby Digital Plus'], channels: '5.1', container: 'MKV' }, sourceType: 'REMUX', seeders: 100, sizeBytes: 30e9 });
+    const view = byId(rank([disc], {}), 'disc');
+    expect(view.picture).toBe('Dolby Vision (disc, played as 8.1)');
+    expect(view.headline).toBe('4K · Dolby Vision');
+    expect(view.dolbyVision).toBe('p8');
+    // The HDR10 preference keeps the base layer, as before.
+    const ten = byId(rank([disc], { picture: 'hdr10' }), 'disc');
+    expect(ten.picture).toBe('HDR10 (disc Dolby Vision unsupported)');
+    expect(ten.dolbyVision).toBe('');
+  });
+
+  it('scores disc Dolby Vision as HDR10 on a TV profile without the converter', () => {
+    const noConvert = Object.assign({}, profileModule.profileFor(), { dolbyVisionProfile7: 'no' });
     const same = { seeders: 100 };
     const disc = candidate({ id: 'disc', release: 'Film.2024.2160p.UHD.BluRay.REMUX.DV.HDR10.HEVC.DDP5.1', claims: { resolution: '4K', hdr: ['DV', 'HDR10'], audio: ['Dolby Digital Plus'], channels: '5.1', container: 'MP4' }, sourceType: 'REMUX', seeders: same.seeders, sizeBytes: 30e9 });
     const encode = candidate({ id: 'encode', claims: { resolution: '4K', hdr: ['DV', 'HDR10'], audio: ['Dolby Digital Plus'], channels: '5.1', container: 'MP4' }, sourceType: 'BluRay', seeders: same.seeders, sizeBytes: 20e9 });
     const web = candidate({ id: 'web', claims: { resolution: '4K', hdr: ['DV', 'HDR10'], audio: ['Dolby Digital Plus'], channels: '5.1', container: 'MP4' }, sourceType: 'WEB-DL', seeders: same.seeders, sizeBytes: 20e9 });
-    const result = rank([disc, encode, web], {});
+    const result = rank([disc, encode, web], { profile: noConvert });
     expect(['web', 'encode']).toContain(result.recommended.id);
     expect(result.recommended.picture).toBe('Dolby Vision + HDR');
     expect(result.recommended.headline).toBe('4K · Dolby Vision');
@@ -117,7 +130,7 @@ describe('service ranking', () => {
     }
     // A profile 8 hint keeps Dolby Vision.
     const p8 = candidate(Object.assign({}, disc, { id: 'p8', release: 'Film.2024.2160p.BluRay.REMUX.DV.P8.HDR10' }));
-    expect(byId(rank([p8], {}), 'p8').picture).toBe('Dolby Vision + HDR');
+    expect(byId(rank([p8], { profile: noConvert }), 'p8').picture).toBe('Dolby Vision + HDR');
   });
 
   it('labels and scores HDR10+ as HDR10 on this TV', () => {

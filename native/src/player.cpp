@@ -22,6 +22,7 @@
 #include "inspect.h"
 #include "screens.h"
 #include "session.h"
+#include "skips.h"
 #include "speech.h"
 
 namespace {
@@ -287,6 +288,7 @@ class PlayerScreen : public Screen {
     c.refresh_headphone_responses();
     applied_hp_ = c.headphone_options();
     media_->set_headphones(applied_hp_);
+    media_->set_dolby_vision(c.picture == "best");
     // The engine reads AllDebrid's HTTPS link through the service, which keeps it in memory.
     if (media_->converts_audio() && url_.compare(0, 8, "https://") == 0 && engine_url_.empty()) {
       if (engine_url_asked_) {
@@ -540,6 +542,131 @@ class PlayerScreen : public Screen {
   // The next episode exists and has aired (an unaired one gets no Up next).
   bool next_ready() const { return play::after(req_, today_).has_value(); }
 
+  // ---------------------------------------------------------------- skips (4.0)
+
+  // Once the file's length is known: the community databases' times, merged
+  // behind the file's own chapters.
+  void ask_skips(long long duration) {
+    skips_asked_ = true;
+    std::string path = "/api/skips?type=" + std::string(req_.item.type == "series" ? "series" : "movie") +
+                       "&id=" + req_.video_id + "&durationMs=" + std::to_string(duration);
+    std::weak_ptr<int> alive = alive_;
+    ctx().api.get(path, [this, alive, duration](const ApiResult &r) {
+      if (!alive.lock() || !opened_) return;
+      std::vector<skips::Chapter> chapters;
+      for (const auto &ch : media_->info().chapters) chapters.push_back({ch.start_ms, ch.end_ms, ch.title});
+      std::vector<std::vector<skips::Segment>> sources = {skips::from_chapters(chapters, duration)};
+      if (r.ok()) {
+        const Json &list = r.json["sources"];
+        for (size_t i = 0; i < list.size(); i++) {
+          std::vector<skips::Segment> segs;
+          const Json &s = list[i]["segments"];
+          for (size_t k = 0; k < s.size(); k++) {
+            skips::Segment seg;
+            if (!skips::parse_name(s[k]["kind"].as_string(), &seg.kind)) continue;
+            seg.start_ms = s[k]["startMs"].as_int(-1);
+            seg.end_ms = s[k]["endMs"].as_int(-1);
+            seg.source = list[i]["name"].as_string();
+            segs.push_back(seg);
+          }
+          sources.push_back(segs);
+        }
+      }
+      skips_ = skips::merge(sources, duration);
+      skip_done_ = 0;
+      std::string found;
+      for (const auto &s : skips_)
+        found += std::string(found.empty() ? "" : ", ") + skips::name(s.kind) + " " + std::to_string(s.start_ms / 1000) + "-" +
+                 (s.end_ms < 0 ? std::string("end") : std::to_string(s.end_ms / 1000)) + " s (" + s.source + ")";
+      logf("player", "skips: %s", found.empty() ? "none known" : found.c_str());
+      ctx().redraw_at(ctx().now);
+    }, alive_);
+  }
+
+  // The intro or recap the viewer can skip with OK now, or -1.
+  int skip_offer() const {
+    if (skip_now_ < 0 || ctx().skip_intros != "button" || up_next_ || panel_ != Panel::None) return -1;
+    if (skip_done_ & (1u << skip_now_)) return -1;
+    Phase p = session_.phase();
+    if ((p != Phase::Playing && p != Phase::Paused) || session_.preview_ms() || session_.pending_ms()) return -1;
+    return skip_now_;
+  }
+
+  void skip_to(int i, bool automatic) {
+    if (i < 0 || i >= static_cast<int>(skips_.size())) return;
+    const skips::Segment &s = skips_[static_cast<size_t>(i)];
+    long long t = ctx().now;
+    skip_done_ |= 1u << i;
+    long long to = skips::target(s, session_.duration_ms());
+    logf("player", "%s %s: %lld -> %lld ms (%s)", automatic ? "skipped" : "viewer skipped", skips::name(s.kind),
+         session_.position_ms(t), to, s.source.c_str());
+    session_.seek_to(to, t);
+    if (automatic) {
+      skip_notice_ = s.kind == skips::Kind::Intro ? "Skipped the intro" : "Skipped the recap";
+      skip_notice_until_ = t + 2500;
+    }
+  }
+
+  // Each frame: which segment the picture is in, and what that means.
+  void update_skips(long long t, long long duration) {
+    Ctx &c = ctx();
+    if (!skips_asked_ && opened_ && session_.started() && duration > 0) ask_skips(duration);
+    Phase p = session_.phase();
+    if (skips_.empty() || (p != Phase::Playing && p != Phase::Paused) || session_.preview_ms() || session_.pending_ms()) {
+      skip_now_ = -1;
+      return;
+    }
+    long long pos = session_.position_ms(t);
+    int i = skips::at(skips_, pos, duration);
+    skip_now_ = i;
+    if (i >= 0 && !(skip_done_ & (1u << i))) {
+      const skips::Segment &s = skips_[static_cast<size_t>(i)];
+      if (s.kind == skips::Kind::Credits) {
+        // An episode's credits: Up next comes now rather than at the very end.
+        skip_done_ |= 1u << i;
+        if (req_.item.type == "series" && next_ready() && !up_next_) {
+          logf("player", "credits from %lld s (%s): Up next", s.start_ms / 1000, s.source.c_str());
+          if (!prepared_ && c.autoplay_next) prepare_next();
+          up_next_ = true;
+          up_next_at_ = t;
+        }
+      } else if (c.skip_intros == "auto" && p == Phase::Playing) {
+        skip_to(i, true);
+      }
+    }
+    // Wake for the next boundary: a segment starting, or its last 3 s.
+    if (p == Phase::Playing) {
+      long long next = -1;
+      for (const auto &s : skips_) {
+        long long end = (s.end_ms >= 0 ? s.end_ms : duration) - 3000;
+        for (long long b : {s.start_ms, end})
+          if (b > pos && (next < 0 || b < next)) next = b;
+      }
+      if (next > 0) c.redraw_at(t + (next - pos));
+    }
+    if (skip_notice_until_ > t) c.redraw_at(skip_notice_until_);
+  }
+
+  // Bottom right, where the controls end, while the controls are hidden.
+  void draw_skip(float a) {
+    Ctx &c = ctx();
+    if (skip_notice_until_ > c.now) {
+      int w = measure(Text::Callout, skip_notice_) + 60, h = 66;
+      int x = kBarRight - w, y = H - kTrackBottom - h;
+      c.gfx.fill_round(x, y, w, h, h / 2, rgba(0x1e1e1e, 200));
+      text(Text::Callout, skip_notice_, x + 30, y + (h - line_for(Text::Callout)) / 2, label(Label::Primary));
+    }
+    int i = skip_offer();
+    if (i < 0 || a <= 0.01f) return;
+    GlassButton b;
+    b.label = skips::label(skips_[static_cast<size_t>(i)].kind);
+    b.focused = true;
+    b.variant = ButtonStyle::Player;
+    b.alpha = a;
+    int w = glass_button_width(b);
+    draw_glass_button(kBarRight - w, H - kTrackBottom - theme::button_h, b);
+  }
+
   // Report where the viewer is. `state`: "paused", "stopped" (leaving), "ended";
   // otherwise from the session. The service decides whether that is finished.
   void save_progress(const char *state = nullptr) {
@@ -638,6 +765,7 @@ class PlayerScreen : public Screen {
     }
     if (up_next_ && req_.next) return "Up next, " + episode_code(req_.next->season, req_.next->episode) + ", " + req_.next->title + ". Play now, button";
     if (!session_.started()) return reconnecting_ ? "Reconnecting" : "Starting " + req_.item.name;
+    if (int i = skip_offer(); i >= 0 && !hud_) return std::string(skips::label(skips_[static_cast<size_t>(i)].kind)) + ", button";
     if (panel_ != Panel::None) {
       const MediaInfo &info = media_->info();
       auto labels = distinct_labels(panel_ == Panel::Audio ? info.audio : info.text, panel_ == Panel::Audio);
@@ -826,6 +954,17 @@ class PlayerScreen : public Screen {
       show_hud();
       return true;
     }
+    // Skip intro (4.0): while the controls are hidden, OK skips and Back waves it away.
+    if (int i = skip_offer(); i >= 0 && !hud_) {
+      if (key == Key::Ok && !repeat) {
+        skip_to(i, false);
+        return true;
+      }
+      if (key == Key::Back) {
+        skip_done_ |= 1u << i;
+        return true;
+      }
+    }
     if (key == Key::Info || key == Key::Blue) {
       toggle_stats();
       return true;
@@ -916,6 +1055,7 @@ class PlayerScreen : public Screen {
       play_next();
       return;
     }
+    update_skips(t, duration);
     // Headphones: the XM5s connecting or going, or a setting changed (a pause
     // after the last change, since the sound reloads each time).
     HeadphoneOptions hp = c.headphone_options();
@@ -934,7 +1074,8 @@ class PlayerScreen : public Screen {
     bool show = hud_ || hud_pinned();
     hud_anim_.to(show ? 1.0f : 0.0f);
     panel_anim_.to(panel_ != Panel::None ? 1.0f : 0.0f);
-    if (hud_anim_.step(dt) | panel_anim_.step(dt)) c.animating = true;
+    skip_anim_.to(skip_offer() >= 0 && !show ? 1.0f : 0.0f);
+    if (hud_anim_.step(dt) | panel_anim_.step(dt) | skip_anim_.step(dt)) c.animating = true;
     // Redraw for a visible moving clock (4×/s), the seek preview and countdowns.
     if (session_.preview_ms() || (up_next_ && c.autoplay_next) || session_.phase() == Phase::Buffering || !session_.started())
       c.animating = true;
@@ -1086,6 +1227,7 @@ class PlayerScreen : public Screen {
       }
     }
     if (stats_) draw_stats();
+    draw_skip(skip_anim_.value);
     if (a <= 0.01f) return;
     draw_hud(a, phase);
     if (panel_anim_.value > 0.01f) draw_panel_tracks(panel_anim_.value);
@@ -1642,6 +1784,15 @@ class PlayerScreen : public Screen {
   bool up_next_ = false;
   long long up_next_at_ = 0;
   Anim hud_anim_{overlay_rate, 1}, panel_anim_{overlay_rate};
+  // Skip intro, recap and credits (4.0, skips.h): the segments for this file,
+  // the one offered now, and the ones already skipped or waved away (a bit each).
+  std::vector<skips::Segment> skips_;
+  bool skips_asked_ = false;
+  int skip_now_ = -1;
+  unsigned skip_done_ = 0;
+  std::string skip_notice_;
+  long long skip_notice_until_ = 0;
+  Anim skip_anim_{overlay_rate};
 };
 
 }  // namespace

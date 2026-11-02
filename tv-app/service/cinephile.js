@@ -80,10 +80,11 @@ function lossless(c) {
 }
 
 /** "Dolby Vision P7", "HDR10+", "HDR10", "SDR": the picture as a cinephile names it. */
-function pictureName(c, dvProfile) {
+function pictureName(c, dvProfile, p7Converts) {
   const hdr = (c.claims || {}).hdr || [];
-  // Profile 7 (disc) plays as its HDR10 base on this TV; say so rather than promise Dolby Vision.
-  if (hdr.indexOf('DV') >= 0 && dvProfile === 'p7') return 'HDR10 (Dolby Vision P7 disc)';
+  // Profile 7 (disc): Bloob's engine plays it as Dolby Vision 8.1 (4.0); with
+  // the HDR10 picture preference, or a TV profile without the converter, it is its HDR10 base.
+  if (hdr.indexOf('DV') >= 0 && dvProfile === 'p7') return p7Converts ? 'Dolby Vision P7 disc (as 8.1)' : 'HDR10 (Dolby Vision P7 disc)';
   if (hdr.indexOf('DV') >= 0) return dvProfile ? `Dolby Vision ${dvProfile.toUpperCase()}` : 'Dolby Vision';
   if (hdr.indexOf('HDR10+') >= 0) return 'HDR10+';
   if (hdr.length) return hdr.indexOf('HLG') >= 0 && hdr.length === 1 ? 'HLG' : 'HDR10';

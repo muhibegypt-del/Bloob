@@ -3,8 +3,11 @@
 // (over plain HTTP from the service, which proxies AllDebrid) and hands out
 // what the TV's decoders take:
 //   - video as Annex-B access units (H.264/HEVC converted from MP4/Matroska
-//     form; Dolby Vision profile 7's enhancement layer and RPU removed, since
-//     this TV plays its HDR10 base);
+//     form). Dolby Vision profile 7 (disc remuxes, two layers) becomes
+//     single-layer profile 8.1 (4.0): the enhancement layer is dropped and each
+//     RPU rewritten (dovi.h, dovi_tool's library). Without that library, or
+//     with the HDR10/SDR picture preference, the RPU goes too and the HDR10
+//     base plays, as before;
 //   - sound as Dolby: AC-3 and E-AC-3 (with Atmos) pass through untouched;
 //     everything else (DTS, TrueHD, AAC, FLAC, PCM, Opus…) is decoded and
 //     re-encoded to E-AC-3, 5.1 at most, on this thread;
@@ -34,6 +37,9 @@ struct DemuxFacts {
   std::string hdr;  // "Dolby Vision", "HDR10", "HLG", "SDR"
   int dv_profile = -1, dv_level = 0;
   bool dv_el = false, dv_rpu = false, dv_bl_compatible = false;
+  // The profile the TV is told and given: 8 for a converted profile 7, else dv_profile.
+  int dv_profile_out = -1;
+  bool dv_converted = false;
   // Mastering display (0.00002 units for chromaticity, 0.0001 cd/m2 for luminance) and light level.
   bool has_mastering = false;
   int primaries_xy[3][2] = {{0, 0}, {0, 0}, {0, 0}}, white_xy[2] = {0, 0};
@@ -93,6 +99,12 @@ class Demuxer {
   void close();
   const DemuxFacts &facts() const { return facts_; }
 
+  // Dolby Vision profile 7 → 8.1 (default on). Set before open().
+  void set_dolby_vision(bool convert_p7) { dv_convert_ = convert_p7; }
+  // RPUs rewritten and refused since open (a refused one is dropped from its frame).
+  long long dv_rpus_ok() const { return dv_ok_; }
+  long long dv_rpus_bad() const { return dv_bad_; }
+
   // Headphones mode, applied at the next select_audio().
   void set_headphones(const HeadphoneOptions &options) { headphones_ = options; }
   const HeadphoneOptions &headphones() const { return headphones_; }
@@ -122,6 +134,8 @@ class Demuxer {
   AudioOut audio_out_;
   HeadphoneOptions headphones_;
   int audio_choice_ = -1, text_choice_ = -1;
+  bool dv_convert_ = true;
+  long long dv_ok_ = 0, dv_bad_ = 0;
   std::atomic<bool> interrupted_{false};
   friend int demux_interrupt(void *);
 };
@@ -131,6 +145,17 @@ namespace demux {
 // Removes HEVC NAL units of the given types (Annex-B input), e.g. 62/63 for
 // Dolby Vision's RPU and enhancement layer.
 void strip_hevc_nals(std::vector<uint8_t> &annexb, int type_a, int type_b);
+// Dolby Vision profile 7 → 8.1 on one access unit (Annex-B): enhancement-layer
+// units (type 63) removed, each RPU (type 62) rewritten by `convert` (the NAL
+// unit without start code in, the new one out; false: refused, the RPU is
+// dropped). Adds to `ok` / `bad`. dovi_available() says whether Bloob was built
+// with the converter; dovi_convert() is it.
+using RpuConvert = bool (*)(const uint8_t *nal, size_t len, std::vector<uint8_t> &out);
+void dv_p7_to_81(std::vector<uint8_t> &annexb, RpuConvert convert, long long &ok, long long &bad);
+bool dovi_available();
+bool dovi_convert(const uint8_t *nal, size_t len, std::vector<uint8_t> &out);
+// The profile an RPU unit (no start code) carries, -1 unreadable or no converter.
+int dovi_profile(const uint8_t *nal, size_t len);
 // Plain text from a subtitle packet: SubRip/WebVTT tags and ASS overrides removed, \N as new lines.
 std::string cue_text(const std::string &codec, const std::string &payload);
 }  // namespace demux

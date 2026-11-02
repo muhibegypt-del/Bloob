@@ -95,6 +95,9 @@ function pictureOn(candidate, profile, preference) {
   const dvShows = containers.indexOf(container) >= 0;
   const base = hdr.filter(h => h !== 'DV')[0];
   const baseLabel = !base ? 'HDR10' : base === 'HDR10+' && !profile.hdr10plus ? 'HDR10' : base === 'HDR' ? 'HDR10' : base;
+  if (dvProfile === 'p7' && profile.dolbyVisionProfile7 === 'convert' && pref !== 'hdr10' && dvShows) {
+    return { label: 'Dolby Vision (disc, played as 8.1)', short: 'Dolby Vision', bonus: WEIGHTS.dolbyVision, family: 'DV', dolbyVision: dvProfile, discConverted: true };
+  }
   if (dvProfile === 'p7' && profile.dolbyVisionProfile7 !== 'yes') {
     return { label: 'HDR10 (disc Dolby Vision unsupported)', short: 'HDR10', bonus: WEIGHTS.hdr, discDolbyVision: true, family: 'HDR', dolbyVision: dvProfile };
   }
@@ -404,9 +407,10 @@ function view(ranked, prefs) {
     match: ranked.match === 'same' || ranked.match === 'like' ? ranked.match : '',
     scope: c.pack ? 'pack' : 'episode',
     // Picture family for the list's filters, and the guessed Dolby Vision
-    // profile the player may signal (never 'p7': the TV can't show it).
+    // profile the player may signal (never 'p7': the TV can't show it; a disc
+    // version Bloob's engine converts (4.0) is signalled as the 8.1 it becomes).
     family: ranked.picture.family,
-    dolbyVision: ranked.picture.dolbyVision === 'p7' ? '' : ranked.picture.dolbyVision,
+    dolbyVision: ranked.picture.dolbyVision === 'p7' ? (ranked.picture.discConverted ? 'p8' : '') : ranked.picture.dolbyVision,
     container: (c.claims || {}).container || '',
     sources: (c.providers || [c.provider]).filter(Boolean),
   });
@@ -417,7 +421,7 @@ function cinephileView(ranked, base) {
   const c = ranked.candidate;
   const cut = cine.cutOf(c);
   const tags = cine.tagsOf(c).concat(c.seadex === 'best' ? ['SeaDex best'] : c.seadex === 'alt' ? ['SeaDex'] : []);
-  const pictureName = cine.pictureName(c, dolbyVisionProfile(c));
+  const pictureName = cine.pictureName(c, dolbyVisionProfile(c), !!ranked.picture.discConverted);
   const size = c.sizeBytes ? sizeText(c.sizeBytes) : c.packBytes ? `${sizeText(c.packBytes)} pack` : '';
   const tier = cine.tierOf(c);
   return Object.assign(base, {

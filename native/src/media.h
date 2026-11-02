@@ -25,6 +25,11 @@ struct MediaTrack {
   bool is_default = false;
 };
 
+struct MediaChapter {
+  long long start_ms = 0, end_ms = 0;
+  std::string title;
+};
+
 struct MediaInfo {
   std::string container;
   long long duration_ms = 0;
@@ -36,6 +41,7 @@ struct MediaInfo {
   std::string hdr;
   std::vector<MediaTrack> audio;
   std::vector<MediaTrack> text;
+  std::vector<MediaChapter> chapters;  // the file's chapters (Bloob's engine only)
   // uMediaServer's bufferRange report (milliseconds; -1 when not reported).
   long long buffer_begin_ms = -1, buffer_end_ms = -1, buffer_remaining_ms = -1;
   int buffer_percent = -1;
@@ -101,6 +107,9 @@ class MediaBackend {
   virtual std::string decoder_note() const { return ""; }
   // Headphones mode (3.2): the engine renders the sound for two ears; others ignore it.
   virtual void set_headphones(const HeadphoneOptions &) {}
+  // Dolby Vision profile 7 (disc remuxes) played as profile 8.1 (4.0, Bloob's
+  // engine only); false keeps the HDR10 base (the HDR10 / SDR picture preference).
+  virtual void set_dolby_vision(bool) {}
   virtual const char *engine_name() const = 0;
 };
 

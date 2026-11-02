@@ -32,6 +32,7 @@ void Ctx::save_settings() {
                                 ",\"picture\":" + Json::quote(picture) + ",\"sources\":" + Json::quote(sources) +
                                 ",\"cut\":" + Json::quote(preferred_cut) +
                                 ",\"autoplayNext\":" + (autoplay_next ? "true" : "false") +
+                                ",\"skipIntros\":" + Json::quote(skip_intros) +
                                 ",\"reduceMotion\":" + (reduce_motion ? "true" : "false") +
                                 ",\"reduceTransparency\":" + (reduce_transparency ? "true" : "false") +
                                 ",\"highContrast\":" + (high_contrast ? "true" : "false") +

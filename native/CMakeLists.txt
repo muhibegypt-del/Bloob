@@ -19,7 +19,7 @@ if (CMAKE_CROSSCOMPILING)
 endif ()
 
 # Platform-free core, shared by the app and the tests.
-add_library(buna_core STATIC src/session.cpp src/json.cpp src/log.cpp src/model.cpp src/play.cpp src/resources.cpp src/tasks.cpp src/stats.cpp src/apps.cpp)
+add_library(buna_core STATIC src/session.cpp src/json.cpp src/log.cpp src/model.cpp src/play.cpp src/resources.cpp src/tasks.cpp src/stats.cpp src/apps.cpp src/skips.cpp)
 find_package(Threads REQUIRED)
 target_link_libraries(buna_core PUBLIC Threads::Threads)
 target_include_directories(buna_core PUBLIC src)
@@ -55,6 +55,20 @@ target_compile_definitions(buna_demux PUBLIC __STDC_CONSTANT_MACROS)
 target_link_libraries(buna_demux PUBLIC buna_core
   ${FFMPEG_PREFIX}/lib/libavfilter.a ${FFMPEG_PREFIX}/lib/libavformat.a ${FFMPEG_PREFIX}/lib/libavcodec.a
   ${FFMPEG_PREFIX}/lib/libswresample.a ${FFMPEG_PREFIX}/lib/libavutil.a m)
+# Dolby Vision profile 7 → 8.1 (4.0): dovi/ built by scripts/build-dovi.sh. Optional:
+# without it profile 7 plays its HDR10 base, as in 3.x.
+if (CMAKE_CROSSCOMPILING)
+  set(DOVI_LIB ${CMAKE_SOURCE_DIR}/build-dovi/arm/libbloob_dovi.a)
+else ()
+  set(DOVI_LIB ${CMAKE_SOURCE_DIR}/build-dovi/host/libbloob_dovi.a)
+endif ()
+if (EXISTS ${DOVI_LIB})
+  target_compile_definitions(buna_demux PUBLIC BLOOB_HAVE_DOVI=1)
+  target_link_libraries(buna_demux PUBLIC ${DOVI_LIB} dl pthread)
+  message(STATUS "Dolby Vision converter: ${DOVI_LIB}")
+else ()
+  message(WARNING "Dolby Vision converter missing (scripts/build-dovi.sh): profile 7 will play as HDR10")
+endif ()
 
 # The app: shell, renderer, screens and media. The TV build talks to the real
 # system bus; the desktop build swaps in a stand-in (luna_host.cpp).
@@ -117,8 +131,9 @@ else ()
   add_executable(hp_preview tools/hp_preview.cpp)
   target_link_libraries(hp_preview PRIVATE buna_demux)
   enable_testing()
-  add_executable(native_tests tests/session_test.cpp tests/play_test.cpp tests/runtime_test.cpp tests/demux_test.cpp tests/headphones_test.cpp)
+  add_executable(native_tests tests/session_test.cpp tests/play_test.cpp tests/runtime_test.cpp tests/demux_test.cpp tests/headphones_test.cpp tests/v4_test.cpp)
   target_link_libraries(native_tests PRIVATE buna_core buna_demux)
+  target_compile_definitions(native_tests PRIVATE BLOOB_TEST_FIXTURES="${CMAKE_SOURCE_DIR}/tests/fixtures")
   add_test(NAME native_tests COMMAND native_tests)
   add_executable(cal_tests tests/cal_test.cpp)
   target_link_libraries(cal_tests PRIVATE bloob_cal)

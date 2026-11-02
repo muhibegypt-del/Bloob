@@ -15,8 +15,10 @@ const PROFILES = {
     dts: 'bridge',
     // TrueHD (and TrueHD Atmos) to a receiver over eARC: 'yes', 'no' or 'unverified'.
     truehdPassthrough: 'unverified',
-    // Disc Dolby Vision (profile 7, dual layer): 'yes' or 'no'. 'no' plays the HDR10 base layer.
-    dolbyVisionProfile7: 'no',
+    // Disc Dolby Vision (profile 7, dual layer): 'yes', 'no' (the HDR10 base
+    // plays) or 'convert' (4.0: Bloob's engine rewrites it as single-layer
+    // profile 8.1, Dolby Vision on screen; LG's player, the fallback, shows HDR10).
+    dolbyVisionProfile7: 'convert',
     // Containers this TV shows Dolby Vision from. The owner reports Dolby Vision
     // in MKV works on this TV (16 October 2026), which overrides the public
     // sources that said webOS 24 needs MP4 or MPEG-TS. Another TV's profile can

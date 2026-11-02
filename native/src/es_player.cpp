@@ -82,7 +82,7 @@ std::string EsPlayer::load_payload(const DemuxFacts &f, const AudioOut &a, const
   }
   if (a.atmos) c << ",\"immersive\":\"ATMOS\"";
   if (f.hdr == "Dolby Vision")
-    c << ",\"DolbyHdrInfo\":{\"encryptionType\":\"clear\",\"profileId\":" << f.dv_profile << ",\"trackType\":\"single\"}";
+    c << ",\"DolbyHdrInfo\":{\"encryptionType\":\"clear\",\"profileId\":" << (f.dv_profile_out > 0 ? f.dv_profile_out : f.dv_profile) << ",\"trackType\":\"single\"}";
   c << "}";
 
   std::ostringstream p;
@@ -298,9 +298,12 @@ void EsPlayer::publish_facts(bool track_change) {
     m.height = f.height;
     m.frame_rate = f.fps_den > 0 ? static_cast<double>(f.fps_num) / f.fps_den : 0;
     m.hdr = f.hdr == "SDR" ? "" : f.hdr;
+    if (f.dv_converted) m.hdr = "Dolby Vision";  // profile 7 played as 8.1 (4.0)
     m.audio = f.audio;
     m.text = f.text;
     chapters_ = f.chapters;
+    m.chapters.clear();
+    for (const auto &ch : f.chapters) m.chapters.push_back({ch.start_ms, ch.end_ms, ch.title});
     audio_note_ = a.headphones ? a.from + " \xE2\x86\x92 Headphones (" + hp + ")"
                  : a.converted ? a.from + " \xE2\x86\x92 Dolby Digital Plus " + (a.channels >= 6 ? "5.1" : a.channels == 1 ? "Mono" : "Stereo") +
                                     " (converted by Bloob)"
@@ -405,6 +408,10 @@ void EsPlayer::on_sink(int type, long long num, const std::string &str) {
 
 void EsPlayer::run() {
   std::string error;
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    demux_.set_dolby_vision(dolby_vision_);
+  }
   for (int tries = 0; !demux_.open(url_, &error); tries++) {
     if (stopping_) return;
     // A seek pressed while the file was opening interrupts the read: open again.

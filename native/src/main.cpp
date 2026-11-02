@@ -271,6 +271,7 @@ class App {
           x.sources = r.json["sources"].as_string("all");
           x.preferred_cut = r.json["cut"].as_string("Theatrical");
           x.autoplay_next = r.json["autoplayNext"].as_bool(true);
+          x.skip_intros = r.json["skipIntros"].as_string("button");
           x.reduce_motion = r.json["reduceMotion"].as_bool(false);
           x.reduce_transparency = r.json["reduceTransparency"].as_bool(false);
           x.high_contrast = r.json["highContrast"].as_bool(false);

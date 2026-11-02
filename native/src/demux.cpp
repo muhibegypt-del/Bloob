@@ -17,6 +17,9 @@ extern "C" {
 }
 
 #include "log.h"
+#ifdef BLOOB_HAVE_DOVI
+#include "dovi.h"
+#endif
 
 namespace {
 
@@ -111,6 +114,7 @@ struct Demuxer::Impl {
   long long origin_us = 0;  // the file's start time, so the film starts at 0
   AVBSFContext *bsf = nullptr;
   bool strip_dv = false;
+  bool dv_to81 = false;  // profile 7 rewritten as 8.1 (4.0)
   AVPacket *pkt = nullptr;
   // Sound conversion (when the TV can't take the track as it is).
   AVCodecContext *dec = nullptr;
@@ -286,10 +290,15 @@ bool Demuxer::open(const std::string &url, std::string *error) {
     }
   }
   // Dolby Vision this TV shows as Dolby Vision: single-layer profiles 5, 8 and 9 (and 10).
-  // Profile 7 (disc, two layers) plays its HDR10 base: the extra layer and RPU go.
+  // Profile 7 (disc, two layers) becomes profile 8.1 when the converter is in
+  // (4.0); otherwise it plays its HDR10 base, the extra layer and RPU removed.
   bool dv_plays = f.dv_profile == 5 || f.dv_profile == 8 || f.dv_profile == 9 || f.dv_profile == 10;
-  m.strip_dv = f.dv_profile == 7 || (f.dv_profile >= 0 && !dv_plays);
-  if (dv_plays) f.hdr = "Dolby Vision";
+  m.dv_to81 = f.dv_profile == 7 && dv_convert_ && demux::dovi_available() && f.video_codec == "H265";
+  m.strip_dv = !m.dv_to81 && (f.dv_profile == 7 || (f.dv_profile >= 0 && !dv_plays));
+  f.dv_converted = m.dv_to81;
+  f.dv_profile_out = m.dv_to81 ? 8 : dv_plays ? f.dv_profile : -1;
+  dv_ok_ = dv_bad_ = 0;
+  if (dv_plays || m.dv_to81) f.hdr = "Dolby Vision";
   else if (f.transfer == AVCOL_TRC_SMPTE2084) f.hdr = "HDR10";
   else if (f.transfer == AVCOL_TRC_ARIB_STD_B67) f.hdr = "HLG";
   else f.hdr = "SDR";
@@ -327,7 +336,7 @@ bool Demuxer::open(const std::string &url, std::string *error) {
   m.pkt = av_packet_alloc();
   logf("demux", "%s %s %dx%d %s%s, %zu audio, %zu subtitles, %zu chapters, %lld ms", f.container.c_str(),
        f.video_codec.c_str(), f.width, f.height, f.hdr.c_str(),
-       f.dv_profile >= 0 ? (" (Dolby Vision profile " + std::to_string(f.dv_profile) + (m.strip_dv ? ", base layer only)" : ")")).c_str() : "",
+       f.dv_profile >= 0 ? (" (Dolby Vision profile " + std::to_string(f.dv_profile) + (m.dv_to81 ? ", played as profile 8.1)" : m.strip_dv ? ", base layer only)" : ")")).c_str() : "",
        f.audio.size(), f.text.size(), f.chapters.size(), f.duration_ms);
   return true;
 }
@@ -587,7 +596,14 @@ DemuxPacket Demuxer::read() {
       DemuxPacket p;
       p.kind = DemuxPacket::Video;
       p.data.assign(m.pkt->data, m.pkt->data + m.pkt->size);
-      if (m.strip_dv) demux::strip_hevc_nals(p.data, 62, 63);
+      if (m.dv_to81) {
+        long long bad_before = dv_bad_;
+        demux::dv_p7_to_81(p.data, demux::dovi_convert, dv_ok_, dv_bad_);
+        if (dv_bad_ > bad_before && (dv_bad_ == 1 || dv_bad_ % 500 == 0))
+          logf("demux", "Dolby Vision: %lld RPU(s) could not be converted (%lld converted); those frames go without", dv_bad_, dv_ok_);
+      } else if (m.strip_dv) {
+        demux::strip_hevc_nals(p.data, 62, 63);
+      }
       int64_t ts = m.pkt->pts != AV_NOPTS_VALUE ? m.pkt->pts : m.pkt->dts;
       p.pts_us = m.to_us(ts, m.bsf->time_base_out);
       p.duration_us = m.pkt->duration > 0 ? av_rescale_q(m.pkt->duration, m.bsf->time_base_out, kMicro) : 0;
@@ -689,6 +705,67 @@ void strip_hevc_nals(std::vector<uint8_t> &b, int type_a, int type_b) {
   }
   b.swap(out);
 }
+
+void dv_p7_to_81(std::vector<uint8_t> &b, RpuConvert convert, long long &ok, long long &bad) {
+  const size_t n = b.size();
+  std::vector<size_t> starts;  // where each unit's start code begins, as in strip_hevc_nals
+  for (size_t k = 0; k + 2 < n; k++) {
+    if (b[k] == 0 && b[k + 1] == 0 && b[k + 2] == 1) {
+      starts.push_back(k > 0 && b[k - 1] == 0 ? k - 1 : k);
+      k += 2;
+    }
+  }
+  bool touch = false;
+  for (size_t s : starts) {
+    size_t payload = s + (b[s + 2] == 1 ? 3 : 4);
+    int type = payload < n ? (b[payload] >> 1) & 0x3f : -1;
+    touch = touch || type == 62 || type == 63;
+  }
+  if (!touch) return;
+  std::vector<uint8_t> out, rpu;
+  out.reserve(n);
+  if (!starts.empty() && starts[0] > 0) out.insert(out.end(), b.begin(), b.begin() + static_cast<long>(starts[0]));
+  for (size_t u = 0; u < starts.size(); u++) {
+    size_t s = starts[u], e = u + 1 < starts.size() ? starts[u + 1] : n;
+    size_t payload = s + (b[s + 2] == 1 ? 3 : 4);
+    int type = payload < n ? (b[payload] >> 1) & 0x3f : -1;
+    if (type == 63) continue;  // the enhancement layer: profile 8.1 has none
+    if (type != 62) {
+      out.insert(out.end(), b.begin() + static_cast<long>(s), b.begin() + static_cast<long>(e));
+      continue;
+    }
+    // The unit runs to the next start code; trailing zero bytes belong to that start code's padding.
+    size_t end = e;
+    while (end > payload && b[end - 1] == 0) end--;
+    rpu.clear();
+    if (convert && convert(b.data() + payload, end - payload, rpu) && !rpu.empty()) {
+      static const uint8_t kStart[4] = {0, 0, 0, 1};
+      out.insert(out.end(), kStart, kStart + 4);
+      out.insert(out.end(), rpu.begin(), rpu.end());
+      ok++;
+    } else {
+      bad++;
+    }
+  }
+  b.swap(out);
+}
+
+#ifdef BLOOB_HAVE_DOVI
+bool dovi_available() { return true; }
+bool dovi_convert(const uint8_t *nal, size_t len, std::vector<uint8_t> &out) {
+  uint8_t *p = nullptr;
+  size_t got = bloob_dovi_to81(nal, len, &p);
+  if (!got || !p) return false;
+  out.assign(p, p + got);
+  bloob_dovi_free(p, got);
+  return true;
+}
+int dovi_profile(const uint8_t *nal, size_t len) { return bloob_dovi_profile(nal, len); }
+#else
+bool dovi_available() { return false; }
+bool dovi_convert(const uint8_t *, size_t, std::vector<uint8_t> &) { return false; }
+int dovi_profile(const uint8_t *, size_t) { return -1; }
+#endif
 
 std::string cue_text(const std::string &codec, const std::string &payload) {
   std::string t = payload;

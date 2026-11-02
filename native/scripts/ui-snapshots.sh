@@ -28,6 +28,26 @@ STEPS=(
 SCRIPT=$(IFS='|'; echo "${STEPS[*]}")
 BLOOB_EFFECTS=full SDL_VIDEODRIVER=dummy BLOOB_WINDOW=${BLOOB_WINDOW:-1280x720} BLOOB_SNAPSHOT_DIR="$OUT" BLOOB_SCRIPT="$SCRIPT" \
   timeout 60 "$STAGE/bin/bloob_host" '{"uri":"https://example.invalid/film.mkv","title":"Test film","autoplay":true}' > "$OUT/run.log" 2>&1
+
+# Skip intro (4.0): the service (with fixtures) knows a recap, an intro and the credits.
+PORT=8797
+DATA=$(mktemp -d)
+(cd ../tv-app && TV_APP_DATA_DIR="$DATA" TV_APP_PORT=$PORT BLOOB_DEV_FIXTURES=../native/tests/fixtures/dev-service.js \
+  exec node service/server.js) > "$OUT/skip-service.log" 2>&1 &
+SVC=$!
+sleep 1
+SKIP_STEPS=(
+  "wait:300" "pump" 'media:{"loadCompleted":{}}' "media:$SRC" "media:$VI" 'media:{"playing":{}}'
+  'media:{"currentTime":{"currentTime":20000}}' "wait:800" "key:back" "wait:400" "snap:10-skip-recap"
+  'media:{"currentTime":{"currentTime":620000}}' "wait:400" "snap:11-skip-intro" "key:ok" "wait:100"
+  'media:{"seekDone":{}}' 'media:{"currentTime":{"currentTime":690100}}' "wait:400" "snap:12-after-skip" "quit"
+)
+SCRIPT=$(IFS='|'; echo "${SKIP_STEPS[*]}")
+BLOOB_EFFECTS=full SDL_VIDEODRIVER=dummy BLOOB_WINDOW=${BLOOB_WINDOW:-1280x720} BLOOB_SNAPSHOT_DIR="$OUT" BLOOB_SCRIPT="$SCRIPT" BLOOB_SERVICE_PORT=$PORT \
+  timeout 60 "$STAGE/bin/bloob_host" '{"uri":"https://example.invalid/film.mkv","title":"Test film","autoplay":true}' > "$OUT/skip-run.log" 2>&1 || true
+kill $SVC 2>/dev/null || true
+rm -rf "$DATA"
+grep -E 'skips|skipped' "$OUT/skip-run.log" || echo "skip run: no skip lines"
 # Fill the transparent video hole with a still from the bundled clip.
 STILL="$OUT/.still.png"
 ffmpeg -loglevel error -y -ss 17 -i ../tv-app/service/www/media/big-buck-bunny-480p-30sec.mp4 -frames:v 1 -vf scale=1920:1080 "$STILL"

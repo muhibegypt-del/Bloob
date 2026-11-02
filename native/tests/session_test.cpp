@@ -225,6 +225,7 @@ int run_play_tests();
 int run_runtime_tests();
 int run_demux_tests();
 int run_headphones_tests();
+int run_v4_tests();
 
 int main() {
   test_startup();
@@ -242,6 +243,7 @@ int main() {
   failures += run_runtime_tests();
   failures += run_demux_tests();
   failures += run_headphones_tests();
+  failures += run_v4_tests();
   if (failures) {
     std::printf("%d check(s) failed\n", failures);
     return 1;

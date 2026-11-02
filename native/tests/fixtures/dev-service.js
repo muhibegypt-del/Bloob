@@ -69,4 +69,14 @@ async function alldebrid(endpoint, fields) {
   throw new Error('Fixture has no answer for ' + endpoint);
 }
 
-module.exports = { streams, alldebrid };
+// Skip intro (4.0): a recap and an intro early in the film, credits at the end;
+// TheIntroDB's intro is for a longer cut, so IntroDB's is the one used.
+function skips(type, id, durationMs) {
+  const d = durationMs || 3125000;
+  return { sources: [
+    { name: 'TheIntroDB', segments: [{ kind: 'intro', startMs: d + 60000, endMs: d + 120000 }] },
+    { name: 'IntroDB', segments: [{ kind: 'recap', startMs: 0, endMs: 45000 }, { kind: 'intro', startMs: 600000, endMs: 690000 }, { kind: 'credits', startMs: d - 120000, endMs: -1 }] },
+  ] };
+}
+
+module.exports = { streams, alldebrid, skips };

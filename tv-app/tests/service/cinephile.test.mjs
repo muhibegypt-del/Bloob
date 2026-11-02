@@ -38,7 +38,7 @@ describe('the cinephile versions list', () => {
     const v = all.find(x => x.group === 'FraMeSToR');
     expect(v.dupes).toBe(1);
     expect(v.sources).toEqual(['torrentio', 'stremthru']);
-    expect(v.line).toBe('HDR10 (Dolby Vision P7 disc) · TrueHD Atmos 7.1 · 120 GB · FraMeSToR · Extended');
+    expect(v.line).toBe('Dolby Vision P7 disc (as 8.1) · TrueHD Atmos 7.1 · 120 GB · FraMeSToR · Extended');
     expect(v.respected).toBe(true);
     expect(r.cuts).toEqual([{ name: 'Theatrical', count: 1 }, { name: 'Extended', count: 1 }]);
   });

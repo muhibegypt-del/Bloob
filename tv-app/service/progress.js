@@ -235,7 +235,7 @@ function resetForTests() {
 const settingsStore = accountStore.createFileStore('settings.json', accountStore.defaultLocations);
 // subtitleSize: the TV's subtitle size level, 0 (smallest) to 4; the TV's own default is 2,
 // which viewers found far too large. picture: 'best' | 'hdr10' | 'sdr'. sources: 'all' | 'torrentio'.
-const SETTINGS_DEFAULTS = { language: 'English', subtitleLanguage: 'Off', subtitleSize: 0, subtitleBackground: false, picture: 'best', sources: 'all', cut: 'Theatrical', reduceMotion: false, reduceTransparency: false, highContrast: false, autoplayNext: true, welcomeSeen: false, recentSearches: [],
+const SETTINGS_DEFAULTS = { language: 'English', subtitleLanguage: 'Off', subtitleSize: 0, subtitleBackground: false, picture: 'best', sources: 'all', cut: 'Theatrical', reduceMotion: false, reduceTransparency: false, highContrast: false, autoplayNext: true, skipIntros: 'button', welcomeSeen: false, recentSearches: [],
   // Headphones mode (3.2): 'auto' (when the TV's sound goes to Bluetooth), 'on' or 'off';
   // the room, the boost after the render (dB), Night, the earbud correction and the lip-sync lead (ms).
   headphones: 'auto', headphoneRoom: 'lounge', headphoneBoost: 9, headphoneNight: false, headphoneEq: 'xm5', headphoneLeadMs: 0 };
@@ -263,6 +263,7 @@ async function saveSettings(input) {
   if (typeof input.reduceTransparency === 'boolean') current.reduceTransparency = input.reduceTransparency;
   if (typeof input.highContrast === 'boolean') current.highContrast = input.highContrast;
   if (typeof input.autoplayNext === 'boolean') current.autoplayNext = input.autoplayNext;
+  if (['button', 'auto', 'off'].indexOf(input.skipIntros) >= 0) current.skipIntros = input.skipIntros;
   if (['auto', 'on', 'off'].indexOf(input.headphones) >= 0) current.headphones = input.headphones;
   // A built-in room, or 'file:<name>.wav' for a measured response in the data folder (hrir.js).
   if (['lounge', 'studio', 'cinema'].indexOf(input.headphoneRoom) >= 0 ||

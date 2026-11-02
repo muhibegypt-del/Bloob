@@ -85,6 +85,7 @@ struct Ctx {
   std::string picture = "best";                 // picture preference: "best", "hdr10" or "sdr"
   std::string sources = "all";                  // source indexes: "all" or "torrentio"
   bool autoplay_next = true;                    // Up next starts the next episode by itself
+  std::string skip_intros = "button";           // 4.0: intros and recaps: "button", "auto" or "off"
   bool reduce_motion = false;                   // no auto-advancing hero, page movement or focus zoom
   bool reduce_transparency = false;             // Glass panels become solid
   bool high_contrast = false;                   // secondary and tertiary labels brighter

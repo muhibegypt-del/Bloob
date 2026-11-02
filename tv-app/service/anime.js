@@ -15,6 +15,8 @@ const { getJson, postJson } = require('./net');
 
 const LIST_URL = 'https://raw.githubusercontent.com/Fribb/anime-lists/master/anime-list-mini.json';
 const REFRESH_MS = 7 * 24 * 60 * 60 * 1000;
+// 2 (4.0): entries carry MyAnimeList IDs; an older saved index is rebuilt.
+const INDEX_VERSION = 2;
 
 const indexStore = accountStore.createFileStore('anime-index.json', accountStore.defaultLocations);
 const titleStore = accountStore.createFileStore('anime-titles.json', accountStore.defaultLocations);
@@ -32,6 +34,7 @@ function compact(e) {
   return {
     kitsu: e.kitsu_id || 0,
     anilist: e.anilist_id || 0,
+    mal: e.mal_id || 0,  // MyAnimeList: AniSkip's key (4.0)
     type: e.type || '',
     tvdbSeason: season.tvdb !== undefined ? season.tvdb : null,
     tvdbOffset: offset.tvdb || 0,
@@ -44,11 +47,11 @@ function buildIndex(list) {
   const byImdb = {};
   (Array.isArray(list) ? list : []).forEach(e => {
     (e.imdb_id || []).forEach(id => {
-      if (!/^tt\d+$/.test(id) || (!e.kitsu_id && !e.anilist_id)) return;
+      if (!/^tt\d+$/.test(id) || (!e.kitsu_id && !e.anilist_id && !e.mal_id)) return;
       (byImdb[id] = byImdb[id] || []).push(compact(e));
     });
   });
-  return { at: Date.now(), byImdb };
+  return { v: INDEX_VERSION, at: Date.now(), byImdb };
 }
 
 async function refresh() {
@@ -67,6 +70,7 @@ function load() {
   if (!loading) {
     loading = (async () => {
       if (!index) index = await indexStore.read().catch(() => null);
+      if (index && index.v !== INDEX_VERSION) index = null;
       if (index && index.byImdb) {
         if (Date.now() - index.at >= REFRESH_MS) refresh().catch(e => console.log(`[anime] refresh failed: ${e.message}`));
         return index;
@@ -149,7 +153,7 @@ function context(type, id) {
       showTitle = meta.name || '';
     } catch (_) { /* titles from AniList only */ }
     const found = entryFor(entries, type, season, episode, seasons);
-    if (!found) return { anime: true, kitsuId: 0, anilistId: 0, season, catalogEpisode: episode, episode, absolute: episode, titles: [], showTitles: [showTitle].filter(Boolean) };
+    if (!found) return { anime: true, kitsuId: 0, anilistId: 0, malId: 0, season, catalogEpisode: episode, episode, absolute: episode, titles: [], showTitles: [showTitle].filter(Boolean) };
     const own = await titlesFor(found.entry.anilist);
     // The series' first entry names the show ("Sousou no Frieren") for "S2 - 05" releases.
     const first = entries.find(x => x.tvdbSeason === 1) || entries[0];
@@ -158,6 +162,7 @@ function context(type, id) {
       anime: true,
       kitsuId: found.entry.kitsu,
       anilistId: found.entry.anilist,
+      malId: found.entry.mal || 0,
       season,
       catalogEpisode: episode,
       episode: found.episode,
