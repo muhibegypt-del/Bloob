@@ -3,7 +3,7 @@
 ## Start here (1 November 2026)
 
 - **A Pal calibration session on the owner's computer:** follow [`native/PAL-PLAYBOOK.md`](native/PAL-PLAYBOOK.md) from top to bottom. It is complete on its own; the rest of this file is background. The safe working rules at the end of this file apply as well.
-- **The latest work** is the 3.4.0 entry under "Native track" below.
+- **The latest work** is the 4.0.0 entry under "Native track" below (the 3.4 Pal work just before it).
 - **"Immediate work order for the next assistant"** further down dates from the web app (October 2026) and is history.
 
 
@@ -232,6 +232,18 @@ The owner chose native. `native/` is a C++ webOS app (`com.muhib.bloob`, "Bloob 
     - Pal (the Claude session on the owner's computer) reads each report and makes the 1D adjustment itself, by the playbook's *Making the adjustment* method; `pal-propose` is its cross-check. That method, written from the text alone, meets the goal in one pass on the stand-in TV (0.25/0.67) and agrees with `pal-propose` within 0.045.
   - **TV pass:** `native/TV-TEST.md` §19. The IPK is `native/artifacts/com.muhib.bloob_3.4.1_arm.ipk`.
 
+- **4.0.0 (2 November 2026, built, not yet on the TV).** The owner compared Bloob with three apps (Stremio Origin, Native Tv, Luma) and asked for every improvement from them. Learnings only from Stremio Origin (GPL); MIT code and data from Native Tv and Luma with their notices.
+  - **Dolby Vision on disc remuxes:** profile 7 plays as single-layer profile 8.1 in Bloob's engine (enhancement layer dropped, each RPU rewritten by dovi_tool's `dolby_vision` crate, MIT, in `native/dovi/`, built by `scripts/build-dovi.sh`; `demux::dv_p7_to_81`). The HDR10/SDR preference keeps the old HDR10 base. The ranker labels it "Dolby Vision (disc, played as 8.1)" (`tv-profile.js` `dolbyVisionProfile7: 'convert'`). Tested against dovi_tool's MEL sample byte for byte.
+  - **Skip intro, recap, credits:** `tv-app/service/skips.js` (TheIntroDB, IntroDB, AniSkip via MyAnimeList IDs now in the anime index) merged behind the file's chapters by `native/src/skips.*`; a Skip button while the controls are hidden; credits bring Up next early. Setting `skipIntros`.
+  - **Styled subtitles:** Bloob's own ASS/SSA reader and layout (`native/src/ass.*`): styles, \pos, \move, alignment, colours, outline, shadow, fades, stacking; no italics, karaoke or drawings. Setting `subtitleStyled`. libass was the first choice; building it from source was blocked in this session.
+  - **Online subtitles that line themselves up:** `subtitles.js` (OpenSubtitles' keyless Stremio add-on, with the file's OpenSubtitles hash from two range reads) and `subsync.js` (Bloob's own speech-overlap alignment over frame-rate ratios and shifts). In the player's Subtitles panel with a Timing row; switched on by itself when the file lacks the viewer's language.
+  - **Smoothness:** frame intervals in `[perf]` and the inspector, a frame log (`/tmp/bloob-frames.on`), `scripts/tv-frames.sh`; the interface thread asks for priority −10.
+  - **LG tracking and adverts:** Settings row running `launcher/privacy.sh` as root (Native Tv's hosts table over `/etc/hosts`, Live Plus and promotion switches off, all reversible, nothing deleted). `tools/privacy-sim/test.sh`.
+  - **Becoming LG Home:** `launcher/takeover.sh` (Luma's manifest method), enabled once with `setup-tv.sh TV --takeover`; the app runs as `com.webos.app.home`, claims the Home key and redirects its tile. Safety: undone if Bloob isn't in front in 15 s; two restarts without a good start bring LG Home back. `tools/takeover-sim/test.sh`.
+  - **Text rendering** setting (Smooth default, Crisp for the TV comparison) and **idle page preparation** (Films, Series, Search built and drawn out of sight after 1.5 s still).
+  - **CI:** `.github/workflows/checks.yml`.
+  - TV pass: `native/TV-TEST.md` §20; the IPK is `native/artifacts/com.muhib.bloob_4.0.0_arm.ipk`.
+
   **Agentic calibration (proposal, 30 October 2026, not built):** `research/Agentic-calibration-for-Bloob.md`. A Claude agent in the service runs the session through `bloob-cal serve` tools; the solver still makes every table, and a write gate checks them. The owner's **Pal** design is mapped onto Bloob in `research/Pal-in-Bloob.md`: manifest, characterisation, checkpoints, report; session state stays in `bloob-cal`, so a dropped Pal still ends in verify or undo. Steps P0–P6.
 - **Design (2.0, Glass):** the visual system, with materials, tokens, type, focus, motion, states, the spoken interface and per-screen layouts, is in `native/DESIGN.md`. The tokens live in `native/src/theme.h`, the type scale, label roles and components in `ui.cpp`, and the frost bake in `images.cpp`.
 - **Rendering and playback:**
@@ -249,7 +261,7 @@ The owner chose native. `native/` is a C++ webOS app (`com.muhib.bloob`, "Bloob 
   - watch progress and settings.
   If the bus will not start the service, the app runs it directly with the TV's Node and stops it on exit.
 - **Build and test scripts:**
-  - `native/scripts/build.sh`: tests, cross-build, ABI guards (no GLIBCXX, and since 2.4 no glibc symbol newer than GLIBC_2.4), service staging, IPK with fixed modes (`native/artifacts/com.muhib.bloob_3.4.1_arm.ipk`).
+  - `native/scripts/build.sh`: tests, cross-build, ABI guards (no GLIBCXX, and since 2.4 no glibc symbol newer than GLIBC_2.4), service staging, IPK with fixed modes (`native/artifacts/com.muhib.bloob_4.0.0_arm.ipk`).
   - `native/scripts/tv-inspect.sh`: reads the runtime inspector snapshot `/tmp/bloob-state.json` from the TV, read-only.
   - `native/scripts/ui-tour.sh`: drives the whole app on the desktop through the acceptance task, plus quick-menu, Home and pipeline-lost events, against the real service with fixture sources.
   - `native/scripts/ui-snapshots.sh`: covers player states.

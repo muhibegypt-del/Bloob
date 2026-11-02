@@ -7,6 +7,9 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 SDK=${WEBOS_SDK:-/opt/arm-webos-linux-gnueabi_sdk-buildroot}
 
+# Dolby Vision profile 7 -> 8.1 (4.0): the converter library for both builds.
+[ -f build-dovi/host/libbloob_dovi.a ] || scripts/build-dovi.sh host
+[ -f build-dovi/arm/libbloob_dovi.a ] || scripts/build-dovi.sh arm
 cmake -S . -B build-host -DCMAKE_BUILD_TYPE=Debug >/dev/null
 cmake --build build-host -j"$(nproc)" >/dev/null
 ./build-host/native_tests

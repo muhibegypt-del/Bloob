@@ -353,3 +353,36 @@ Settings → **Calibrate** (near the bottom, above About). It needs the Spyder5 
 - `cal_tests`: Pal's maths meets the goal in 14 of 15 runs on the virtual G2 and harder panels, the G2 in one pass.
 - `tools/pal-sim/screen_test.py`: the Calibrate screen's Pal session, driven with the real app.
 - **The ARM build:** all 41 checks pass with identical results. That was a static build of the same `bloob-cal` under qemu; qemu can't run the TV's dynamic binaries here, the old 3.3.8 one included.
+
+## 20. New in 4.0
+
+Install `com.muhib.bloob_4.0.0_arm.ipk`. Each item says what to look for and what to report.
+
+1. **Dolby Vision on disc remuxes.** Play a UHD Blu-ray remux marked "Dolby Vision (disc, played as 8.1)".
+   - Look: the TV's Dolby Vision badge or picture mode shows Dolby Vision, not HDR.
+   - Report: the log line `[demux] … (Dolby Vision profile 7, played as profile 8.1)`, any `RPU(s) could not be converted` lines, and whether the picture looked right (no flashing, no wrong colours).
+   - Settings → Picture → HDR10 must still play the same file as HDR10.
+2. **Skip intro.** Play an episode of a well-known series, and an anime episode.
+   - Look: "Skip intro" bottom right during the opening while the controls are hidden; OK jumps past it; Back hides it.
+   - In the credits, Up next comes early. Settings → Skip intros and recaps → *Skip them automatically* skips without asking.
+   - Report: the `skips:` log line (which source each time came from) and whether the jump landed where the intro ends.
+3. **Styled subtitles.** Play an anime episode with fansub (ASS) subtitles.
+   - Look: signs placed where they belong, colours and outlines, two speakers stacked.
+   - Known limits: no italics, Bloob's own font, no karaoke effects.
+   - Settings → Styled subtitles off makes them plain.
+4. **Online subtitles.** Open Subtitles in the player: under the file's own tracks are "online" ones.
+   - Choose one: the Timing row says whether it was "for this file" or "synced ±x s"; Left/Right nudges it.
+   - Set Settings → Subtitles to a language the file lacks: an online one should switch on by itself.
+   - Report: the `online subtitles:` and `online subtitle … aligned` log lines, and whether the timing was right.
+5. **Smoothness, measured.** From the computer: `sh native/scripts/tv-frames.sh 192.168.1.26 20`, scrolling around Home while it records.
+   - Report the printed line (p50, p95, late) and `grep priority /tmp/bloob-native.log` (whether the TV allowed priority −10).
+6. **Text rendering.** Settings → Text rendering: compare *Smooth* and *Crisp* from the sofa. Report which is sharper.
+7. **Pages ready.** After Home has sat still for ten seconds, open Films and Series: they should be complete at once. The log shows `[prewarm]` lines.
+8. **LG tracking and adverts.** Settings → Block LG tracking and adverts → on.
+   - Look: the row says how many servers are blocked and "Live Plus off". In LG's settings, Live Plus and the Home promotions are off.
+   - Restart the TV: still on (the boot hook). Switch it off: everything back, including the switches.
+   - Report: `cat /media/internal/com.muhib.bloob/privacy/privacy.log`.
+9. **Becoming LG Home (optional).** From the computer: `sh native/launcher/setup-tv.sh 192.168.1.26 --takeover`.
+   - Look: Home opens Bloob with no LG flash; the Home key inside Bloob returns to Bloob's Home; the Bloob tile brings the same Bloob back; at power-on Bloob comes up; an HDMI input at power-on is still replaced.
+   - Report: does Bloob stay running between Home presses, or start again each time (`grep "started as the TV's Home" /tmp/bloob-native.log` counts the starts)? And `sh /var/lib/bloob-home/takeover.sh status`.
+   - Undo: `sh native/launcher/setup-tv.sh 192.168.1.26 --no-takeover`. Two restarts in a row without Bloob coming up also bring LG Home back by themselves.
