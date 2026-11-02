@@ -2,8 +2,11 @@
 // screen stack with animated transitions, app lifecycle, the bundled local
 // service (catalogue, sources, AllDebrid), and scripted desktop runs.
 #include <SDL.h>
+#include <errno.h>
 #include <fcntl.h>
 #include <signal.h>
+#include <sys/resource.h>
+#include <sys/syscall.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -123,7 +126,9 @@ class App {
          sdl_version_.c_str(), compiled.major, compiled.minor, compiled.patch, info.flags, info.max_texture_width,
          info.max_texture_height, (info.flags & SDL_RENDERER_PRESENTVSYNC) ? "on" : "off");
     pacer_.set_refresh_hz(mode.refresh_rate);
+    perf_.set_refresh_us(static_cast<long long>(pacer_.refresh_ms() * 1000));
     gate_frames_ = !(info.flags & SDL_RENDERER_PRESENTVSYNC);
+    raise_ui_priority();
     sdl_offset_ = now_ms() - static_cast<long long>(SDL_GetTicks());
     c.gfx.init(c.renderer, W, H);
     std::string fonts = c.dir + "/assets/fonts/";
@@ -468,6 +473,62 @@ class App {
 
   void finish_leaving() { leaving_.reset(); }
   PerfWindow perf_;
+  // Frame intervals (4.0): the last present, and whether it was an animation frame.
+  long long last_present_us_ = 0;
+  bool animation_frame_ = false, last_was_animation_ = false;
+  // The frame log (4.0): one CSV line a frame while /tmp/bloob-frames.on says 1
+  // (or BLOOB_FRAMES=1), appended to /tmp/bloob-frames.csv every 5 s.
+  bool frame_log_on_ = false;
+  long long frame_log_t0_ = 0;
+  size_t frame_log_lines_ = 0;
+  std::vector<std::string> frame_log_;
+
+  void write_frame_log(long long now) {
+    const char *env = std::getenv("BLOOB_FRAMES");
+    bool want = env && std::string(env) == "1";
+    if (!want) {
+      char flag = 0;
+      if (FILE *f = std::fopen("/tmp/bloob-frames.on", "r")) {
+        flag = static_cast<char>(std::fgetc(f));
+        std::fclose(f);
+      }
+      want = flag == '1';
+    }
+    if (want && !frame_log_on_) {
+      frame_log_t0_ = now;
+      frame_log_lines_ = 0;
+      if (FILE *f = std::fopen("/tmp/bloob-frames.csv", "w")) {
+        std::fputs("ms,interval_us,render_ms,update_ms,paint_ms,present_ms,animation\n", f);
+        std::fclose(f);
+      }
+      logf("perf", "frame log on: /tmp/bloob-frames.csv");
+    }
+    if (frame_log_on_ && !frame_log_.empty() && frame_log_lines_ < 100000) {
+      if (FILE *f = std::fopen("/tmp/bloob-frames.csv", "a")) {
+        for (const auto &l : frame_log_) std::fprintf(f, "%s\n", l.c_str());
+        std::fclose(f);
+      }
+      frame_log_lines_ += frame_log_.size();
+    }
+    frame_log_.clear();
+    if (!want && frame_log_on_) logf("perf", "frame log off after %zu frames", frame_log_lines_);
+    frame_log_on_ = want;
+  }
+
+  // The interface thread asks for a better place in the queue (4.0, as Native
+  // Tv does: the TV runs at a load near 30, and a normal thread wakes late).
+  // Only this thread: decoders and image workers keep their priority. A TV
+  // that doesn't allow it leaves things as they were; either way it is logged.
+  void raise_ui_priority() {
+    const char *env = std::getenv("BLOOB_PRIORITY");
+    int want = env ? std::atoi(env) : -10;
+    if (want >= 0) return;
+    long tid = syscall(SYS_gettid);
+    if (setpriority(PRIO_PROCESS, static_cast<id_t>(tid), want) == 0)
+      logf("app", "priority: interface thread at %d", want);
+    else
+      logf("app", "priority: the TV kept the interface thread at %d (%s)", getpriority(PRIO_PROCESS, static_cast<id_t>(tid)), std::strerror(errno));
+  }
 
   void select_root(int index) {
     if (index == root_) return;
@@ -775,6 +836,17 @@ class App {
     SDL_RenderPresent(c.renderer);
     long long presented = now_ms();
     stages.present = presented - painted;
+    // Frame intervals (4.0): present to present while an animation runs frame after frame.
+    long long present_us = static_cast<long long>(SDL_GetPerformanceCounter() * 1000000.0 / SDL_GetPerformanceFrequency());
+    long long interval_us = last_present_us_ > 0 ? present_us - last_present_us_ : 0;
+    bool in_run = animation_frame_ && last_was_animation_ && interval_us > 0 && interval_us < 250000;
+    if (in_run) perf_.interval(interval_us);
+    last_present_us_ = present_us;
+    last_was_animation_ = animation_frame_;
+    if (frame_log_on_)
+      frame_log_.push_back(std::to_string(presented - frame_log_t0_) + "," + std::to_string(in_run ? interval_us : -1) + "," +
+                           std::to_string(presented - render_started) + "," + std::to_string(last_update_ms_) + "," +
+                           std::to_string(stages.paint) + "," + std::to_string(stages.present) + "," + (animation_frame_ ? "1" : "0"));
     if (c.images.end_frame()) c.animating = true;
     if (c.images.pending_uploads()) c.animating = true;  // paced uploads continue next frame
     advance_frame();
@@ -798,6 +870,7 @@ class App {
       }
       c.perf_line = line;
       if (perf_.last_frames() > 0) logf("perf", "%s", line.c_str());
+      write_frame_log(presented);
       // Two slow windows in a row: lighter effects for the rest of the session.
       // BLOOB_EFFECTS=full pins the tier (desktop renders are software and always slow).
       static const bool pinned = std::getenv("BLOOB_EFFECTS") && std::string(std::getenv("BLOOB_EFFECTS")) == "full";
@@ -871,6 +944,11 @@ class App {
         .num("paint_p95", ps.paint_p95)
         .num("upload_p95", ps.upload_p95)
         .num("present_p95", ps.present_p95)
+        .num("interval_n", static_cast<long long>(ps.interval_n))
+        .num("interval_p50_us", ps.interval_p50_us)
+        .num("interval_p95_us", ps.interval_p95_us)
+        .num("interval_max_us", ps.interval_max_us)
+        .num("interval_late", ps.interval_late)
         .num("cause_input", cause_[0])
         .num("cause_invalidate", cause_[1])
         .num("cause_animation", cause_[2])
@@ -1159,6 +1237,7 @@ class App {
           else if (c.dirty) cause_[1]++;
           else if (prev_animating || c.animating || c.images.pending_uploads()) cause_[2]++;
           else cause_[3]++;
+          animation_frame_ = prev_animating || c.animating;
           deferred_render_ = false;
           render();
         } else {

@@ -5,8 +5,12 @@
 //    handed to the platform; not when light leaves the panel);
 //  - per frame stages: update (state and animation), paint (drawing the
 //    screens into the canvas), upload (artwork textures created this frame),
-//    present (the final copy and SDL_RenderPresent).
+//    present (the final copy and SDL_RenderPresent);
+//  - frame intervals (4.0, as Native Tv measures smoothness): present to
+//    present while an animation runs frame after frame, in microseconds; a
+//    "late" one took more than 1.5 refresh periods (a visibly dropped frame).
 #include <algorithm>
+#include <cstdio>
 #include <string>
 #include <vector>
 
@@ -31,6 +35,9 @@ class PerfWindow {
       pending_key_ = 0;
     }
   }
+  // Present-to-present time of two frames in a row of a running animation.
+  void interval(long long us) { intervals_.push_back(us); }
+  void set_refresh_us(long long us) { refresh_us_ = us > 0 ? us : 16667; }
   bool due(long long now_ms) const { return started_ && now_ms - started_ >= 5000; }
   // Summarises the window and starts a new one.
   std::string flush(long long now_ms) {
@@ -39,6 +46,23 @@ class PerfWindow {
                        std::to_string(frames_.size()) + " render " + stats(frames_) + " slow>33ms=" + std::to_string(slow) +
                        "; stages p95 update " + std::to_string(pct(update_, 95)) + " paint " + std::to_string(pct(paint_, 95)) +
                        " upload " + std::to_string(pct(upload_, 95)) + " present " + std::to_string(pct(present_, 95)) + " ms";
+    if (!intervals_.empty()) {
+      long long late = std::count_if(intervals_.begin(), intervals_.end(), [this](long long v) { return v * 2 > refresh_us_ * 3; });
+      char buf[160];
+      std::snprintf(buf, sizeof buf, "; intervals n=%zu p50 %.1f p95 %.1f max %.1f ms late=%lld", intervals_.size(),
+                    pct(intervals_, 50) / 1000.0, pct(intervals_, 95) / 1000.0,
+                    *std::max_element(intervals_.begin(), intervals_.end()) / 1000.0, late);
+      line += buf;
+      last_.interval_n = intervals_.size();
+      last_.interval_p50_us = pct(intervals_, 50);
+      last_.interval_p95_us = pct(intervals_, 95);
+      last_.interval_max_us = *std::max_element(intervals_.begin(), intervals_.end());
+      last_.interval_late = late;
+    } else {
+      last_.interval_n = 0;
+      last_.interval_p50_us = last_.interval_p95_us = last_.interval_max_us = last_.interval_late = 0;
+    }
+    intervals_.clear();
     last_render_p95_ = pct(frames_, 95);
     last_frames_ = frames_.size();
     last_line_ = line;
@@ -69,6 +93,8 @@ class PerfWindow {
     size_t frames = 0;
     long long render_p50 = 0, render_p95 = 0, key_p50 = 0, key_p95 = 0;
     long long update_p95 = 0, paint_p95 = 0, upload_p95 = 0, present_p95 = 0, window_ms = 0;
+    size_t interval_n = 0;
+    long long interval_p50_us = 0, interval_p95_us = 0, interval_max_us = 0, interval_late = 0;
   };
   const Summary &last() const { return last_; }
 
@@ -85,7 +111,8 @@ class PerfWindow {
   }
   long long pending_key_ = 0, started_ = 0, last_render_p95_ = 0;
   size_t last_frames_ = 0;
-  std::vector<long long> keys_, frames_, update_, paint_, upload_, present_;
+  std::vector<long long> keys_, frames_, update_, paint_, upload_, present_, intervals_;
+  long long refresh_us_ = 16667;
   std::string last_line_;
   Summary last_;
 };
