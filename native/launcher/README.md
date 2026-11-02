@@ -35,3 +35,37 @@ Then restart Bloob once. What the watcher did is in `/tmp/bloob-home.log` on the
 ```
 ssh root@TV "rm /var/lib/webosbrew/init.d/60-bloob-home; killall watch.sh"
 ```
+
+## Becoming LG Home (4.0, optional)
+
+The watcher replaces LG Home after it appears, so LG Home can flash up first. With the
+takeover, Bloob **is** LG Home: the Home button and power-on open Bloob directly, and
+opening the Bloob tile brings that same Bloob forward. The method is Luma's (ecklf/lg-luma,
+MIT, `LICENSE-luma`): `takeover.sh` stages Bloob's program and files under LG Home's id in
+`/var/lib/bloob-home/app` and bind-mounts that over `/usr/palm/applications/com.webos.app.home`,
+then has webOS read Home's manifest again. LG's own files stay untouched underneath.
+
+Turn it on from your computer (after installing the Bloob IPK and the setup above):
+
+```
+sh native/launcher/setup-tv.sh TV --takeover
+```
+
+Turn it off: `sh native/launcher/setup-tv.sh TV --no-takeover`, or on the TV
+`sh /var/lib/bloob-home/takeover.sh disable`. Status: `sh /var/lib/bloob-home/takeover.sh status`.
+
+Safety:
+- If Bloob is not on screen as Home within 15 seconds of switching on, everything is undone
+  and LG Home is opened.
+- A restart always drops the mount. The boot hook (`62-bloob-takeover`) applies it again only
+  while the takeover is on, and stops after two restarts in a row in which Bloob never started
+  as Home (Bloob marks each good start). So switching the TV off and on twice always brings
+  LG Home back.
+- Nothing is deleted; turning it off leaves the files, marked off.
+- The watcher stays: it still replaces an HDMI input or Live TV at power-on, and leaves Home
+  alone while the takeover is on.
+
+Not yet seen on the owner's TV (webOS 9): whether webOS keeps Bloob running between Home
+presses or starts it again each time (Luma reports both, by firmware). The log is
+`/var/lib/bloob-home/takeover.log`; Bloob's own log says "started as the TV's Home".
+Desktop test: `sh tools/takeover-sim/test.sh` (14 checks against a stand-in TV).

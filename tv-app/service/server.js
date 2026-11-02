@@ -337,6 +337,17 @@ async function handleApi(req, res, url) {
     try { return reply(res, 200, await subtitles.list(type, String(input.id || ''), typeof input.url === 'string' ? input.url : '', typeof input.filename === 'string' ? input.filename : '')); }
     catch (e) { return reply(res, 200, { items: [], error: e.message }); }
   }
+  // 4.0: Bloob started as LG Home (launcher/takeover.sh) and drew its first
+  // Home frame. The takeover's boot hook keeps trusting it while this is fresh.
+  if (pathname === '/api/home/ok' && req.method === 'POST') {
+    const stamp = new Date().toISOString() + '\n';
+    const dirs = accountStore.defaultLocations().filter(l => l.durable && !l.readOnly).map(l => l.dir);
+    for (let i = 0; i < dirs.length; i++) {
+      try { fs.mkdirSync(dirs[i], { recursive: true }); fs.writeFileSync(path.join(dirs[i], 'home-ok'), stamp); return reply(res, 200, { ok: true }); }
+      catch (_) { /* next place */ }
+    }
+    return reply(res, 200, { ok: false });
+  }
   if (pathname === '/api/sources/ranked' && req.method === 'POST') {
     const type = input.type;
     const id = String(input.videoId || '');

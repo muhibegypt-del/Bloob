@@ -84,7 +84,20 @@ class App {
   bool init(int argc, char **argv) {
     Ctx &c = ctx();
     c.dir = app_directory();
-    c.app_id = app_id();
+    // 4.0: started as LG Home (launcher/takeover.sh): webOS passes Home's id as
+    // "nid". The window must carry Home's identity (SDL-webOS reads APPID for its
+    // surface), and Bloob claims the Home key. Bloob's own id stays for its service.
+    home_mode_ = argc >= 2 && std::strstr(argv[1], "\"nid\"") && std::strstr(argv[1], "com.webos.app.home");
+    if (home_mode_) {
+      setenv("APPID", "com.webos.app.home", 1);
+      setenv("SDL_VIDEO_WAYLAND_WMCLASS", "com.webos.app.home", 1);
+      SDL_SetHint("SDL_WEBOS_ACCESS_POLICY_KEYS_HOME", "true");
+      launcher_ = true;
+      logf("app", "started as the TV's Home");
+    } else if (redirect_to_home()) {
+      return false;
+    }
+    c.app_id = app_id() == "com.webos.app.home" ? std::string("com.muhib.bloob") : app_id();
     SDL_SetHint("SDL_WEBOS_ACCESS_POLICY_KEYS_BACK", "true");
     SDL_SetHint("SDL_WEBOS_ACCESS_POLICY_KEYS_EXIT", "true");
     SDL_SetHint("SDL_WEBOS_CURSOR_SLEEP_TIME", "5000");
@@ -661,6 +674,14 @@ class App {
   void on_event(const SDL_Event &e) {
     if (e.type == SDL_QUIT) {
       running_ = false;
+    } else if (e.type == SDL_KEYDOWN && home_mode_ && static_cast<int>(e.key.keysym.scancode) == kScancodeWebosHome) {
+      // The Home key while Bloob is Home: back to the Home tab, whatever is open.
+      logf("app", "Home key: back to Home");
+      for (size_t i = 0; i < stack_.size(); i++) ops_.push_back({Op::Pop, nullptr});
+      apply_ops();
+      select_root(kHomeTab);
+      set_tabs_focus(false);
+      dirty_ = true;
     } else if (e.type == SDL_KEYDOWN) {
       on_key(e.key);
     } else if (e.type == SDL_MOUSEBUTTONDOWN || e.type == SDL_MOUSEWHEEL || e.type == SDL_MOUSEMOTION) {
@@ -860,6 +881,10 @@ class App {
     perf_.frame(presented, presented - render_started, stages);
     frame_allocs_.push_back(alloc_stats().count.load(std::memory_order_relaxed) - allocs_before);
     if (c.marks.count("home-data") && !c.marks.count("home-frame")) c.mark("home-frame");
+    if (home_mode_ && !home_ok_sent_ && c.marks.count("home-frame") && c.api.ready()) {
+      home_ok_sent_ = true;
+      c.api.post("/api/home/ok", "{}", nullptr, nullptr);
+    }
     if (perf_.due(presented)) {
       std::string line = perf_.flush(presented);
       if (!frame_allocs_.empty()) {
@@ -1336,6 +1361,29 @@ class App {
   }
   // The launcher hook is installed (native/launcher): Bloob is the home screen.
   bool launcher_ = access("/var/lib/webosbrew/init.d/60-bloob-home", F_OK) == 0;
+  bool home_mode_ = false;      // 4.0: running as LG Home
+  bool home_ok_sent_ = false;   // the good-start mark for the takeover's boot hook
+
+  // Bloob opened from its own tile while it is LG Home (takeover.sh): bring Home
+  // to the front instead of starting a second Bloob. Only when the takeover is
+  // really in place (Home's manifest names Bloob's program).
+  static bool redirect_to_home() {
+    std::FILE *f = std::fopen("/usr/palm/applications/com.webos.app.home/appinfo.json", "r");
+    if (!f) return false;
+    char buf[4096];
+    size_t n = std::fread(buf, 1, sizeof buf - 1, f);
+    std::fclose(f);
+    buf[n] = 0;
+    if (!std::strstr(buf, "bin/bloob")) return false;
+    logf("app", "Bloob is the TV's Home: opening Home instead of a second Bloob");
+    launch_home();
+    return true;
+  }
+  static void launch_home() {
+    // The bus is not set up yet: luna-send, as the watcher does.
+    int r = std::system("luna-send -n 1 luna://com.webos.applicationManager/launch '{\"id\":\"com.webos.app.home\"}' >/dev/null 2>&1 &");
+    (void)r;
+  }
   Anim entering_{theme::fade_rate, 1};
   Anim leaving_fade_{theme::fade_rate, 0};
   Anim page_fade_{theme::fade_rate, 1};

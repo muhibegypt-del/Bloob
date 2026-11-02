@@ -13,6 +13,9 @@ BLOOB=com.muhib.bloob
 LGHOME=com.webos.app.home
 APPS=/media/developer/apps/usr/palm/applications
 NOPRELOAD_FLAG=/var/lib/bloob-home/no-boot-preload
+# 4.0: with the takeover (takeover.sh) Bloob *is* LG Home's id: nothing to replace,
+# and an input at power-on is replaced by Home itself.
+taken_over() { [ "$(cat /var/lib/bloob-home/takeover 2>/dev/null)" = on ] && grep -q 'bin/bloob' /usr/palm/applications/$LGHOME/appinfo.json 2>/dev/null; }
 WAKE_SECS=20
 prev=""
 last=0
@@ -38,6 +41,7 @@ while true; do
   out=$(luna-send -n 1 luna://com.webos.applicationManager/getForegroundAppInfo '{}' </dev/null 2>/dev/null)
   case "$out" in
     *'"appId":"'$LGHOME'"'*)
+      if taken_over; then prev=$BLOOB; tries=0; wakeuntil=0; sleep 1; continue; fi
       [ "$prev" != "$LGHOME" ] && tries=0
       if [ "$tries" -lt 3 ] && { [ $((now - last)) -ge 3 ] || [ $((now - last)) -lt 0 ]; }; then
         last=$now
@@ -54,7 +58,8 @@ while true; do
       if [ "$now" -lt "$wakeuntil" ] && [ "$pwstate" = Active ] && [ "$tries" -lt 3 ] && [ $((now - last)) -ge 3 ]; then
         last=$now
         tries=$((tries + 1))
-        log "input at power-on -> Bloob (try $tries): $(luna-send -n 1 luna://com.webos.applicationManager/launch "{\"id\":\"$BLOOB\"}" </dev/null 2>&1)"
+        target=$BLOOB; taken_over && target=$LGHOME
+        log "input at power-on -> Bloob (try $tries): $(luna-send -n 1 luna://com.webos.applicationManager/launch "{\"id\":\"$target\"}" </dev/null 2>&1)"
       fi
       prev="other"
       ;;
@@ -65,7 +70,7 @@ while true; do
     case "$(luna-send -n 1 luna://com.webos.service.tvpower/power/getPowerState '{}' </dev/null 2>/dev/null)" in
       *'"Active"'*)
         preloadat=0
-        if [ ! -f "$NOPRELOAD_FLAG" ]; then
+        if [ ! -f "$NOPRELOAD_FLAG" ] && ! taken_over; then
           case "$(luna-send -n 1 luna://com.webos.applicationManager/running '{}' </dev/null 2>/dev/null)" in
             *'"id":"'$BLOOB'"'*) ;;
             *) log "boot preload: $(luna-send -n 1 luna://com.webos.applicationManager/launch "{\"id\":\"$BLOOB\",\"preload\":\"full\"}" </dev/null 2>&1)" ;;

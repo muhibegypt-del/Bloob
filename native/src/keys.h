@@ -10,6 +10,7 @@ enum class Key { None, Up, Down, Left, Right, Ok, Back, Exit, Play, Pause, PlayP
 
 constexpr int kScancodeWebosBack = 482;
 constexpr int kScancodeWebosExit = 505;
+constexpr int kScancodeWebosHome = 384;  // the Home key, claimed only while Bloob is Home (4.0)
 constexpr int kScancodeWebosCursorShow = 484;  // the Magic Remote's pointer appeared
 constexpr int kScancodeWebosCursorHide = 485;
 constexpr int kScancodeWebosRed = 486;
