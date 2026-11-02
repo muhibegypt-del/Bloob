@@ -772,7 +772,9 @@ class PlayerScreen : public Screen {
       const MediaInfo &info = media_->info();
       auto labels = distinct_labels(panel_ == Panel::Audio ? info.audio : info.text, panel_ == Panel::Audio);
       int rows = panel_rows();
-      if (panel_index_ >= track_rows()) return headphone_row_label(panel_index_ - track_rows()) + ", adjustable, " + position(panel_index_, rows);
+      if (panel_index_ >= track_rows()) return extra_row_label(panel_index_ - track_rows()) + ", adjustable, " + position(panel_index_, rows);
+      if (panel_ == Panel::Subtitles && panel_index_ > file_text_rows())
+        return "Subtitles, " + online_label(static_cast<size_t>(panel_index_ - 1 - file_text_rows())) + ", " + position(panel_index_, rows);
       std::string name = panel_ == Panel::Subtitles && panel_index_ == 0 ? "Off"
                          : panel_ == Panel::Audio ? (panel_index_ < static_cast<int>(labels.size()) ? labels[static_cast<size_t>(panel_index_)] : "")
                          : (panel_index_ - 1 < static_cast<int>(labels.size()) ? labels[static_cast<size_t>(panel_index_ - 1)] : "");
@@ -835,6 +837,7 @@ class PlayerScreen : public Screen {
         return "Audio";
       }
       case Ctl::Subtitles: {
+        if (online_on_ >= 0 && online_on_ < static_cast<int>(online_.size())) return online_[static_cast<size_t>(online_on_)].language;
         int i = session_.subtitle_index();
         if (i >= 0 && i < static_cast<int>(info.text.size())) return language_name(info.text[static_cast<size_t>(i)].language);
         return "Subtitles off";
@@ -851,10 +854,108 @@ class PlayerScreen : public Screen {
     if (panel_ == Panel::Audio) {
       chosen_audio_ = row;
       session_.select_audio(row);
+    } else if (row > file_text_rows()) {
+      choose_online(row - 1 - file_text_rows(), false);
     } else {
+      online_on_ = -1;
+      online_cues_.clear();
       chosen_text_ = row - 1;
       session_.select_text(row - 1);
     }
+  }
+
+  // ---------------------------------------------------------------- online subtitles (4.0)
+
+  // Once playing: OpenSubtitles' list for this film or episode, in the viewer's
+  // subtitle language (else English) and English, at most six.
+  void ask_online() {
+    online_asked_ = true;
+    if (req_.video_id.compare(0, 2, "tt") != 0) return;
+    Ctx &c = ctx();
+    std::string body = "{\"type\":" + Json::quote(req_.item.type == "series" ? "series" : "movie") + ",\"id\":" + Json::quote(req_.video_id);
+    if (url_.compare(0, 8, "https://") == 0) body += ",\"url\":" + Json::quote(url_);
+    if (!info_.file_name.empty()) body += ",\"filename\":" + Json::quote(info_.file_name);
+    body += "}";
+    std::weak_ptr<int> alive = alive_;
+    c.api.post("/api/subtitles/list", body, [this, alive](const ApiResult &r) {
+      if (!alive.lock() || !opened_ || !r.ok()) return;
+      Ctx &cx = ctx();
+      std::string want = cx.subtitle_language != "Off" ? cx.subtitle_language : "English";
+      const Json &items = r.json["items"];
+      for (int pass = 0; pass < 2; pass++)
+        for (size_t i = 0; i < items.size() && online_.size() < 6; i++) {
+          std::string lang = items[i]["language"].as_string();
+          if (lang != (pass == 0 ? want : std::string("English")) || (pass == 1 && want == "English")) continue;
+          online_.push_back({items[i]["id"].as_string(), lang, items[i]["release"].as_string(), items[i]["forFile"].as_bool()});
+        }
+      logf("player", "online subtitles: %zu offered (%zu listed%s)", online_.size(), items.size(), r.json["hash"].as_bool() ? ", by the file's hash" : "");
+      // The viewer wants subtitles the file doesn't have: the best online one, by itself.
+      if (cx.subtitle_language == "Off" || chosen_text_ || online_on_ >= 0) return;
+      const MediaInfo &info = media_->info();
+      for (const auto &t : info.text)
+        if (speaks(t, cx.subtitle_language)) return;
+      for (size_t k = 0; k < online_.size(); k++)
+        if (online_[k].language == cx.subtitle_language) {
+          logf("player", "the file has no %s subtitles: using an online one", cx.subtitle_language.c_str());
+          choose_online(static_cast<int>(k), true);
+          return;
+        }
+    }, alive_);
+  }
+
+  void choose_online(int k, bool automatic) {
+    if (k < 0 || k >= static_cast<int>(online_.size())) return;
+    session_.select_text(-1);  // the file's own subtitles off
+    chosen_text_ = -1;
+    online_on_ = k;
+    online_cues_.clear();
+    online_nudge_ms_ = 0;
+    online_note_ = "loading";
+    online_loading_ = true;
+    std::weak_ptr<int> alive = alive_;
+    std::string id = online_[static_cast<size_t>(k)].id;
+    ctx().api.get("/api/subtitles/file?id=" + id, [this, alive, k, automatic](const ApiResult &r) {
+      if (!alive.lock() || online_on_ != k) return;
+      online_loading_ = false;
+      if (!r.ok()) {
+        online_note_ = "could not load";
+        return;
+      }
+      const Json &cues = r.json["cues"];
+      for (size_t i = 0; i < cues.size(); i++) {
+        SubtitleCue cue;
+        cue.start_ms = cues[i]["s"].as_int();
+        cue.end_ms = cues[i]["e"].as_int();
+        cue.text = cues[i]["t"].as_string();
+        online_cues_.push_back(cue);
+      }
+      const Json &sync = r.json["sync"];
+      std::string how = sync["how"].as_string();
+      if (how == "for-file") online_note_ = "for this file";
+      else if (how == "aligned") {
+        char buf[64];
+        long long sh = sync["shiftMs"].as_int();
+        std::snprintf(buf, sizeof buf, "synced %s%.1f s", sh >= 0 ? "+" : "\xE2\x88\x92", std::llabs(sh) / 1000.0);
+        online_note_ = buf;
+      } else online_note_ = "";
+      logf("player", "online subtitle %s: %zu lines, %s%s", automatic ? "(automatic)" : "(chosen)", online_cues_.size(), how.c_str(),
+           how == "aligned" ? (" against " + sync["reference"].as_string() + ", fit " + std::to_string(sync["before"].as_number()) +
+                                " -> " + std::to_string(sync["score"].as_number())).c_str() : "");
+      ctx().redraw_at(ctx().now);
+    }, alive_);
+  }
+
+  // The online cues showing at `pos` (the viewer's nudge applied).
+  std::vector<SubtitleCue> online_at(long long pos) const {
+    std::vector<SubtitleCue> out;
+    long long t = pos - online_nudge_ms_;
+    auto it = std::upper_bound(online_cues_.begin(), online_cues_.end(), t, [](long long v, const SubtitleCue &c) { return v < c.start_ms; });
+    for (auto i = it; i != online_cues_.begin();) {
+      --i;
+      if (i->start_ms <= t && t < i->end_ms) out.insert(out.begin(), *i);
+      if (t - i->start_ms > 20000) break;
+    }
+    return out;
   }
 
   void run_control(Ctl ctl) {
@@ -881,7 +982,7 @@ class PlayerScreen : public Screen {
       panel_index_ = 0;
       for (size_t i = 0; i < info.audio.size(); i++) if (info.audio[i].selected) panel_index_ = static_cast<int>(i);
     } else {
-      panel_index_ = session_.subtitle_index() + 1;  // row 0 = Off
+      panel_index_ = online_on_ >= 0 ? 1 + file_text_rows() + online_on_ : session_.subtitle_index() + 1;  // row 0 = Off
     }
   }
 
@@ -889,9 +990,30 @@ class PlayerScreen : public Screen {
   bool headphone_rows() const { return panel_ == Panel::Audio && media_->converts_audio() && ctx().headphone_options().enabled; }
   int track_rows() const {
     const MediaInfo &info = media_->info();
-    return panel_ == Panel::Audio ? static_cast<int>(info.audio.size()) : static_cast<int>(info.text.size()) + 1;
+    return panel_ == Panel::Audio ? static_cast<int>(info.audio.size()) : static_cast<int>(info.text.size() + online_.size()) + 1;
   }
-  int panel_rows() const { return track_rows() + (headphone_rows() ? 2 : 0); }
+  // Rows after the tracks that Left/Right adjust: Headphones mode's two, or an online subtitle's timing.
+  int extra_rows() const {
+    if (panel_ == Panel::Audio) return headphone_rows() ? 2 : 0;
+    return panel_ == Panel::Subtitles && online_on_ >= 0 ? 1 : 0;
+  }
+  int panel_rows() const { return track_rows() + extra_rows(); }
+  int file_text_rows() const { return static_cast<int>(media_->info().text.size()); }
+  std::string online_label(size_t k) const {
+    const OnlineSub &o = online_[k];
+    return o.language + (o.for_file ? " \xC2\xB7 for this file" : " \xC2\xB7 online");
+  }
+  std::string extra_row_label(int row) const {
+    if (panel_ == Panel::Audio) return headphone_row_label(row);
+    char buf[64];
+    long long total = online_nudge_ms_;
+    std::snprintf(buf, sizeof buf, "Timing %s%.1f s", total > 0 ? "+" : total < 0 ? "\xE2\x88\x92" : "", std::abs(total) / 1000.0);
+    return std::string(buf) + (online_note_.empty() ? "" : " \xC2\xB7 " + online_note_);
+  }
+  void adjust_extra(int row, int d) {
+    if (panel_ == Panel::Audio) return adjust_headphones(row, d);
+    online_nudge_ms_ = std::max(-30000LL, std::min(30000LL, online_nudge_ms_ + 100LL * d));
+  }
   // Left/Right on a headphone row; the change applies after kHeadphoneSettleMs (update()).
   void adjust_headphones(int row, int d) {
     Ctx &c = ctx();
@@ -941,9 +1063,9 @@ class PlayerScreen : public Screen {
       if (key == Key::Up) panel_index_ = std::max(0, panel_index_ - 1);
       if (key == Key::Down) panel_index_ = std::min(std::max(0, rows - 1), panel_index_ + 1);
       if (panel_index_ >= tracks) {
-        // A headphone row: Left/Right (and OK) change it; the panel stays open.
+        // An adjustable row (Headphones mode, subtitle timing): Left/Right (and OK) change it; the panel stays open.
         if ((key == Key::Left || key == Key::Right || key == Key::Ok) && !(repeat && key == Key::Ok))
-          adjust_headphones(panel_index_ - tracks, key == Key::Left ? -1 : 1);
+          adjust_extra(panel_index_ - tracks, key == Key::Left ? -1 : 1);
         if (key == Key::Back) panel_ = Panel::None;
         show_hud();
         return true;
@@ -1058,6 +1180,7 @@ class PlayerScreen : public Screen {
       return;
     }
     update_skips(t, duration);
+    if (!online_asked_ && opened_ && session_.started() && duration > 0) ask_online();
     // Headphones: the XM5s connecting or going, or a setting changed (a pause
     // after the last change, since the sound reloads each time).
     HeadphoneOptions hp = c.headphone_options();
@@ -1128,11 +1251,13 @@ class PlayerScreen : public Screen {
   // background from Settings, Blu-ray pictures as the disc placed them. They rise
   // above the bar while the controls show. Redraws only when a cue starts or ends.
   void draw_subtitles() {
-    if (!media_ || !media_->draws_subtitles() || session_.subtitle_index() < 0) return;
+    if (!media_) return;
+    bool online = online_on_ >= 0;
+    if (!online && (!media_->draws_subtitles() || session_.subtitle_index() < 0)) return;
     Ctx &c = ctx();
     long long pos = session_.position_ms(c.now);
-    std::vector<SubtitleCue> cues = media_->cues_at(pos);
-    long long next = media_->next_cue_change(pos);
+    std::vector<SubtitleCue> cues = online ? online_at(pos) : media_->cues_at(pos);
+    long long next = online ? -1 : media_->next_cue_change(pos);
     long long wait = next > pos ? std::min(next - pos, 500LL) : 500;
     if (session_.phase() == Phase::Playing) c.redraw_at(c.now + wait);
     clear_sub_textures(&cues);
@@ -1160,7 +1285,7 @@ class PlayerScreen : public Screen {
       }
     }
     // Styled subtitles (4.0): an ASS/SSA track drawn as its authors placed and coloured it.
-    if (c.subtitle_styled) {
+    if (c.subtitle_styled && !online) {
       std::string header = media_->ass_header();
       if (header != ass_header_) {
         ass_header_ = header;
@@ -1672,7 +1797,7 @@ class PlayerScreen : public Screen {
     Ctx &c = ctx();
     const MediaInfo &info = media_->info();
     int rows = panel_rows();
-    bool empty = (panel_ == Panel::Audio && rows == 0) || (panel_ == Panel::Subtitles && info.text.empty());
+    bool empty = (panel_ == Panel::Audio && rows == 0) || (panel_ == Panel::Subtitles && info.text.empty() && online_.empty());
     int list_h = std::max(1, rows) * (kRowH + kRowGap) - kRowGap + (empty ? 70 : 0);
     int h = std::min(kMenuMaxH, kMenuPad + kMenuHeader + list_h + kMenuPad);
     int w = kMenuW, x = kBarRight - w;
@@ -1696,16 +1821,19 @@ class PlayerScreen : public Screen {
       std::string name;
       bool selected = false;
       if (i >= tracks) {
-        name = headphone_row_label(i - tracks);
+        name = extra_row_label(i - tracks);
       } else if (panel_ == Panel::Audio) {
         name = labels[static_cast<size_t>(i)];
         selected = info.audio[static_cast<size_t>(i)].selected;
       } else if (i == 0) {
         name = "Off";
-        selected = session_.subtitle_index() < 0;
+        selected = session_.subtitle_index() < 0 && online_on_ < 0;
+      } else if (i > file_text_rows()) {
+        name = online_label(static_cast<size_t>(i - 1 - file_text_rows()));
+        selected = online_on_ == i - 1 - file_text_rows();
       } else {
         name = labels[static_cast<size_t>(i - 1)];
-        selected = session_.subtitle_index() == i - 1;
+        selected = session_.subtitle_index() == i - 1 && online_on_ < 0;
       }
       if (f) {
         if (!c.lite()) c.gfx.shadow(rx, ry, rw, kRowH, kRowH / 2, theme::shadow_blur, theme::shadow_dy, static_cast<Uint8>(theme::shadow_alpha * a));
@@ -1722,8 +1850,8 @@ class PlayerScreen : public Screen {
       text(Text::Caption1, name, rx + 66, text_y_centered(Text::Caption1, ry + kRowH / 2), fg, rw - 66 - 20 - (i >= tracks ? 30 : 0));
       ry += kRowH + kRowGap;
     }
-    if (panel_ == Panel::Subtitles && info.text.empty())
-      paragraph(Text::Caption1, "This video has no built-in subtitles.", x + kMenuPad + 25, ry + 8, label(Label::Tertiary, a), w - 2 * kMenuPad - 50, 2);
+    if (panel_ == Panel::Subtitles && info.text.empty() && online_.empty())
+      paragraph(Text::Caption1, online_asked_ ? "This video has no subtitles, and none were found online." : "This video has no built-in subtitles.", x + kMenuPad + 25, ry + 8, label(Label::Tertiary, a), w - 2 * kMenuPad - 50, 2);
   }
 
   void draw_startup() {
@@ -1871,6 +1999,19 @@ class PlayerScreen : public Screen {
   std::string ass_header_;
   ass::Script ass_script_;
   std::map<long long, ass::Event> ass_events_;
+  // Online subtitles (4.0): OpenSubtitles' list through the service, the one
+  // showing (drawn by Bloob over either player), its cues as the service lined
+  // them up, and the viewer's own nudge on top.
+  struct OnlineSub {
+    std::string id, language, release;
+    bool for_file = false;
+  };
+  std::vector<OnlineSub> online_;
+  bool online_asked_ = false, online_loading_ = false;
+  int online_on_ = -1;
+  std::vector<SubtitleCue> online_cues_;
+  long long online_nudge_ms_ = 0;
+  std::string online_note_;
   std::vector<skips::Segment> skips_;
   bool skips_asked_ = false;
   int skip_now_ = -1;

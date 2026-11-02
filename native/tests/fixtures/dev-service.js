@@ -79,4 +79,17 @@ function skips(type, id, durationMs) {
   ] };
 }
 
-module.exports = { streams, alldebrid, skips };
+// Online subtitles (4.0): one made for the file and one lined up by the service.
+function subtitleList() {
+  return { hash: true, items: [
+    { id: 'fx-film', language: 'English', code: 'eng', forFile: true, release: 'Film.2024.2160p', downloads: 900 },
+    { id: 'fx-other', language: 'English', code: 'eng', forFile: false, release: 'Film.2024.WEB', downloads: 400 },
+    { id: 'fx-fr', language: 'French', code: 'fre', forFile: false, release: 'Film.2024', downloads: 50 },
+  ] };
+}
+function subtitleFile(id) {
+  const cues = [{ s: 600000, e: 606000, t: id === 'fx-other' ? 'An online subtitle, lined up by Bloob' : 'An online subtitle made for this file' }];
+  return { cues, sync: id === 'fx-other' ? { how: 'aligned', ratio: 1, shiftMs: 2300, score: 0.86, before: 0.31, reference: 'English' } : { how: 'for-file', ratio: 1, shiftMs: 0 } };
+}
+
+module.exports = { streams, alldebrid, skips, subtitleList, subtitleFile };

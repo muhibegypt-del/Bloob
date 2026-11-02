@@ -21,6 +21,7 @@ const anime = require('./anime');
 const sources = require('./sources');
 const hrir = require('./hrir');
 const skips = require('./skips');
+const subtitles = require('./subtitles');
 
 const PORT = config.port;
 const VERSION = require('./package.json').version;
@@ -292,6 +293,13 @@ async function handleApi(req, res, url) {
       if (devFixtures && devFixtures.skips) return reply(res, 200, devFixtures.skips(type, String(query.get('id') || ''), duration));
       return reply(res, 200, await skips.skipsFor(type, String(query.get('id') || ''), duration));
     }
+    // Online subtitles (4.0): one subtitle's cues, lined up with this file.
+    if (pathname === '/api/subtitles/file') {
+      const id = String(query.get('id') || '');
+      if (devFixtures && devFixtures.subtitleFile) return reply(res, 200, devFixtures.subtitleFile(id));
+      try { return reply(res, 200, await subtitles.file(id)); }
+      catch (e) { return reply(res, 404, { error: e.message }); }
+    }
     // Headphones mode's measured responses (3.2.1): the list, then one file's bytes.
     if (pathname === '/api/headphones') return reply(res, 200, { responses: hrir.publicList() });
     if (pathname === '/api/headphones/file') {
@@ -321,6 +329,14 @@ async function handleApi(req, res, url) {
     return reply(res, 200, { src: bridge.source(PORT, String(input.url)) });
   }
   if (pathname === '/api/bridge/status' && req.method === 'GET') return reply(res, 200, bridge.status(String(query.get('token') || '')) || {});
+  // Online subtitles (4.0): the list for a film or episode; the file's address
+  // (for its hash) stays in this process.
+  if (pathname === '/api/subtitles/list' && req.method === 'POST') {
+    const type = input.type === 'series' ? 'series' : 'movie';
+    if (devFixtures && devFixtures.subtitleList) return reply(res, 200, devFixtures.subtitleList(type, String(input.id || '')));
+    try { return reply(res, 200, await subtitles.list(type, String(input.id || ''), typeof input.url === 'string' ? input.url : '', typeof input.filename === 'string' ? input.filename : '')); }
+    catch (e) { return reply(res, 200, { items: [], error: e.message }); }
+  }
   if (pathname === '/api/sources/ranked' && req.method === 'POST') {
     const type = input.type;
     const id = String(input.videoId || '');

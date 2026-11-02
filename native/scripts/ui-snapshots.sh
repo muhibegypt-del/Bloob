@@ -40,14 +40,17 @@ SKIP_STEPS=(
   "wait:300" "pump" 'media:{"loadCompleted":{}}' "media:$SRC" "media:$VI" 'media:{"playing":{}}'
   'media:{"currentTime":{"currentTime":20000}}' "wait:800" "key:back" "wait:400" "snap:10-skip-recap"
   'media:{"currentTime":{"currentTime":620000}}' "wait:400" "snap:11-skip-intro" "key:ok" "wait:100"
-  'media:{"seekDone":{}}' 'media:{"currentTime":{"currentTime":690100}}' "wait:400" "snap:12-after-skip" "quit"
+  'media:{"seekDone":{}}' 'media:{"currentTime":{"currentTime":690100}}' "wait:400" "snap:12-after-skip"
+  # Online subtitles (4.0): Off, two of the file's, then three online ones and, once one is on, its timing.
+  "key:down" "key:right" "key:right" "key:ok" "wait:300" "key:down" "key:down" "key:down" "key:down" "key:ok" "wait:600"
+  "key:ok" "wait:300" "snap:12b-online-subtitles" "key:back" "key:back" 'media:{"currentTime":{"currentTime":601000}}' "wait:400" "snap:12c-online-showing" "quit"
 )
 SCRIPT=$(IFS='|'; echo "${SKIP_STEPS[*]}")
 BLOOB_EFFECTS=full SDL_VIDEODRIVER=dummy BLOOB_WINDOW=${BLOOB_WINDOW:-1280x720} BLOOB_SNAPSHOT_DIR="$OUT" BLOOB_SCRIPT="$SCRIPT" BLOOB_SERVICE_PORT=$PORT \
-  timeout 60 "$STAGE/bin/bloob_host" '{"uri":"https://example.invalid/film.mkv","title":"Test film","autoplay":true}' > "$OUT/skip-run.log" 2>&1 || true
+  timeout 60 "$STAGE/bin/bloob_host" '{"uri":"https://example.invalid/film.mkv","title":"Test film","autoplay":true,"videoId":"tt0000001"}' > "$OUT/skip-run.log" 2>&1 || true
 kill $SVC 2>/dev/null || true
 rm -rf "$DATA"
-grep -E 'skips|skipped' "$OUT/skip-run.log" || echo "skip run: no skip lines"
+grep -E 'skips|skipped|online subtitle' "$OUT/skip-run.log" || echo "skip run: no skip lines"
 
 # Styled subtitles (4.0): a clip with an ASS track (tests/fixtures/styled.ass) through Bloob's engine.
 ASSMKV="$OUT/.styled.mkv"

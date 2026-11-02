@@ -38,7 +38,7 @@ constexpr long long kServiceBusWaitMs = 8000;
 constexpr long long kServiceTimeoutMs = 30000;
 
 struct LaunchParams {
-  std::string uri, title = "Launch link", load_type = "media";
+  std::string uri, title = "Launch link", load_type = "media", video_id = "launch", type = "movie";
   bool autoplay = false;
 };
 
@@ -52,6 +52,9 @@ LaunchParams parse_launch(int argc, char **argv) {
   params.title = json["title"].as_string(params.title);
   params.load_type = json["loadType"].as_string(params.load_type);
   params.autoplay = json["autoplay"].as_bool(false);
+  // Optional (tests, links from other apps): which title this is, for skips and online subtitles.
+  params.video_id = json["videoId"].as_string("launch");
+  params.type = json["type"].as_string("movie");
   logf("app", "launch params: uri=%s type=%s autoplay=%d", params.uri.empty() ? "-" : redact_uri(params.uri).c_str(),
        params.load_type.c_str(), params.autoplay);
   return params;
@@ -184,7 +187,8 @@ class App {
     if (!launch.uri.empty() && launch.autoplay) {
       PlayRequest req;
       req.item.name = launch.title;
-      req.video_id = "launch";
+      req.item.type = launch.type;
+      req.video_id = launch.video_id;
       ops_.push_back({Op::Push, make_player(req, launch.uri, PlaySourceInfo{}, launch.load_type)});
     }
     c.now = now_ms();
