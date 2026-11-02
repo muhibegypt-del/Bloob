@@ -98,6 +98,8 @@ class App {
       return false;
     }
     c.app_id = app_id() == "com.webos.app.home" ? std::string("com.muhib.bloob") : app_id();
+    // The Greyscale app (4.0.1) is this program installed under its own id: known by its folder.
+    if (c.dir.find("com.muhib.greyscale") != std::string::npos) c.app_id = "com.muhib.greyscale";
     SDL_SetHint("SDL_WEBOS_ACCESS_POLICY_KEYS_BACK", "true");
     SDL_SetHint("SDL_WEBOS_ACCESS_POLICY_KEYS_EXIT", "true");
     SDL_SetHint("SDL_WEBOS_CURSOR_SLEEP_TIME", "5000");
@@ -194,13 +196,19 @@ class App {
     watch_network();
     watch_sound_output();
     watch_memory();
-    start_service();
+    // 4.0.1: the Greyscale app (com.muhib.greyscale) is this program with one screen and no service.
+    greyscale_app_ = c.app_id == "com.muhib.greyscale" || (std::getenv("BLOOB_GREYSCALE_APP") && *std::getenv("BLOOB_GREYSCALE_APP"));
+    if (!greyscale_app_) start_service();
 
     roots_.resize(kTabCount);
     root_ = kHomeTab;
     roots_[kHomeTab] = make_browse(Browse::Home);
 
     load_script();
+    if (greyscale_app_) {
+      logf("app", "Greyscale app");
+      ops_.push_back({Op::Push, make_calibrate(true)});
+    }
     LaunchParams launch = parse_launch(argc, argv);
     if (!launch.uri.empty() && launch.autoplay) {
       PlayRequest req;
@@ -1221,11 +1229,11 @@ class App {
       if (!script_.empty()) run_script(now);
       apply_ops();
       apply_memory_policy();
-      if (!c.api.ready() && !fallback_tried_ && now - service_started_at_ > kServiceBusWaitMs) {
+      if (!greyscale_app_ && !c.api.ready() && !fallback_tried_ && now - service_started_at_ > kServiceBusWaitMs) {
         logf("app", "no reply from the service over the bus");
         start_service_fallback();
       }
-      if (!c.api.ready() && c.service_error.empty() && now - service_started_at_ > kServiceTimeoutMs) {
+      if (!greyscale_app_ && !c.api.ready() && c.service_error.empty() && now - service_started_at_ > kServiceTimeoutMs) {
         c.service_error = "Bloob's background service did not start. Close Bloob and open it again.";
         logf("app", "service start timed out");
         c.invalidate();
@@ -1404,6 +1412,7 @@ class App {
   // The launcher hook is installed (native/launcher): Bloob is the home screen.
   bool launcher_ = access("/var/lib/webosbrew/init.d/60-bloob-home", F_OK) == 0;
   bool home_mode_ = false;      // 4.0: running as LG Home
+  bool greyscale_app_ = false;  // 4.0.1: the Greyscale app
   bool home_ok_sent_ = false;   // the good-start mark for the takeover's boot hook
 
   // Bloob opened from its own tile while it is LG Home (takeover.sh): bring Home

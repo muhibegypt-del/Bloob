@@ -1626,8 +1626,8 @@ int main(int argc, char **argv) {
   }
   static const std::vector<std::string> kPal = {"pal-start", "grey-report", "pal-propose", "apply-1d", "pal-light", "pal-end", "flashcheck", "pal-screen", "pal-note"};
   bool pal = std::find(kPal.begin(), kPal.end(), cmd) != kPal.end();
-  if (cmd != "check" && cmd != "test" && cmd != "sdr" && cmd != "undo" && cmd != "patterns" && !pal) {
-    out("usage: bloob-cal check | test | sdr [nits] [quick|thorough] | undo | patterns\n"
+  if (cmd != "check" && cmd != "test" && cmd != "sdr" && cmd != "undo" && cmd != "patterns" && cmd != "greyscale" && !pal) {
+    out("usage: bloob-cal check | test | sdr [nits] [quick|thorough] | undo | patterns | greyscale [step %%] [gamma]\n"
         "       bloob-cal pal-start [nits] [--warmup] | grey-report | pal-propose [report.json] [damp] | apply-1d <proposal.json>|--start\n"
         "                 | pal-light <white cd/m2> | pal-end ok|undo | flashcheck | pal-screen video on|off | pal-note <why>\n");
     return 1;

@@ -64,4 +64,24 @@ if grep -E '^.{5}w|^.{8}w' "$CHECK/list" | grep -q .; then
   grep -E '^.{5}w|^.{8}w' "$CHECK/list" >&2
   exit 1
 fi
+# The Greyscale app (4.0.1): the same program and bloob-cal under their own id, one screen
+# (Measure greyscale, Last report), no service.
+GS_VERSION=1.0.0
+rm -rf build-webos/pkg-greyscale && cp -a build-webos/pkg build-webos/pkg-greyscale
+cat > build-webos/pkg-greyscale/appinfo.json <<GSEOF
+{
+  "id": "com.muhib.greyscale",
+  "version": "$GS_VERSION",
+  "vendor": "Muhib",
+  "type": "native",
+  "main": "bin/bloob",
+  "title": "Greyscale",
+  "icon": "icon.png",
+  "iconColor": "#07080a",
+  "bgColor": "#07080a"
+}
+GSEOF
+"$ARES" build-webos/pkg-greyscale -o artifacts
+GS_IPK="artifacts/com.muhib.greyscale_${GS_VERSION}_arm.ipk"
+python3 scripts/fix-ipk-modes.py "$GS_IPK"
 ls -la artifacts
