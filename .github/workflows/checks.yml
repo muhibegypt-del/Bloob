@@ -1,0 +1,62 @@
+# Bloob's checks on every push and pull request (4.0): the service and web app
+# tests, and the native core, engine, calibration and 4.0 tests on a Linux
+# desktop build, plus the stand-in TV tests of the root scripts. These prove
+# the code, not the TV: on-TV behaviour is in native/TV-TEST.md.
+name: checks
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  service:
+    name: Service and web app
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: tv-app
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: tv-app/package-lock.json
+      - run: npm ci
+      - run: npx tsc --noEmit
+      - run: npx vitest run
+
+  native:
+    name: Native tests (desktop build)
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: native
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tools
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q cmake ninja-build pkg-config nasm libsdl2-dev ffmpeg
+      - name: FFmpeg libraries (cached)
+        id: ffmpeg
+        uses: actions/cache@v4
+        with:
+          path: native/build-ffmpeg/host
+          key: ffmpeg-host-${{ hashFiles('native/scripts/build-ffmpeg-libs.sh') }}
+      - if: steps.ffmpeg.outputs.cache-hit != 'true'
+        run: scripts/build-ffmpeg-libs.sh host
+      - name: Dolby Vision converter
+        run: scripts/build-dovi.sh host
+      - name: Build
+        run: |
+          cmake -S . -B build-host -G Ninja
+          cmake --build build-host
+      - name: Native tests
+        run: ./build-host/native_tests
+      - name: Calibration tests
+        run: ./build-host/cal_tests
+      - name: Root scripts against a stand-in TV
+        run: |
+          sh tools/privacy-sim/test.sh
+          sh tools/takeover-sim/test.sh
