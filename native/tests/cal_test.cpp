@@ -7,6 +7,7 @@
 #include <cstring>
 
 #include "colour.h"
+#include "greyscale.h"
 #include "hdr.h"
 #include "lut.h"
 #include "model.h"
@@ -555,7 +556,38 @@ static void test_pal() {
   CHECK(met >= static_cast<int>(cases.size()) - 1);
 }
 
+// 4.0.1: the HCFR-style greyscale report.
+static void test_greyscale() {
+  auto panel = [](double gamma, double rk, double bk) {
+    std::vector<GreyRow> rows;
+    Mat3 m = rgb_to_xyz(kRec709);
+    for (int p = 0; p <= 100; p += 5) {
+      double y = 140 * std::pow(p / 100.0, gamma);
+      GreyRow r;
+      r.pct = p;
+      r.xyz = m * Vec3{y * rk, y, y * bk};
+      rows.push_back(r);
+    }
+    return rows;
+  };
+  auto perfect = panel(2.4, 1, 1);
+  GreySummary2 s = greyscale_report(perfect, 2.4);
+  CHECK(std::fabs(s.white_y - 140) < 1e-6 && s.avg_de < 0.01 && std::fabs(s.avg_gamma - 2.4) < 1e-6);
+  CHECK(std::fabs(s.white_cct - 6504) < 15);
+  CHECK(std::fabs(perfect[10].r - 100) < 0.01 && std::fabs(perfect[10].b - 100) < 0.01);
+  auto bright = panel(2.2, 1, 1);
+  GreySummary2 b = greyscale_report(bright, 2.4);
+  CHECK(std::fabs(b.avg_gamma - 2.2) < 1e-6 && b.avg_de > 0.5 && bright[10].de_colour < 0.01);  // luminance only
+  auto warm = panel(2.4, 1.04, 0.95);
+  GreySummary2 w = greyscale_report(warm, 2.4);
+  CHECK(warm[12].r > 102 && warm[12].b < 97 && w.white_cct < 6400 && w.avg_de > 1);
+  std::string html = greyscale_html(warm, w, 2.4, "test");
+  CHECK(html.find("<svg") != std::string::npos && html.find("Greyscale report") != std::string::npos);
+  CHECK(greyscale_csv(warm).find("pct,Y,target_Y") == 0);
+}
+
 int main() {
+  test_greyscale();
   test_colour();
   test_luts();
   test_model();

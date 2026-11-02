@@ -417,7 +417,9 @@ class CalibrateScreen : public Screen {
     Json s = Json::parse(text, &ok);
     if (ok) status_ = s;
     Json screen = Json::parse(slurp(cal_dir() + "/pal/screen.json"), &ok);
-    pal_video_ = ok && screen["video"].as_bool();
+    // 4.0.1: the black video plays unless Pal says "pal-screen video off". On the owner's
+    // TV (2 November 2026) LG's squares read 0 cd/m2 without it and 60 cd/m2 with it.
+    pal_video_ = !ok || screen["video"].as_bool(true);
     Json session = Json::parse(slurp(cal_dir() + "/pal/session.json"), &ok);
     pal_session_open_ = ok && session["open"].as_bool();
     // A session ends when pal-end has run after it was held (from the computer, or from OK here).

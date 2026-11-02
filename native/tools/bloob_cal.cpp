@@ -34,6 +34,7 @@
 #include "colour.h"
 #include "lut.h"
 #include "pal.h"
+#include "greyscale.h"
 #include "procedure.h"
 #include "tv_device.h"
 
@@ -1170,9 +1171,17 @@ static int cmd_pal_start(double nits, bool warmup) {
   out("  Expert 1 active (light %d, colour temperature %s, gamut %s).\n", s.light, s.view_ct.c_str(), s.view_gamut.c_str());
   // 2. Meter and squares, before anything changes.
   if (!meter_up(tv)) return pal_fail(6, "The meter did not answer.");
-  if (!squares_visible(tv))
-    return pal_fail(6, "The test squares are not reaching the meter. Is the Pal session open on Bloob's Calibrate screen? If it is, try "
-                       "pal-screen video on (the black video under the squares) and pal-start again.");
+  if (!squares_visible(tv)) {
+    // 4.0.1: LG's squares need a video playing under them on this TV. If the screen was
+    // told not to play one, ask for it once and look again.
+    out("  No squares: asking the Calibrate screen for the black video and looking again.\n");
+    mkdir(pal_dir().c_str(), 0755);
+    write_file(pal_dir() + "/screen.json", "{\"video\":true}");
+    sleep(getenv("BLOOB_CAL_FAST") ? 0 : 10);  // the screen polls every second; the clip takes up to 6 s
+    if (!squares_visible(tv))
+      return pal_fail(6, "The test squares are not reaching the meter, even with the black video. Is the Pal session open on "
+                         "Bloob's Calibrate screen (Settings, Calibrate, Pal session, OK twice), with the meter flat in the middle?");
+  }
   // 3. The meter sees the middle window and only it.
   out("== Is the meter in the middle?\n");
   Reading c;
@@ -1481,8 +1490,77 @@ static int cmd_pal_note(const std::string &text) {
   return pal_result(0, "{\"ok\":true,\"kind\":\"note\"}");
 }
 
-// What Bloob's Calibrate screen does during a Pal session: with "video on" it plays the black
-// clip under the squares (3.3.6's way); off (the default) it is see-through only.
+// A greyscale report, as HCFR makes one (4.0.1): read-only. 0-100% grey in `step` % steps
+// against BT.709 with a power `gamma` and D65, two readings a level (a third when they
+// disagree). Writes calibration/reports/greyscale-<time>.{json,csv,html} and latest-greyscale.*.
+// Run it from Bloob's Calibrate screen ("Greyscale report"), which plays the black video
+// LG's squares need on this TV, or over SSH while that screen is open.
+static int cmd_greyscale(double step, double gamma) {
+  TvDevice tv(config("expert1"));
+  report_progress(tv);
+  if (!meter_up(tv)) return pal_fail(2, "The meter did not answer.");
+  if (!squares_visible(tv)) {
+    mkdir(pal_dir().c_str(), 0755);
+    write_file(pal_dir() + "/screen.json", "{\"video\":true}");
+    sleep(getenv("BLOOB_CAL_FAST") ? 0 : 10);
+    if (!squares_visible(tv))
+      return pal_fail(6, "The test squares are not reaching the meter. Open Bloob's Calibrate screen and start Greyscale report from there, with the meter flat in the middle.");
+  }
+  std::vector<double> levels;
+  for (double p = 0; p < 100 - 1e-9; p += step) levels.push_back(std::round(p * 100) / 100);
+  levels.push_back(100);
+  g_status.expected = static_cast<long>(levels.size()) * 2 + 4;
+  out("== Greyscale report: %zu levels, %.1f%% steps, target BT.709 power %.2f, D65\n", levels.size(), step, gamma);
+  std::vector<GreyRow> rows;
+  for (double p : levels) {
+    if (g_stop) return pal_fail(3, "Stopped.");
+    int code = static_cast<int>(std::lround(64 + p / 100.0 * 876));
+    Reading a, b;
+    if (!read_avg(tv, {code, code, code}, 1, &a) || !read_avg(tv, {code, code, code}, 1, &b)) return pal_fail(2, "The meter failed: " + tv.last_error());
+    Vec3 xyz = (a.xyz + b.xyz) * 0.5;
+    double gap = std::fabs(a.xyz.y - b.xyz.y) / std::max(0.05, xyz.y);
+    if (gap > 0.02) {
+      Reading c;
+      if (read_avg(tv, {code, code, code}, 1, &c)) {
+        // The middle of three: the outlier goes.
+        Vec3 v[3] = {a.xyz, b.xyz, c.xyz};
+        std::sort(v, v + 3, [](const Vec3 &l, const Vec3 &r) { return l.y < r.y; });
+        xyz = v[1];
+      }
+    }
+    GreyRow r;
+    r.pct = p;
+    r.xyz = xyz;
+    rows.push_back(r);
+    out("  %5.1f%%  code %4d  Y %8.3f\n", p, code, xyz.y);
+  }
+  tv.finish();
+  GreySummary2 sum = greyscale_report(rows, gamma);
+  char stamp[32];
+  time_t now = time(nullptr);
+  strftime(stamp, sizeof stamp, "%Y%m%d-%H%M%S", localtime(&now));
+  char when[64];
+  strftime(when, sizeof when, "%d %B %Y, %H:%M", localtime(&now));
+  std::string dir = data_dir() + "/reports";
+  mkdir(dir.c_str(), 0755);
+  std::string json = greyscale_json(rows, sum, gamma, when), html = greyscale_html(rows, sum, gamma, when), csv = greyscale_csv(rows);
+  for (const std::string &base : {dir + "/greyscale-" + stamp, data_dir() + "/latest-greyscale"}) {
+    write_file(base + ".json", json);
+    write_file(base + ".html", html);
+    write_file(base + ".csv", csv);
+  }
+  out("\n   %%       Y      target  gamma   CCT     R      G      B     dE2000\n");
+  for (const auto &r : rows)
+    out("  %5.1f %8.3f %8.3f  %5.2f %6.0f  %5.1f  %5.1f  %5.1f  %5.2f\n", r.pct, r.xyz.y, r.target_y, r.gamma, r.cct, r.r, r.g, r.b, r.de);
+  out("\n  Average dE2000 %.2f, worst %.2f at %.1f%%; average gamma %.2f; white %.1f cd/m2, black %.4f; white %.0f K.\n", sum.avg_de, sum.max_de,
+      sum.max_de_pct, sum.avg_gamma, sum.white_y, sum.black_y, sum.white_cct);
+  out("  Report: %s/latest-greyscale.html (and .csv, .json)\n", data_dir().c_str());
+  return pal_result(0, json);
+}
+
+// What Bloob's Calibrate screen does during a Pal session: with "video on" (the default since
+// 4.0.1: this TV draws its squares only over a playing video) it plays the black clip under
+// the squares; off leaves it see-through only.
 static int cmd_pal_screen(const std::string &what, const std::string &value) {
   if (what != "video" || (value != "on" && value != "off")) return pal_fail(1, "usage: pal-screen video on|off");
   mkdir(pal_dir().c_str(), 0755);
@@ -1598,6 +1676,8 @@ int main(int argc, char **argv) {
     rc = cmd_pal_start(nits, warmup);
   }
   else if (cmd == "grey-report") rc = cmd_grey_report();
+  else if (cmd == "greyscale") rc = cmd_greyscale(argc > 2 ? std::max(0.5, std::min(25.0, std::atof(argv[2]))) : 5.0,
+                                                  argc > 3 ? std::max(1.8, std::min(2.8, std::atof(argv[3]))) : 2.4);
   else if (cmd == "pal-propose") rc = cmd_pal_propose(argc > 2 ? argv[2] : "", argc > 3 ? std::max(0.2, std::min(1.0, std::atof(argv[3]))) : 1.0);
   else if (cmd == "apply-1d") rc = argc > 2 ? cmd_apply_1d(argv[2]) : pal_fail(1, "apply-1d needs a proposal file or --start");
   else if (cmd == "pal-light") rc = argc > 2 ? cmd_pal_light(std::max(20.0, std::min(400.0, std::atof(argv[2])))) : pal_fail(1, "pal-light needs a white level in cd/m2");

@@ -423,6 +423,20 @@ def sc_no_video():
         tv.close()
 
 
+def sc_video_off_retry():
+    """4.0.1: the screen was told not to play the black video, and this TV draws squares only over one."""
+    tv = Tv("videoretry", {"FAKE_TV_VIDEO_FROM_SCREEN": "1"})
+    try:
+        os.makedirs(os.path.join(tv.data, "pal"), exist_ok=True)
+        with open(os.path.join(tv.data, "pal", "screen.json"), "w") as f:
+            f.write('{"video":false}')
+        rc, r, out = tv.run("pal-start", "140")
+        check("video off: pal-start turns it on and goes ahead", rc == 0 and "asking the Calibrate screen for the black video" in (out or ""),
+              (r or {}).get("error", ""))
+    finally:
+        tv.close()
+
+
 def sc_socket_500():
     tv = Tv("ssap500", {"FAKE_TV_SSAP_500_COUNT": "1"})
     try:
@@ -571,7 +585,7 @@ def sc_legacy():
         tv.close()
 
 
-SCENARIOS = [sc_happy, sc_playbook_method, sc_repeat, sc_code_index, sc_flicker, sc_warmup, sc_warm_default, sc_meter_placement, sc_no_video, sc_socket_500,
+SCENARIOS = [sc_happy, sc_playbook_method, sc_repeat, sc_code_index, sc_flicker, sc_warmup, sc_warm_default, sc_meter_placement, sc_no_video, sc_video_off_retry, sc_socket_500,
              sc_not_loaded, sc_meter_stall, sc_meter_moved, sc_gate, sc_clear_and_stop, sc_one_session, sc_legacy]
 
 if __name__ == "__main__":

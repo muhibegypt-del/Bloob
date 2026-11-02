@@ -21,6 +21,7 @@ Behaviour switches (environment, read by every part):
   FAKE_TV_FLICKER_S        after a pattern change the picture flickers pink for this long (LG, B1)
   FAKE_TV_WARMUP_S         the panel brightens towards steady with this time constant (0: steady)
   FAKE_TV_NO_VIDEO         no video playing: the pattern generator accepts patterns and draws nothing
+  FAKE_TV_VIDEO_FROM_SCREEN  the video plays as Bloob's Calibrate screen would: unless pal/screen.json says off
   FAKE_TV_METER_AT=x,y     where the meter sits, in panel pixels (state "meter_at" overrides); it reads a
                            disc 150 px across its middle, so a meter near a window's edge sees some of beyond
   FAKE_TV_1D_INDEX=code    the 1D table is indexed by the 10-bit code (64 → entry 64), not the signal
@@ -217,6 +218,15 @@ def code_at(s, x, y):
     """The 10-bit code on screen at panel pixel (x, y); None where nothing is drawn."""
     if env("FAKE_TV_NO_VIDEO") or s.get("video") is False:
         return None  # the generator draws only while a video plays
+    if env("FAKE_TV_VIDEO_FROM_SCREEN"):
+        # 4.0.1, as the owner's TV behaves: squares only while the Calibrate screen plays
+        # its black video, which it does unless pal/screen.json says "video": false.
+        try:
+            with open(os.path.join(os.environ.get("BLOOB_CAL_DATA", ""), "pal", "screen.json")) as f:
+                if json.load(f).get("video") is False:
+                    return None
+        except (OSError, ValueError):
+            pass
     if not s["on"]:
         return None
     for i in range(int(s["num"]) - 1, -1, -1):
