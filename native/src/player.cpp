@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <climits>
 #include <cstdlib>
 #include <ctime>
 #include <map>
@@ -23,6 +24,7 @@
 #include "screens.h"
 #include "session.h"
 #include "skips.h"
+#include "ass.h"
 #include "speech.h"
 
 namespace {
@@ -1157,6 +1159,21 @@ class PlayerScreen : public Screen {
         c.gfx.texture(textures[i], static_cast<int>(piece.x * sx), y, static_cast<int>(piece.w * sx), static_cast<int>(piece.h * sy));
       }
     }
+    // Styled subtitles (4.0): an ASS/SSA track drawn as its authors placed and coloured it.
+    if (c.subtitle_styled) {
+      std::string header = media_->ass_header();
+      if (header != ass_header_) {
+        ass_header_ = header;
+        ass_script_ = header.empty() ? ass::Script{} : ass::parse_header(header);
+        ass_events_.clear();
+        if (ass_script_.valid)
+          logf("player", "styled subtitles: script %dx%d, %zu styles", ass_script_.res_x, ass_script_.res_y, ass_script_.styles.size());
+      }
+      if (ass_script_.valid) {
+        draw_ass(cues, pos, lift);
+        return;
+      }
+    }
     // Text: wrapped to 80% of the width, bottom-centred.
     static const int kSizes[] = {40, 46, 52, 60, 68};
     int size = kSizes[std::max(0, std::min(4, c.subtitle_size))];
@@ -1200,6 +1217,70 @@ class PlayerScreen : public Screen {
       }
       font.draw(line, x, y, size, {255, 255, 255, 255});
       y += lh;
+    }
+  }
+
+  // ASS/SSA events showing at `pos`: laid out (ass.h), stacked, then drawn
+  // shadow, outline and fill. Positioned signs stay put; bottom dialogue moves
+  // up with the controls.
+  void draw_ass(const std::vector<SubtitleCue> &cues, long long pos, float lift) {
+    Ctx &c = ctx();
+    struct Showing { const SubtitleCue *cue; const ass::Event *event; };
+    std::vector<Showing> showing;
+    std::map<long long, ass::Event> keep;
+    for (const auto &cue : cues) {
+      if (cue.ass.empty()) continue;
+      auto it = ass_events_.find(cue.order);
+      ass::Event e = it != ass_events_.end() ? it->second : ass::parse_event(ass_script_, cue.ass);
+      keep[cue.order] = std::move(e);
+    }
+    ass_events_.swap(keep);
+    for (const auto &cue : cues)
+      if (!cue.ass.empty()) showing.push_back({&cue, &ass_events_[cue.order]});
+    std::stable_sort(showing.begin(), showing.end(), [](const Showing &a, const Showing &b) {
+      return a.event->layer != b.event->layer ? a.event->layer < b.event->layer : a.cue->order < b.cue->order;
+    });
+    auto font_for = [&c](bool bold) -> Font & { return bold ? c.fonts.bold : c.fonts.medium; };
+    ass::Measure measure = [&](const std::string &t, int size, bool bold) { return font_for(bold).measure(t, size); };
+    ass::LineHeight line_h = [&](int size) { return c.fonts.medium.line_height(size); };
+    std::vector<ass::Layout> layouts;
+    bool moving = false;
+    for (const auto &s : showing) {
+      if (s.event->empty()) continue;
+      long long since = pos - s.cue->start_ms, left = s.cue->end_ms == LLONG_MAX ? 10000 : s.cue->end_ms - pos;
+      layouts.push_back(ass::layout(ass_script_, *s.event, W, H, since, left, measure, line_h));
+      moving = moving || s.event->has_move || (s.event->fade_in > 0 && since < s.event->fade_in) ||
+               (s.event->fade_out > 0 && left < s.event->fade_out);
+    }
+    ass::stack(layouts, H);
+    if (moving && session_.phase() == Phase::Playing) c.animating = true;
+    auto colour = [](const ass::Rgba &k) { return Color{k.r, k.g, k.b, k.a}; };
+    for (const auto &l : layouts) {
+      float dy = !l.positioned && (l.align - 1) / 3 == 0 ? -lift : 0;
+      for (const auto &r : l.runs) {
+        Font &font = font_for(r.bold);
+        int x = static_cast<int>(std::lround(r.x)), y = static_cast<int>(std::lround(r.y + dy));
+        if (r.opaque_box && r.box.a) {
+          int pad = static_cast<int>(r.outline_px) + 4;
+          c.gfx.fill_rect(x - pad, y - pad / 2, r.width + 2 * pad, r.line_h + pad, colour(r.box));
+        }
+        if (!r.opaque_box && r.shadow_px >= 0.5f && r.shadow_colour.a) {
+          int d = std::max(1, static_cast<int>(std::lround(r.shadow_px)));
+          font.draw(r.text, x + d, y + d, r.size, colour(r.shadow_colour));
+        }
+        if (!r.opaque_box && r.outline_px >= 0.5f && r.outline.a) {
+          // An outline from offset copies: 8 directions at the full width, and
+          // a ring at half width when it is thick, so the edge has no gaps.
+          float rad = r.outline_px;
+          static const float kDirs[8][2] = {{1, 0}, {0.7071f, 0.7071f}, {0, 1}, {-0.7071f, 0.7071f}, {-1, 0}, {-0.7071f, -0.7071f}, {0, -1}, {0.7071f, -0.7071f}};
+          for (float ring : {rad, rad > 2.5f ? rad / 2 : 0.0f}) {
+            if (ring <= 0) continue;
+            for (const auto &d : kDirs)
+              font.draw(r.text, x + static_cast<int>(std::lround(d[0] * ring)), y + static_cast<int>(std::lround(d[1] * ring)), r.size, colour(r.outline));
+          }
+        }
+        font.draw(r.text, x, y, r.size, colour(r.fill));
+      }
     }
   }
 
@@ -1786,6 +1867,10 @@ class PlayerScreen : public Screen {
   Anim hud_anim_{overlay_rate, 1}, panel_anim_{overlay_rate};
   // Skip intro, recap and credits (4.0, skips.h): the segments for this file,
   // the one offered now, and the ones already skipped or waved away (a bit each).
+  // Styled subtitles (4.0): the track's header, its script, and the events showing, parsed once.
+  std::string ass_header_;
+  ass::Script ass_script_;
+  std::map<long long, ass::Event> ass_events_;
   std::vector<skips::Segment> skips_;
   bool skips_asked_ = false;
   int skip_now_ = -1;

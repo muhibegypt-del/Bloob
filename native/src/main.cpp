@@ -267,6 +267,7 @@ class App {
           x.subtitle_language = r.json["subtitleLanguage"].as_string("Off");
           x.subtitle_size = static_cast<int>(std::max<long long>(0, std::min<long long>(4, r.json["subtitleSize"].as_int(0))));
           x.subtitle_background = r.json["subtitleBackground"].as_bool(false);
+          x.subtitle_styled = r.json["subtitleStyled"].as_bool(true);
           x.picture = r.json["picture"].as_string("best");
           x.sources = r.json["sources"].as_string("all");
           x.preferred_cut = r.json["cut"].as_string("Theatrical");

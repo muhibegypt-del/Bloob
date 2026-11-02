@@ -433,8 +433,11 @@ void Demuxer::select_text(int index) {
   m.text_stream = -1;
   text_choice_ = -1;
   for (auto &t : facts_.text) t.selected = false;
+  text_header_.clear();
   if (index < 0 || index >= static_cast<int>(m.text_streams.size())) return;
   AVStream *st = m.fmt->streams[m.text_streams[static_cast<size_t>(index)]];
+  if ((st->codecpar->codec_id == AV_CODEC_ID_ASS || st->codecpar->codec_id == AV_CODEC_ID_SSA) && st->codecpar->extradata_size > 0)
+    text_header_.assign(reinterpret_cast<const char *>(st->codecpar->extradata), static_cast<size_t>(st->codecpar->extradata_size));
   if (st->codecpar->codec_id == AV_CODEC_ID_HDMV_PGS_SUBTITLE) {
     const AVCodec *dc = avcodec_find_decoder(AV_CODEC_ID_HDMV_PGS_SUBTITLE);
     m.sub_dec = dc ? avcodec_alloc_context3(dc) : nullptr;
@@ -663,7 +666,8 @@ DemuxPacket Demuxer::read() {
       p.kind = DemuxPacket::Text;
       std::string payload(reinterpret_cast<const char *>(m.pkt->data), static_cast<size_t>(m.pkt->size));
       p.text = demux::cue_text(text_codec(st->codecpar->codec_id), payload);
-      if (!p.text.empty()) m.ready.push_back(std::move(p));
+      if (!text_header_.empty()) p.ass = payload;  // styled (4.0): the player lays it out
+      if (!p.text.empty() || !p.ass.empty()) m.ready.push_back(std::move(p));
     }
   }
   av_packet_unref(m.pkt);

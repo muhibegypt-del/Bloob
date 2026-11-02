@@ -91,6 +91,10 @@ class EsPlayer : public MediaBackend {
   const MediaInfo &info() const override { return info_; }
   bool draws_subtitles() const override { return true; }
   std::vector<SubtitleCue> cues_at(long long ms) const override;
+  std::string ass_header() const override {
+    std::lock_guard<std::mutex> lock(cue_mutex_);
+    return ass_header_;
+  }
   long long next_cue_change(long long ms) const override;
   bool converts_audio() const override { return true; }
   // Reloads the sound at the current time when the options change.
@@ -150,6 +154,8 @@ class EsPlayer : public MediaBackend {
   std::atomic<int> generation_{0};          // bumps per pipeline, so late events are dropped
 
   mutable std::mutex cue_mutex_;
+  std::string ass_header_;     // under cue_mutex_
+  long long cue_order_ = 0;
   std::deque<SubtitleCue> cues_;
   bool subtitles_on_ = false;
   int text_index_ = -1;

@@ -48,6 +48,16 @@ BLOOB_EFFECTS=full SDL_VIDEODRIVER=dummy BLOOB_WINDOW=${BLOOB_WINDOW:-1280x720} 
 kill $SVC 2>/dev/null || true
 rm -rf "$DATA"
 grep -E 'skips|skipped' "$OUT/skip-run.log" || echo "skip run: no skip lines"
+
+# Styled subtitles (4.0): a clip with an ASS track (tests/fixtures/styled.ass) through Bloob's engine.
+ASSMKV="$OUT/.styled.mkv"
+ffmpeg -v error -y -f lavfi -i testsrc2=s=1920x1080:r=24:d=10 -f lavfi -i sine=f=440:d=10:r=48000 -i tests/fixtures/styled.ass \
+  -map 0:v -map 1:a -map 2:s -c:v libx265 -x265-params log-level=none -preset ultrafast -c:a ac3 -c:s ass -metadata:s:s:0 language=eng "$ASSMKV"
+BLOOB_EFFECTS=full SDL_VIDEODRIVER=dummy BLOOB_WINDOW=${BLOOB_WINDOW:-1280x720} BLOOB_SNAPSHOT_DIR="$OUT" \
+  BLOOB_SCRIPT="wait:1500|key:down|key:right|key:right|key:ok|wait:300|key:down|key:ok|wait:300|key:back|key:back|wait:4000|snap:13-styled-subtitles|quit" \
+  timeout 40 "$STAGE/bin/bloob_host" "{\"uri\":\"file:$ASSMKV\",\"title\":\"Styled\",\"autoplay\":true}" > "$OUT/styled-run.log" 2>&1 || true
+rm -f "$ASSMKV"
+grep -E 'styled subtitles' "$OUT/styled-run.log" || echo "styled run: no styled subtitles"
 # Fill the transparent video hole with a still from the bundled clip.
 STILL="$OUT/.still.png"
 ffmpeg -loglevel error -y -ss 17 -i ../tv-app/service/www/media/big-buck-bunny-480p-30sec.mp4 -frames:v 1 -vf scale=1920:1080 "$STILL"

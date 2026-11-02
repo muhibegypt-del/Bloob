@@ -235,7 +235,7 @@ function resetForTests() {
 const settingsStore = accountStore.createFileStore('settings.json', accountStore.defaultLocations);
 // subtitleSize: the TV's subtitle size level, 0 (smallest) to 4; the TV's own default is 2,
 // which viewers found far too large. picture: 'best' | 'hdr10' | 'sdr'. sources: 'all' | 'torrentio'.
-const SETTINGS_DEFAULTS = { language: 'English', subtitleLanguage: 'Off', subtitleSize: 0, subtitleBackground: false, picture: 'best', sources: 'all', cut: 'Theatrical', reduceMotion: false, reduceTransparency: false, highContrast: false, autoplayNext: true, skipIntros: 'button', welcomeSeen: false, recentSearches: [],
+const SETTINGS_DEFAULTS = { language: 'English', subtitleLanguage: 'Off', subtitleSize: 0, subtitleBackground: false, subtitleStyled: true, picture: 'best', sources: 'all', cut: 'Theatrical', reduceMotion: false, reduceTransparency: false, highContrast: false, autoplayNext: true, skipIntros: 'button', welcomeSeen: false, recentSearches: [],
   // Headphones mode (3.2): 'auto' (when the TV's sound goes to Bluetooth), 'on' or 'off';
   // the room, the boost after the render (dB), Night, the earbud correction and the lip-sync lead (ms).
   headphones: 'auto', headphoneRoom: 'lounge', headphoneBoost: 9, headphoneNight: false, headphoneEq: 'xm5', headphoneLeadMs: 0 };
@@ -255,6 +255,7 @@ async function saveSettings(input) {
   if (typeof input.subtitleLanguage === 'string' && LANGUAGE.test(input.subtitleLanguage)) current.subtitleLanguage = input.subtitleLanguage;
   if (Number.isInteger(input.subtitleSize) && input.subtitleSize >= 0 && input.subtitleSize <= 4) current.subtitleSize = input.subtitleSize;
   if (typeof input.subtitleBackground === 'boolean') current.subtitleBackground = input.subtitleBackground;
+  if (typeof input.subtitleStyled === 'boolean') current.subtitleStyled = input.subtitleStyled;
   // The cut the viewer last chose in a versions list (2.8): the edition row opens on it.
   if (typeof input.cut === 'string' && CUT_ORDER.indexOf(input.cut) >= 0) current.cut = input.cut;
   if (['best', 'hdr10', 'sdr'].indexOf(input.picture) >= 0) current.picture = input.picture;

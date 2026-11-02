@@ -63,6 +63,8 @@ struct SubPicture;
 struct SubtitleCue {
   long long start_ms = 0, end_ms = 0;
   std::string text;
+  std::string ass;  // the raw ASS event, when the track is ASS/SSA (4.0)
+  long long order = 0;  // arrival order (ASS stacking)
   std::shared_ptr<SubPicture> picture;  // a PGS picture instead of text
 };
 
@@ -97,6 +99,8 @@ class MediaBackend {
   // The engine draws subtitles in Bloob's UI: the cues showing at `ms`.
   virtual bool draws_subtitles() const { return false; }
   virtual std::vector<SubtitleCue> cues_at(long long ms) const { return {}; }
+  // The ASS/SSA header of the subtitle track showing (styles), empty otherwise (4.0).
+  virtual std::string ass_header() const { return ""; }
   // When what cues_at shows next changes after `ms` (-1: nothing known yet).
   virtual long long next_cue_change(long long ms) const { return -1; }
   // Every audio track plays (the engine converts what the TV can't decode).

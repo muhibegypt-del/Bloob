@@ -84,6 +84,7 @@ struct DemuxPacket {
   long long duration_us = 0;
   bool key = false;
   std::string text;  // Text: the cue; Error: what failed
+  std::string ass;   // Text from an ASS/SSA track: the raw event (4.0, ass.h)
   std::shared_ptr<SubPicture> picture;  // Picture
 };
 
@@ -115,6 +116,8 @@ class Demuxer {
   int audio_index() const { return audio_choice_; }
   int text_index() const { return text_choice_; }
   const AudioOut &audio_out() const { return audio_out_; }
+  // The selected text track's ASS/SSA header (styles, play resolution), empty for other formats.
+  const std::string &text_header() const { return text_header_; }
 
   // Moves to the key frame at or before `ms`; the next packets start there.
   bool seek(long long ms);
@@ -135,6 +138,7 @@ class Demuxer {
   HeadphoneOptions headphones_;
   int audio_choice_ = -1, text_choice_ = -1;
   bool dv_convert_ = true;
+  std::string text_header_;
   long long dv_ok_ = 0, dv_bad_ = 0;
   std::atomic<bool> interrupted_{false};
   friend int demux_interrupt(void *);

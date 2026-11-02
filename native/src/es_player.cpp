@@ -506,6 +506,7 @@ void EsPlayer::run() {
         demux_.select_text(static_cast<int>(cmd.value));
         std::lock_guard<std::mutex> lock(cue_mutex_);
         cues_.clear();
+        ass_header_ = demux_.text_header();
       }
       continue;
     }
@@ -553,6 +554,8 @@ void EsPlayer::run() {
         cue.start_ms = pending.pts_us / 1000;
         cue.end_ms = pending.duration_us > 0 ? cue.start_ms + pending.duration_us / 1000 : LLONG_MAX;
         cue.text = pending.text;
+        cue.ass = pending.ass;
+        cue.order = ++cue_order_;
         cue.picture = pending.picture;
         std::lock_guard<std::mutex> lock(cue_mutex_);
         // A Blu-ray picture lasts until the next one; an empty one only clears.

@@ -71,6 +71,7 @@ class SettingsScreen : public Screen {
       case Row::Subtitles: say = "Subtitles, " + c.subtitle_language + ", adjustable"; break;
       case Row::SubtitleSize: say = std::string("Subtitle size, ") + kSubtitleSizes[c.subtitle_size] + ", adjustable"; break;
       case Row::SubtitleBackground: say = std::string("Subtitle background, switch, ") + (c.subtitle_background ? "on" : "off"); break;
+      case Row::SubtitleStyle: say = std::string("Styled subtitles, switch, ") + (c.subtitle_styled ? "on" : "off"); break;
       case Row::Picture: say = std::string("Picture, ") + picture_name(c.picture) + ", adjustable"; break;
       case Row::Sources: say = std::string("Sources, ") + (c.sources == "torrentio" ? "Torrentio only" : "every index") + ", adjustable"; break;
       case Row::Headphones: say = std::string("Headphones, ") + headphones_name(c.headphones) + ", adjustable"; break;
@@ -114,14 +115,14 @@ class SettingsScreen : public Screen {
     }, alive_);
   }
 
-  enum class Row { Account, Disconnect, Audio, Subtitles, SubtitleSize, SubtitleBackground, Picture, Sources, Headphones,
+  enum class Row { Account, Disconnect, Audio, Subtitles, SubtitleSize, SubtitleBackground, SubtitleStyle, Picture, Sources, Headphones,
                    HeadphoneRoom, HeadphoneBoost, HeadphoneNight, HeadphoneEq, HeadphoneSync, Autoplay, SkipIntros, Motion,
                    Transparency, Contrast, Calibrate, About, Diagnostics };
 
   std::vector<Row> rows() const {
     std::vector<Row> list = {Row::Account};
     if (ctx().paired) list.push_back(Row::Disconnect);
-    for (Row r : {Row::Audio, Row::Subtitles, Row::SubtitleSize, Row::SubtitleBackground, Row::Picture, Row::Sources, Row::Headphones})
+    for (Row r : {Row::Audio, Row::Subtitles, Row::SubtitleSize, Row::SubtitleBackground, Row::SubtitleStyle, Row::Picture, Row::Sources, Row::Headphones})
       list.push_back(r);
     // The headphone details only matter while Headphones mode can be on.
     if (ctx().headphones != "off")
@@ -168,6 +169,7 @@ class SettingsScreen : public Screen {
     else if (r == Row::Subtitles) c.subtitle_language = step(c.subtitle_language, d, true);
     else if (r == Row::SubtitleSize) c.subtitle_size = std::max(0, std::min(4, c.subtitle_size + d));
     else if (r == Row::SubtitleBackground) c.subtitle_background = !c.subtitle_background;
+    else if (r == Row::SubtitleStyle) c.subtitle_styled = !c.subtitle_styled;
     else if (r == Row::Picture) {
       static const char *order[] = {"best", "hdr10", "sdr"};
       int i = c.picture == "sdr" ? 2 : c.picture == "hdr10" ? 1 : 0;
@@ -298,6 +300,11 @@ class SettingsScreen : public Screen {
           title = "Subtitle background";
           value = c.subtitle_background ? "A dark box behind the words" : "Off";
           toggle = c.subtitle_background;
+          break;
+        case Row::SubtitleStyle:
+          title = "Styled subtitles";
+          value = c.subtitle_styled ? "Anime and fansub subtitles placed and coloured as made" : "Off: every subtitle plain, at the bottom";
+          toggle = c.subtitle_styled;
           break;
         case Row::Picture:
           title = "Picture";

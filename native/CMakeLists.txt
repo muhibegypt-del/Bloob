@@ -19,7 +19,7 @@ if (CMAKE_CROSSCOMPILING)
 endif ()
 
 # Platform-free core, shared by the app and the tests.
-add_library(buna_core STATIC src/session.cpp src/json.cpp src/log.cpp src/model.cpp src/play.cpp src/resources.cpp src/tasks.cpp src/stats.cpp src/apps.cpp src/skips.cpp)
+add_library(buna_core STATIC src/session.cpp src/json.cpp src/log.cpp src/model.cpp src/play.cpp src/resources.cpp src/tasks.cpp src/stats.cpp src/apps.cpp src/skips.cpp src/ass.cpp)
 find_package(Threads REQUIRED)
 target_link_libraries(buna_core PUBLIC Threads::Threads)
 target_include_directories(buna_core PUBLIC src)
