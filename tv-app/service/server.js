@@ -374,7 +374,7 @@ async function handleApi(req, res, url) {
     return reply(res, 200, Object.assign({
       provider: answered.length ? answered.join(', ') : PROVIDER,
       providers: found.report,
-      picturePreference: settings.picture || 'best',
+      picturePreference: settings.picture || 'hdr10',
       runtimeMinutes: runtimeMinutes || null,
       runtimeFrom: sent > 0 && sent < 1000 ? 'app' : runtimeMinutes ? 'catalogue' : 'typical',
     }, ranked));

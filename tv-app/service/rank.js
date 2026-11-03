@@ -13,7 +13,10 @@ const DTS = ['DTS', 'DTS-HD MA', 'DTS:X'];
 const TYPICAL_MINUTES = { movie: 120, series: 45 };
 
 const WEIGHTS = {
-  ready: 3,  // ready now on the owner's AllDebrid: a tie-breaker at equal quality (2.8)
+  // Ready now on the owner's AllDebrid (2.8). 4.1: worth just under a resolution step,
+  // so Play takes a ready version over one AllDebrid would first have to download
+  // (the slow 4K starts), but never a ready 1080p over a 4K.
+  ready: 9,
   // Anime (3.1): SeaDex's pick of the best release, an alternative it lists, and dual audio.
   seadexBest: 8,  // leads at equal resolution, even over well-seeded web releases
   seadexAlt: 2,

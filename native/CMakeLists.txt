@@ -24,19 +24,6 @@ find_package(Threads REQUIRED)
 target_link_libraries(buna_core PUBLIC Threads::Threads)
 target_include_directories(buna_core PUBLIC src)
 
-# Calibration (CALIBRATION-PLAN.md): colour science, LG's tables, the panel
-# model, the procedure, and the virtual G2 it is tested on. No dependencies.
-add_library(bloob_cal STATIC cal/colour.cpp cal/lut.cpp cal/measure.cpp cal/model.cpp cal/grey.cpp cal/sdr.cpp cal/hdr.cpp cal/sim.cpp cal/pal.cpp cal/greyscale.cpp)
-target_include_directories(bloob_cal PUBLIC cal)
-# Optimised even in Debug: the tests run whole calibrations on the virtual G2.
-target_compile_options(bloob_cal PRIVATE -O2)
-# bloob-cal: the calibration runner on the TV (root, over SSH): luna-send and the
-# second-screen socket to the TV, Argyll's spotread for the meter (tools/bloob_cal.cpp).
-add_executable(bloob-cal tools/bloob_cal.cpp cal/tv_device.cpp cal/ssap.cpp cal/meter.cpp)
-target_link_libraries(bloob-cal PRIVATE bloob_cal buna_core)
-if (CMAKE_CROSSCOMPILING)
-  target_link_options(bloob-cal PRIVATE -static-libstdc++ -static-libgcc -Wl,--as-needed)
-endif ()
 
 # The playback engine's demuxer and audio converter (3.0) and Headphones mode
 # (3.2: binaural.cpp, headphones.cpp), on Bloob's own
@@ -75,7 +62,7 @@ endif ()
 set(APP_SOURCES
   src/main.cpp src/gfx.cpp src/media.cpp src/platform.cpp src/http.cpp src/api.cpp
   src/images.cpp src/icons.cpp src/ui.cpp src/common.cpp src/pairing.cpp src/speech.cpp
-  src/browse.cpp src/details.cpp src/sources.cpp src/player.cpp src/search.cpp src/settings.cpp src/calibrate.cpp src/inspect.cpp src/alloc.cpp
+  src/browse.cpp src/details.cpp src/sources.cpp src/player.cpp src/search.cpp src/settings.cpp src/inspect.cpp src/alloc.cpp
   src/es_player.cpp src/starfish.cpp)
 
 if (CMAKE_CROSSCOMPILING)
@@ -84,7 +71,6 @@ if (CMAKE_CROSSCOMPILING)
   pkg_check_modules(GLIB REQUIRED glib-2.0)
 
   add_executable(bloob ${APP_SOURCES} src/luna.cpp)
-  add_dependencies(bloob bloob-cal)  # packaged beside it (Settings → Calibrate)
   target_include_directories(bloob PRIVATE ${SDL2_INCLUDE_DIRS} ${GLIB_INCLUDE_DIRS})
   # BLOOB_STARFISH: the engine's TV output (starfish.cpp; libplayerAPIs is opened at run time).
   target_compile_definitions(bloob PRIVATE BLOOB_STARFISH)
@@ -100,12 +86,9 @@ if (CMAKE_CROSSCOMPILING)
     COMMAND ${CMAKE_COMMAND} -E make_directory ${PKG}/bin ${PKG}/assets/fonts ${PKG}/assets/media
     COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:bloob> ${PKG}/bin/bloob
     COMMAND ${CMAKE_STRIP} ${PKG}/bin/bloob
-    COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:bloob-cal> ${PKG}/bin/bloob-cal
-    COMMAND ${CMAKE_STRIP} ${PKG}/bin/bloob-cal
     COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_SOURCE_DIR}/launcher/privacy.sh ${PKG}/bin/bloob-privacy.sh
     COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_SOURCE_DIR}/launcher/LICENSE-native-tv ${PKG}/bin/
     COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_SOURCE_DIR}/package/appinfo.json ${CMAKE_SOURCE_DIR}/package/icon.png ${PKG}/
-    COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_SOURCE_DIR}/package/media/black.mp4 ${PKG}/assets/media/
     COMMAND ${CMAKE_COMMAND} -E copy
       ${CMAKE_SOURCE_DIR}/third_party/fonts/Inter-Regular.ttf
       ${CMAKE_SOURCE_DIR}/third_party/fonts/Inter-Medium.ttf
@@ -137,8 +120,4 @@ else ()
   target_link_libraries(native_tests PRIVATE buna_core buna_demux)
   target_compile_definitions(native_tests PRIVATE BLOOB_TEST_FIXTURES="${CMAKE_SOURCE_DIR}/tests/fixtures")
   add_test(NAME native_tests COMMAND native_tests)
-  add_executable(cal_tests tests/cal_test.cpp)
-  target_link_libraries(cal_tests PRIVATE bloob_cal)
-  target_compile_options(cal_tests PRIVATE -O2)
-  add_test(NAME cal_tests COMMAND cal_tests)
 endif ()

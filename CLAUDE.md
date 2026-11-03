@@ -2,8 +2,8 @@
 
 ## Start here (1 November 2026)
 
-- **A Pal calibration session on the owner's computer:** follow [`native/PAL-PLAYBOOK.md`](native/PAL-PLAYBOOK.md) from top to bottom. It is complete on its own; the rest of this file is background. The safe working rules at the end of this file apply as well.
-- **The latest work** is the 4.0.0 entry under "Native track" below (the 3.4 Pal work just before it).
+- **Calibration is gone (4.1, 3 November 2026):** the owner asked for all of it to be removed (Calibrate screen, `bloob-cal`, `cal/`, Pal, the Greyscale app and their tests). The history below is kept for reference only; do not bring it back unless asked. The Greyscale IPK lives on in its own repository, `muhibegypt-del/greyscale-report`.
+- **The latest work** is the 4.1.0 entry under "Native track" below.
 - **"Immediate work order for the next assistant"** further down dates from the web app (October 2026) and is history.
 
 
@@ -167,70 +167,7 @@ The owner chose native. `native/` is a C++ webOS app (`com.muhib.bloob`, "Bloob 
   - **Player:** Audio panel rows *Room* and *Lip-sync* (Left/Right; applied 900 ms after the last change); info-panel row *Headphones*. Settings rows: Headphones, Surround room, Headphone volume boost, Night listening, Earbud correction, Headphone lip-sync (all saved by the service: `headphones`, `headphoneRoom`, `headphoneBoost`, `headphoneNight`, `headphoneEq`, `headphoneLeadMs`).
   - **Measured on the desktop:** one chain renders 50–85× faster than real time. Previews come out at about −14 LUFS with a −0.9 dBFS peak; the plain downmix is about 13 dB quieter. `tools/hp_preview.cpp` (`build-host/hp_preview <dir> [film]`) writes WAV previews. Tests are in `tests/headphones_test.cpp` and the demux test.
   - **Not yet:** Atmos heights (Cavern's E-AC-3 JOC; truehdd for TrueHD), lip-sync measured on the TV, and the phone/LDAC route. TV pass: `native/TV-TEST.md` §17; the IPK is `native/artifacts/com.muhib.bloob_3.2.1_arm.ipk`.
-- **3.3.0 Calibrate (29 October 2026, built, not yet run from Bloob on the TV).** Settings → **Calibrate** (`src/calibrate.cpp`). Its rows:
-  - **Check** (read-only);
-  - **Test on Expert 2** (writes, then puts Expert 2 back);
-  - **Calibrate Expert 1** (the owner's SDR mode, **140 nits**: "a small lamp on in the corner"; Quick since 3.3.1) and **Calibrate Expert 1, thorough**;
-  - **Undo**, and **Stop** while a run is going.
-
-  How it works:
-  - **The program.** The screen starts `bin/bloob-cal`, packaged in the IPK and built from `tools/bloob_cal.cpp` and `cal/`, as root through the Homebrew Channel. Since 3.3.6 Bloob must stay open on the Calibrate screen during a run (it plays the black video the squares need). Every line it writes also goes to `/media/internal/com.muhib.bloob/calibration/status.json`, which the screen reads every second, and the whole run log is `last-run.log`.
-  - **The procedure** (`native/cal/`, `native/CALIBRATION-PLAN.md`, revision 4) is written once against `cal::Device`. `cal/tv_device.*` talks to `com.webos.service.pqcontroller` (luna-send as root; no pairing). Patterns and the 3D LUT go over the second-screen socket, because on the owner's TV patterns sent by luna-send did not appear. The TV asks once to allow Bloob.
-  - **The meter** is the Spyder probe app's Argyll `spotread` (AGPL, never bundled), with DisplayCAL's "LG TV 55G2 (i1 Pro 2)" `.ccss` (on the TV only, `calibration/argyll/lg-55g2.ccss`).
-  - **Before a calibration:** it saves the Expert 1 settings (`expert1-settings.json`, kept until Undo) and the readable tables. **3.3.3:** it switches off the picture processing that moves readings (energy saving, dynamic contrast and colour, peak brightness, logo dimming, ambient light, AI Picture/Brightness/Genre; bscpylgtv's C2 names; only keys the TV reports; originals in `expert1-processing.json`, put back by Undo or a failed run, left off after success), then starts from LG's factory calibration data (the reset Undo uses, matrices and gamma switches included). Colour temperature and gamut are read in calibration mode (LG sets Warm 50 and Wide) and set back to those values after it if the TV changed them. Patterns are LG's own generator in the TV, drawn over the second-screen socket and seen through Expert 1.
-  - **After:** it checks the result outside calibration mode. A failed or stopped run is undone automatically.
-  - **Quick (3.3.1, settled in 3.3.2; the default):** close to Calman's AutoCal for LG (about 80 minutes with an i1 Display Pro, per TFTCentral): one reading per patch, 26 grey levels, grey stops once good, one colour pass; the before/after checks and the drift sentinel still read three times; about 1,900 readings, 1½ to 2 hours (estimated; not yet timed on the TV). *Thorough* is the 3.3.0 profile, unchanged: about 3,900 readings, 3 to 4 hours. Twelve simulated runs per panel put the two level: G2 12/12 within the marks for both, worst grey 0.67 against 0.64; hard panel 11/12 against 10/12; harsh meter 5/12 against 6/12. Found on the way: a one-reading drift sentinel rescaled 20 readings at a time (grey outliers up to 9.8 ΔE), and the grey stage now raises light again if its best table leaves white more than 3% short.
-
-  Proven:
-  - `build-host/cal_tests` reaches the pass marks on the simulated G2 (also as ARM under qemu), at 140 nits too.
-  - `tools/fake-tv/fake_tv.py` (a stand-in `luna-send`, socket and terminal `spotread`) runs `check` and `test` (7/7) end to end. Stop on `sdr` ends the run and undoes it (factory tables, saved settings and light back). A full stand-in `sdr` run started from the screen (`BLOOB_HOST_EXEC=1`) finished in 2,964 readings: grey 2.19 → 0.03 and colour 0.99 → 0.04 ΔE, 0.02/0.04 as watched, with the `.cube` saved. Undo pressed on the screen then put the factory tables and the saved light back. The stand-in panel is simple, so these numbers prove the plumbing, not the G2's result.
-
-  On the TV (29 October 2026, `cal-check.sh` and `bloob-cal check` over SSH):
-  - OLED55G26LA, chip W22O, firmware 23.25.55.
-  - The 1D LUT and 3×3 matrix are readable; the 3D LUT is not (so Undo uses LG's factory reset).
-  - The meter session works.
-  - Patterns sent by luna-send never appeared, hence the socket.
-
-  On the TV with 3.3.3 (owner, 30 October 2026): Check from the Calibrate screen showed no squares. The log (overwritten by a second, refused start) had the meter reading 18.1 cd/m² at x 0.347 y 0.543, then 1.7 cd/m², and spotread stopping after "measuring refresh rate failed". Deduction, not yet confirmed: LG's pattern generator draws in the video plane, under Bloob's opaque page, as films do. **3.3.4:**
-  - The Calibrate screen turns see-through while a run starts or goes (`over_video`), with one card in the bottom left; a second OK can't start a second run, and Stop acts only on a confirmed `bloob-cal` pid (a stale pid from an earlier run was nearly killed on the desktop).
-  - `bloob-cal` opens `last-run.log` itself once it holds the lock (the screen's own output goes to `start.log`).
-  - Before Check, Test and Calibrate, `squares_visible` needs white ≥ 30 cd/m², near neutral and ten times black; otherwise the run stops and changes nothing.
-  - A meter session that stops answering is restarted once.
-
-  With 3.3.4 (owner, 30 October 2026): still no squares, and the reading failed with "500 Application error", the second-screen socket's own error for the pattern command (3.3.3's same commands were accepted). Root cause not yet known; candidates: the generator draws only while video plays, its state went bad after the earlier failed run (bscpylgtv: the iTPG "can be broken in many different ways"), or a layer covers it. **3.3.5:** `bloob-cal patterns` (read-only) draws a box of a different colour for 10 s by each route (socket with background, socket overlay, luna-send with background, luna-send overlay, socket inside calibration mode, with colour temperature and gamut put back) and prints the TV's answers; a socket error is retried once on a fresh connection and reported with the command and the route.
-
-  **Root cause claimed (owner, 30 October 2026, `bloob-cal patterns`): LG's pattern generator draws only while a video plays.** *Correction (31 October 2026): not proven, and the owner disputes it.* The squares are drawn under the apps' graphics (3.3.3: Bloob's opaque page hid them). A playing video app is see-through, so the observation fits "something opaque was on top" just as well. 3.3.4's see-through screen was never tested with a pattern accepted, because every pattern command was refused with 500. An AVS Forum report says the iTPG stays up across HDMI port switches. 3.4.0's Pal session settles it: see-through, with no video unless Pal asks. With a video playing, all five routes drew (red and blue on black, green and yellow over the video, white in calibration mode, which also brings up webOS's "calibration start" notice); without one, nothing. **3.3.6:** every run from the Calibrate screen first plays `assets/media/black.mp4` (10 minutes, 1080p24 H.264, BT.709 limited-range black, 1.1 MB, looped) in Bloob's own exported video window, and starts `bloob-cal` once the TV reports it playing (6 s at most). So the Expert 1 measured is the one films in Bloob use. Back is held while a run goes; Stop before the video plays cancels; a dropped video is restarted; the drift sentinel stops (and undoes) a run if the white square falls below half its level.
-
-  3.3.6 on the TV (owner, 30 October 2026): Check passed (white 98.7 cd/m², black 0.000, 0.21% spread, 3.1 s a reading); black readings took about 20 s each, the screen showed 0 readings, and magenta flashed between squares. **3.3.7, from `research/PGenerator-Plus-and-LG-for-Bloob.md` (a study of PGenerator+, which drives LG's calibration API from captured Calman traffic):**
-  - One calibration session, one connection: `CAL_START`, every table and pattern and `CAL_END` over the second-screen socket (only the read-only getters and settings use luna-send); a fresh-connection retry only for patterns and reads.
-  - `picMode`, `profileNo` and `programID` on every write, as Calman sends them.
-  - Calman's SDR start after the factory reset: `1D_2_2_EN` and `1D_0_45_EN` 0, BT.709 3×3 identity, contrast 85, brightness 50, colour 50 (Test checks the first two, which the factory reset puts back).
-  - spotread: `-y` from the correction file (refresh for the OLED), `-N` after the first good start of a boot (`/tmp/bloob-spyder-checked`), an optional `-Y R:<Hz>` from `calibration/meter.json` (`refresh_hz`) or `BLOOB_METER_REFRESH`; a meter that stops answering is restarted on a white square, because spotread needs a bright patch to time its readings.
-  - 1 s settle after each table upload; live reading counts for Check and Test; "Reading a dark patch: the meter takes up to 20 s" on the card; the range line says "video range, levels above white shown"; the black video window is placed again once the clip reports its size (the magenta is not yet explained).
-
-  3.3.7 on the TV (owner, 30 October 2026): Check passed (white 98.0, black 0.000, 0.20% spread; 1019 now reads as 940, so levels above white are clipped). Test passed 7 of 8 over the single socket: calibration mode, Calman's bypass, 1D tables applied (red halved: 6.34 → 1.47 cd/m²), 3D tables applied in the expected order (3D, then 1D), factory reset, 1D readback equal to the saved table. The failure was Test's own comparison: "before" was read outside calibration mode and "after" inside it, where LG's colour temperature and gamut differ (white 60.5 → 54.4 cd/m², xy 0.010 away). **3.3.8:** Test reads Expert 2's colour temperature and gamut first, leaves calibration mode, logs what the TV left them at, puts them back and only then compares; its clean-up puts them back too (stand-in: 8/8, whether or not CAL_END reverts them).
-
-  TV pass: `native/TV-TEST.md` §18. HDR10 and Dolby Vision are proven on the simulator only and not yet on the screen.
-
-  **3.4.0 Pal grey (31 October 2026, built, not yet on the TV).** Pal (Claude Code on the owner's computer, over SSH) runs `native/PAL-PLAYBOOK.md`. The idea came from the owner's HCFR experiment: a 21-level grey report, then a 1D table from its deviations.
-  - **Commands in `bloob-cal`:**
-    - `pal-start`: the readiness gate (Expert 1, meter on the squares and centred, processing off and read back, warm-up until white is steady), then Calman's start, a measured check of which 1D table entry a level uses (signal or 10-bit code; not documented, so measured), white-first light and the meter's wobble.
-    - `grey-report`: 0–100% in 5% steps plus primaries, outside calibration mode, with colour temperature and gamut put back; two readings a level, a third when they disagree, sanity re-reads.
-    - `pal-propose`: the reference correction, kept acceptable to the gate.
-    - `apply-1d <file>|--start`: the safety gate, the read-back must equal what was sent, then an after report with a never-worse check.
-    - `pal-light`, `pal-end ok|undo` (files move to `calibration/history/`), `flashcheck`, `pal-screen video on|off`, `pal-note`.
-  - **Goal:** grey ΔE2000 average ≤ 0.5, every level from 10% to 100% ≤ 1.0, white within 2%, at most 3 passes. Pal's maths is in `cal/pal.*`.
-  - **B1 for every command:** a 2 s pattern delay (`BLOOB_PATTERN_DELAY_MS`).
-  - **Screen:** Settings → Calibrate → **Pal session** holds the screen see-through with a progress card; the black video plays only if Pal asks; OK ends the session with `pal-end undo`.
-  - **Proven on the desktop:**
-    - `cal_tests`: goal met in 14 of 15 virtual panels, the G2 in one pass.
-    - `tools/pal-sim/pal_sim.py`: 41 checks against the stand-in TV, which now has a WOLED panel, an area meter with noise, flicker, warm-up and fault switches. The happy path is one pass, 0.27/0.72, about 9 minutes estimated on the TV; every fault is recovered or cleanly undone; Check and Test still pass.
-    - `tools/pal-sim/screen_test.py`: the real app's Pal session.
-    - **The ARM build:** the same 41 checks pass with a static `bloob-cal` under qemu.
-  - **3.4.1 (2 November 2026):**
-    - No warm-up wait by default; the owner's panel is warm before a session. Three readings back to back check white is steady, and `pal-start --warmup` waits.
-    - Pal (the Claude session on the owner's computer) reads each report and makes the 1D adjustment itself, by the playbook's *Making the adjustment* method; `pal-propose` is its cross-check. That method, written from the text alone, meets the goal in one pass on the stand-in TV (0.25/0.67) and agrees with `pal-propose` within 0.045.
-  - **TV pass:** `native/TV-TEST.md` §19. The IPK is `native/artifacts/com.muhib.bloob_3.4.1_arm.ipk`.
+- **3.3.0–3.4.1 Calibrate and Pal (29 October to 2 November 2026): removed in 4.1.** Settings → Calibrate, `bloob-cal`, the calibration library and the Pal session. One finding worth keeping: on this TV, LG's pattern generator only drew while a video played.
 
 - **4.0.0 (2 November 2026, built, not yet on the TV).** The owner compared Bloob with three apps (Stremio Origin, Native Tv, Luma) and asked for every improvement from them. Learnings only from Stremio Origin (GPL); MIT code and data from Native Tv and Luma with their notices.
   - **Dolby Vision on disc remuxes:** profile 7 plays as single-layer profile 8.1 in Bloob's engine (enhancement layer dropped, each RPU rewritten by dovi_tool's `dolby_vision` crate, MIT, in `native/dovi/`, built by `scripts/build-dovi.sh`; `demux::dv_p7_to_81`). The HDR10/SDR preference keeps the old HDR10 base. The ranker labels it "Dolby Vision (disc, played as 8.1)" (`tv-profile.js` `dolbyVisionProfile7: 'convert'`). Tested against dovi_tool's MEL sample byte for byte.
@@ -244,9 +181,7 @@ The owner chose native. `native/` is a C++ webOS app (`com.muhib.bloob`, "Bloob 
   - **CI:** `.github/workflows/checks.yml`.
   - TV pass: `native/TV-TEST.md` §20; the IPK is `native/artifacts/com.muhib.bloob_4.0.0_arm.ipk`.
 
-- **4.0.1 and the Greyscale app (2 November 2026).** On the TV, Pal's first `pal-start` saw no squares (white 0.0 cd/m2) without the black video, while the 30 October Test run with it read 60.7: **on this TV LG's squares need a video playing under them.** The Pal session now plays the black video by default and `pal-start` asks for it and retries once. The owner then asked for something simpler: **`com.muhib.greyscale_1.0.0_arm.ipk`, a separate app ("Greyscale")** that is Bloob's program under its own id (known by its folder), with one screen and no service: *Measure greyscale* runs `bloob-cal greyscale 0.5 2.4` (read-only; 0–100% in 0.5% steps, 201 levels, BT.709 power 2.4, D65; `cal/greyscale.*`) over the black video, and shows the report on the TV (summary, gamma, RGB balance and ΔE charts, a scrolling table); the files are `calibration/latest-greyscale.{html,csv,json}`. Measuring only: fixing happens elsewhere (owner). Desktop test: `tools/pal-sim/greyscale_test.py` (8 checks). Bloob's IPK is now `native/artifacts/com.muhib.bloob_4.0.1_arm.ipk`.
-
-  **Agentic calibration (proposal, 30 October 2026, not built):** `research/Agentic-calibration-for-Bloob.md`. A Claude agent in the service runs the session through `bloob-cal serve` tools; the solver still makes every table, and a write gate checks them. The owner's **Pal** design is mapped onto Bloob in `research/Pal-in-Bloob.md`: manifest, characterisation, checkpoints, report; session state stays in `bloob-cal`, so a dropped Pal still ends in verify or undo. Steps P0–P6.
+- **4.0.1 (2 November 2026)**: the Greyscale app and calibration fixes, all removed in 4.1.
 - **Design (2.0, Glass):** the visual system, with materials, tokens, type, focus, motion, states, the spoken interface and per-screen layouts, is in `native/DESIGN.md`. The tokens live in `native/src/theme.h`, the type scale, label roles and components in `ui.cpp`, and the frost bake in `images.cpp`.
 - **Rendering and playback:**
   - The TV's SDL2 provides the window and remote. Bloob draws with its own renderer: Inter via stb_truetype with oversampling and gamma, exact-size anti-aliased shapes, and artwork via stb_image scaled on worker threads, on a 1920×1080 offscreen canvas.
@@ -322,7 +257,7 @@ Publication caveat: `main` was replaced with a clean root commit to remove the p
 - For a TV package, run `npm run package` from `tv-app`: it builds, stages `dist/` into `service/www/` (removing old bundles first), and writes `artifacts/com.muhib.tvprototype_<version>_all.ipk`. The app ID is `com.muhib.tvprototype` (title Bloob); its service ID is `com.muhib.tvprototype.service`.
 - The current committed IPK is `tv-app/artifacts/com.muhib.tvprototype_0.2.0_all.ipk`. It is a snapshot, not proof that later source changes are installed. Rebuild and inspect package contents before a TV test. Tests live in `tv-app/tests/` and `src/**/*.test.ts` so they never ship in the service folder.
 - The TV's JS service runs an older Node than the dev machine. Keep `service/*.js` free of `?.` and `??`. The UI targets Chrome 87 (webOS 22); `tsconfig` uses the ES2020 library so newer APIs fail the typecheck.
-- The rooted TV has an existing webOS CLI device alias `rootedTV`. Keep connection secrets out of scripts, docs, shell output, and Git. The owner allows the TV's root password to be used (1 November 2026), once, to add an SSH key (`native/PAL-PLAYBOOK.md`); it still never goes into Git. Every root command follows that playbook's "never risk bricking it" rules. The user said **do not delete anything on the TV**. Use read-only inspection for reference-app study. For our app, use deliberate install/launch operations only when needed. Never remove TV files, packages, accounts, or caches merely to tidy up.
+- The rooted TV has an existing webOS CLI device alias `rootedTV`. Keep connection secrets out of scripts, docs, shell output, and Git. The owner allows the TV's root password to be used (1 November 2026), once, to add an SSH key; it still never goes into Git. Every root command must never risk bricking the TV. The user said **do not delete anything on the TV**. Use read-only inspection for reference-app study. For our app, use deliberate install/launch operations only when needed. Never remove TV files, packages, accounts, or caches merely to tidy up.
 - The workspace directory name reflects the origin of the local research material. It is not the Bloob app ID and must not be used as a product identifier.
 
 ## Current Bloob architecture: exact flow

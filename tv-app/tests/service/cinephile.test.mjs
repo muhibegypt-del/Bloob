@@ -58,3 +58,17 @@ describe('the cinephile versions list', () => {
     expect(rank([uhd, b], {}).recommended.id).toBe(uhd.id);
   });
 });
+
+describe('ready now on AllDebrid (4.1)', () => {
+  const remux = c('r', 'Film.2001.2160p.UHD.BluRay.REMUX.DV.HDR10.TrueHD.7.1.Atmos-GRP',
+    { resolution: '4K', hdr: ['DV', 'HDR10'], audio: ['TrueHD', 'Atmos'], channels: '7.1' }, { sourceType: 'REMUX', group: 'GRP', sizeBytes: 70e9, ready: false });
+  const web = c('w', 'Film.2001.2160p.WEB-DL.HDR10.DDP5.1-OTHER',
+    { resolution: '4K', hdr: ['HDR10'], audio: ['DD+'], channels: '5.1' }, { sourceType: 'WEB-DL', group: 'OTHER', sizeBytes: 18e9, ready: true });
+  const hd = c('h', 'Film.2001.1080p.BluRay.x264-HD', { resolution: '1080p' }, { sourceType: 'BluRay', group: 'HD', sizeBytes: 9e9, ready: true });
+  it('plays a ready 4K version before one AllDebrid would first download', () => {
+    expect(rank([remux, web], { picture: 'hdr10' }).recommended.id).toBe(web.id);
+  });
+  it('never takes a ready 1080p over a 4K', () => {
+    expect(rank([remux, hd], { picture: 'hdr10' }).recommended.id).toBe(remux.id);
+  });
+});

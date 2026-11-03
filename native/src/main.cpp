@@ -98,8 +98,6 @@ class App {
       return false;
     }
     c.app_id = app_id() == "com.webos.app.home" ? std::string("com.muhib.bloob") : app_id();
-    // The Greyscale app (4.0.1) is this program installed under its own id: known by its folder.
-    if (c.dir.find("com.muhib.greyscale") != std::string::npos) c.app_id = "com.muhib.greyscale";
     SDL_SetHint("SDL_WEBOS_ACCESS_POLICY_KEYS_BACK", "true");
     SDL_SetHint("SDL_WEBOS_ACCESS_POLICY_KEYS_EXIT", "true");
     SDL_SetHint("SDL_WEBOS_CURSOR_SLEEP_TIME", "5000");
@@ -196,19 +194,13 @@ class App {
     watch_network();
     watch_sound_output();
     watch_memory();
-    // 4.0.1: the Greyscale app (com.muhib.greyscale) is this program with one screen and no service.
-    greyscale_app_ = c.app_id == "com.muhib.greyscale" || (std::getenv("BLOOB_GREYSCALE_APP") && *std::getenv("BLOOB_GREYSCALE_APP"));
-    if (!greyscale_app_) start_service();
+    start_service();
 
     roots_.resize(kTabCount);
     root_ = kHomeTab;
     roots_[kHomeTab] = make_browse(Browse::Home);
 
     load_script();
-    if (greyscale_app_) {
-      logf("app", "Greyscale app");
-      ops_.push_back({Op::Push, make_calibrate(true)});
-    }
     LaunchParams launch = parse_launch(argc, argv);
     if (!launch.uri.empty() && launch.autoplay) {
       PlayRequest req;
@@ -300,7 +292,7 @@ class App {
           x.subtitle_styled = r.json["subtitleStyled"].as_bool(true);
           x.text_crisp = r.json["textCrisp"].as_bool(false);
           Font::set_crisp(x.text_crisp);
-          x.picture = r.json["picture"].as_string("best");
+          x.picture = r.json["picture"].as_string("hdr10");
           x.sources = r.json["sources"].as_string("all");
           x.preferred_cut = r.json["cut"].as_string("Theatrical");
           x.autoplay_next = r.json["autoplayNext"].as_bool(true);
@@ -1096,7 +1088,7 @@ class App {
   // ---------------------------------------------------------------- scripted runs
 
   // BLOOB_SCRIPT: steps separated by '|': key:<name>, wait:<ms>, media:<event json>, window:<event>,
-  // background, foreground, pump, snap:<name>, open:calibrate (straight to a screen, for its tests), quit.
+  // background, foreground, pump, snap:<name>, quit.
   void load_script() {
     const char *spec = std::getenv("BLOOB_SCRIPT");
     const char *dir_env = std::getenv("BLOOB_SNAPSHOT_DIR");
@@ -1176,7 +1168,6 @@ class App {
       else if (step.kind == "background") background();
       else if (step.kind == "foreground") foreground();
       else if (step.kind == "window") window_event(step.arg);
-      else if (step.kind == "open" && step.arg == "calibrate") ctx().push(make_calibrate());
       else if (step.kind == "open" && step.arg == "settings") ctx().push(make_settings());
       else if (step.kind == "quit") running_ = false;
       apply_ops();
@@ -1229,11 +1220,11 @@ class App {
       if (!script_.empty()) run_script(now);
       apply_ops();
       apply_memory_policy();
-      if (!greyscale_app_ && !c.api.ready() && !fallback_tried_ && now - service_started_at_ > kServiceBusWaitMs) {
+      if (!c.api.ready() && !fallback_tried_ && now - service_started_at_ > kServiceBusWaitMs) {
         logf("app", "no reply from the service over the bus");
         start_service_fallback();
       }
-      if (!greyscale_app_ && !c.api.ready() && c.service_error.empty() && now - service_started_at_ > kServiceTimeoutMs) {
+      if (!c.api.ready() && c.service_error.empty() && now - service_started_at_ > kServiceTimeoutMs) {
         c.service_error = "Bloob's background service did not start. Close Bloob and open it again.";
         logf("app", "service start timed out");
         c.invalidate();
@@ -1412,7 +1403,6 @@ class App {
   // The launcher hook is installed (native/launcher): Bloob is the home screen.
   bool launcher_ = access("/var/lib/webosbrew/init.d/60-bloob-home", F_OK) == 0;
   bool home_mode_ = false;      // 4.0: running as LG Home
-  bool greyscale_app_ = false;  // 4.0.1: the Greyscale app
   bool home_ok_sent_ = false;   // the good-start mark for the takeover's boot hook
 
   // Bloob opened from its own tile while it is LG Home (takeover.sh): bring Home

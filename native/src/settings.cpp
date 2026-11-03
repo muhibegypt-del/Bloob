@@ -90,7 +90,6 @@ class SettingsScreen : public Screen {
       case Row::Motion: say = std::string("Reduce motion, switch, ") + (c.reduce_motion ? "on" : "off"); break;
       case Row::Transparency: say = std::string("Reduce transparency, switch, ") + (c.reduce_transparency ? "on" : "off"); break;
       case Row::Contrast: say = std::string("Increase contrast, switch, ") + (c.high_contrast ? "on" : "off"); break;
-      case Row::Calibrate: say = "Calibrate the picture with your meter, button"; break;
       case Row::About: say = "About Bloob, button"; break;
       case Row::Diagnostics: say = "Diagnostics, button"; break;
     }
@@ -123,7 +122,7 @@ class SettingsScreen : public Screen {
 
   enum class Row { Account, Disconnect, Audio, Subtitles, SubtitleSize, SubtitleBackground, SubtitleStyle, Picture, Sources, Headphones,
                    HeadphoneRoom, HeadphoneBoost, HeadphoneNight, HeadphoneEq, HeadphoneSync, Autoplay, SkipIntros, Privacy, TextRendering, Motion,
-                   Transparency, Contrast, Calibrate, About, Diagnostics };
+                   Transparency, Contrast, About, Diagnostics };
 
   std::vector<Row> rows() const {
     std::vector<Row> list = {Row::Account};
@@ -133,7 +132,7 @@ class SettingsScreen : public Screen {
     // The headphone details only matter while Headphones mode can be on.
     if (ctx().headphones != "off")
       for (Row r : {Row::HeadphoneRoom, Row::HeadphoneBoost, Row::HeadphoneNight, Row::HeadphoneEq, Row::HeadphoneSync}) list.push_back(r);
-    for (Row r : {Row::Autoplay, Row::SkipIntros, Row::Privacy, Row::TextRendering, Row::Motion, Row::Transparency, Row::Contrast, Row::Calibrate, Row::About, Row::Diagnostics}) list.push_back(r);
+    for (Row r : {Row::Autoplay, Row::SkipIntros, Row::Privacy, Row::TextRendering, Row::Motion, Row::Transparency, Row::Contrast, Row::About, Row::Diagnostics}) list.push_back(r);
     return list;
   }
 
@@ -158,7 +157,6 @@ class SettingsScreen : public Screen {
         if (repeat) return true;
         if (r == Row::Account) pairing_.start([this](bool) { refresh(); });
         else if (r == Row::Disconnect) disconnect();
-        else if (r == Row::Calibrate) ctx().push(make_calibrate());
         else if (r == Row::About) ctx().push(make_about());
         else if (r == Row::Diagnostics) ctx().push(make_diagnostics());
         else change(r, 1);
@@ -450,11 +448,6 @@ class SettingsScreen : public Screen {
           title = "Increase contrast";
           value = c.high_contrast ? "Secondary text is brighter" : "Off";
           toggle = c.high_contrast;
-          break;
-        case Row::Calibrate:
-          title = "Calibrate";
-          value = "Your Spyder5 measures the screen; Bloob corrects Expert 1";
-          action = "Open";
           break;
         case Row::About:
           title = "About Bloob";

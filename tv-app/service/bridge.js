@@ -17,6 +17,14 @@ const https = require('https');
 const path = require('path');
 
 const TTL_MS = 12 * 60 * 60 * 1000;
+// 4.1: one kept-alive connection pool to AllDebrid. The engine's demuxer asks for
+// several byte ranges while opening a file (the header, the index at the end, the
+// start or resume point) and on every seek; without keep-alive each was a fresh
+// TCP and TLS handshake on the TV's slow CPU, seconds before a 4K film started.
+const AGENTS = {
+  'https:': new https.Agent({ keepAlive: true, keepAliveMsecs: 15000, maxSockets: 6 }),
+  'http:': new http.Agent({ keepAlive: true, keepAliveMsecs: 15000, maxSockets: 6 }),
+};
 const sessions = new Map();  // token -> { url, at, probe, speed }
 
 function binary(name) {
@@ -39,7 +47,7 @@ function serveSource(token, req, res) {
   const lib = target.protocol === 'https:' ? https : http;
   const headers = {};
   if (req.headers.range) headers.Range = req.headers.range;
-  const upstream = lib.request(target, { method: req.method === 'HEAD' ? 'HEAD' : 'GET', headers, timeout: 30000 }, up => {
+  const upstream = lib.request(target, { method: req.method === 'HEAD' ? 'HEAD' : 'GET', headers, timeout: 30000, agent: AGENTS[target.protocol], highWaterMark: 1024 * 1024 }, up => {
     if (up.statusCode >= 300 && up.statusCode < 400 && up.headers.location) {
       // Follow a redirect once, keeping the new link in memory only.
       up.resume();
@@ -49,6 +57,7 @@ function serveSource(token, req, res) {
     const pass = {};
     ['content-length', 'content-range', 'accept-ranges', 'content-type'].forEach(h => { if (up.headers[h]) pass[h] = up.headers[h]; });
     res.writeHead(up.statusCode, pass);
+    if (res.socket) res.socket.setNoDelay(true);
     up.pipe(res);
   });
   upstream.on('timeout', () => upstream.destroy(new Error('timeout')));

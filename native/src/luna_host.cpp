@@ -49,7 +49,7 @@ int Luna::call(const std::string &uri, const std::string &payload, Callback call
     const char *out = std::getenv("BLOOB_SOUND_OUTPUT");
     reply = std::string("{\"returnValue\":true,\"subscribed\":true,\"settings\":{\"soundOutput\":\"") + (out ? out : "tv_speaker") + "\"}}";
   } else if (uri.find("hbchannel.service/exec") != std::string::npos && std::getenv("BLOOB_HOST_EXEC")) {
-    // BLOOB_HOST_EXEC=1 runs Homebrew Channel commands on the desktop (the Calibrate screen's test).
+    // BLOOB_HOST_EXEC=1 runs Homebrew Channel commands on the desktop.
     std::string cmd = Json::parse(payload)["command"].as_string();
     int rc = std::system(cmd.c_str());
     reply = std::string("{\"returnValue\":") + (rc == 0 ? "true" : "false") + "}";

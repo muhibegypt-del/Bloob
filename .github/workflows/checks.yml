@@ -1,5 +1,5 @@
 # Bloob's checks on every push and pull request (4.0): the service and web app
-# tests, and the native core, engine, calibration and 4.0 tests on a Linux
+# tests, and the native core, engine and 4.0 tests on a Linux
 # desktop build, plus the stand-in TV tests of the root scripts. These prove
 # the code, not the TV: on-TV behaviour is in native/TV-TEST.md.
 name: checks
@@ -54,8 +54,6 @@ jobs:
           cmake --build build-host
       - name: Native tests
         run: ./build-host/native_tests
-      - name: Calibration tests
-        run: ./build-host/cal_tests
       - name: Root scripts against a stand-in TV
         run: |
           sh tools/privacy-sim/test.sh

@@ -303,56 +303,9 @@ Connect the WF-1000XM5 earbuds to the TV first (*Sound out* → Bluetooth). Bloo
 Previews to hear before installing (phone and the same earbuds): `build-host/hp_preview <dir> <film>` writes a 7.1 speaker walk and the film excerpt through each room, plus the TV's plain downmix for comparison.
 9. **Bluetooth quality (SBC).** `native/scripts/bt-sbc.sh`, copied to the TV and run as root with the earbuds playing: no argument shows the SBC settings the TV and earbuds agreed; `max` raises the bitpool to the earbuds' maximum; `xq` asks for SBC XQ (dual channel, bitpool 47 per channel, about 600 kb/s). Nothing is written to the TV; reconnecting the earbuds undoes it. Compare by ear and note which you keep.
 
-## 18. New in 3.3: Calibrate
+## 18–19. Calibrate and Pal (3.3–3.4): removed in 4.1
 
-Settings → **Calibrate** (near the bottom, above About). It needs the Spyder5 plugged into the TV and hung flat in the middle of the screen, the Spyder probe app still installed (Bloob uses its copy of Argyll's `spotread` and LG's signed test manifest), and the 55G2 correction at `/media/internal/com.muhib.bloob/calibration/argyll/lg-55g2.ccss`. Bloob starts `bin/bloob-cal` as root through the Homebrew Channel; it runs on if Bloob is closed and writes `/media/internal/com.muhib.bloob/calibration/status.json`, which the screen shows. Its full output is in `calibration/last-run.log`.
-
-1. **Check** (about 3 minutes, changes nothing). The first time, the TV asks to allow Bloob: press OK. A white square appears in the middle of a black screen. The screen afterwards shows ten white readings: the spread (steadiness) should be under 1%, and `1019 is …x 940` says whether SDR patterns are limited range (about 1.0×) or full range (about 1.2×). If no square appears, the pattern route is wrong: note it and stop.
-2. **Test on Expert 2** (about 10 minutes). The TV switches to Expert 2; red darkens on purpose; at the end Expert 2 is back to factory and the TV back in Expert 1. Expect *7 passed, 0 failed*. The order line says whether the 3D LUT acts before the 1D LUT (expected).
-3. **Calibrate Expert 1** (3.3.7: it starts as Calman does, gamma switches off, colour matrix neutral, contrast 85, brightness 50, colour 50; the card says when a dark patch is reading slowly. 3.3.6: Bloob plays a black video for the run, because the TV draws its squares only while video plays; keep Bloob open on the Calibrate screen until it finishes. 3.3.4: while any run goes, Bloob's screen turns see-through with a small card in the bottom left, so LG's squares show; each run first checks that a white square really reaches the meter and stops, changing nothing, if not. 3.3.3: it first turns off energy saving, dynamic contrast, peak brightness, logo dimming and AI Picture/Brightness, which stay off afterwards, and starts from LG's factory calibration data; the log lists each change. OK twice; 1½ to 2 hours, about 1,900 readings, close to Calman's AutoCal; 3.3.1). *Calibrate Expert 1, thorough* is the 3.3.0 run (3 to 4 hours, about 3,900 readings) for the last bit of accuracy. Leave the room as it is when you watch (the lamp on is fine; no light on the screen itself). The screen shows the squares the whole time. Back in Bloob afterwards, Calibrate shows *Grey before → after · Colour before → after* and *As you watch it*. Note all four numbers. Watch a few familiar films.
-4. **Stop** during a run: the run ends within a reading or two, Expert 1 goes back to factory and your settings, and the screen says *stopped*.
-5. **Undo calibration** (OK twice): Expert 1 back to LG's factory tables and the settings saved before the first calibration (`calibration/expert1-settings.json`).
-6. If anything looks wrong, copy `calibration/status.json` and `calibration/last-run.log`. They hold no keys (the TV pairing key is in `calibration/ssap-key.json`, mode 600; don't share that one).
-
-## 19. New in 3.4: Pal grey (Pal runs from your computer)
-
-**3.4.1:**
-- No warm-up wait by default: three quick readings only check that white is steady (`pal-start --warmup` waits as before).
-- Pal on your computer makes each 1D adjustment itself from the report (`native/PAL-PLAYBOOK.md`, *Making the adjustment*); `pal-propose` is its cross-check.
-- Install `com.muhib.bloob_3.4.1_arm.ipk`.
-
-`native/PAL-PLAYBOOK.md` is what Claude Code follows as Pal. Once only:
-1. Install the 3.4.1 IPK.
-2. Put Claude Code and the repository on your computer.
-3. Check that `ssh root@192.168.1.26` works.
-
-**First session**
-
-1. Hang the Spyder5 flat in the middle of the screen. Open Settings → Calibrate → **Pal session**, OK twice.
-   - The screen turns see-through with one card in the bottom left.
-   - **There is no black video now.** Note whether the TV shows anything under it.
-2. On the computer, ask Claude Code: *"Run Pal's SDR grey flow per native/PAL-PLAYBOOK.md."*
-3. Watch the card. It shows each step, the readings and the last result.
-4. **The first finding to report:** did `pal-start` see the squares without the video?
-   - Its log says so, under "Are the squares on the screen?".
-   - If it needed `pal-screen video on`, that settles that this TV's squares need a video under them.
-   - If it didn't, they only needed Bloob to be see-through.
-5. **Also report:**
-   - which table entry the TV uses (`index` in pal-start's result);
-   - the before and after averages and worst levels;
-   - the number of passes;
-   - the time taken;
-   - any pink or green flicker seen between squares (the 2 s pattern delay should keep it out of the readings).
-6. **Pressing OK on the card at any point** ends the session and puts Expert 1 back (`pal-end undo`).
-
-**Proven on the desktop, not yet on the TV**
-- `tools/pal-sim/pal_sim.py`: 41 checks.
-  - The flow meets the goal in one pass on the stand-in TV (0.27 average, 0.72 worst; about 9 minutes estimated on the TV).
-  - Every fault ends in a recovered run or a clean undo: flicker, warm-up, meter off the squares or near the edge, no video, socket 500, a table that doesn't load, a meter stall, the meter moving, the video dropping, the gate, Stop.
-  - Check and Test still pass.
-- `cal_tests`: Pal's maths meets the goal in 14 of 15 runs on the virtual G2 and harder panels, the G2 in one pass.
-- `tools/pal-sim/screen_test.py`: the Calibrate screen's Pal session, driven with the real app.
-- **The ARM build:** all 41 checks pass with identical results. That was a static build of the same `bloob-cal` under qemu; qemu can't run the TV's dynamic binaries here, the old 3.3.8 one included.
+There is nothing to test: Settings no longer has a Calibrate row.
 
 ## 20. New in 4.0
 

@@ -2,6 +2,7 @@
 #include "demux.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cstring>
 #include <deque>
 
@@ -179,6 +180,7 @@ void Demuxer::close() {
 
 bool Demuxer::open(const std::string &url, std::string *error) {
   close();
+  auto opened_at = std::chrono::steady_clock::now();
   Impl &m = *impl_;
   m.fmt = avformat_alloc_context();
   m.fmt->interrupt_callback.callback = demux_interrupt;
@@ -203,6 +205,7 @@ bool Demuxer::open(const std::string &url, std::string *error) {
     m.close();
     return false;
   }
+  logf("engine", "file open and stream info: %lld ms", static_cast<long long>(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - opened_at).count()));
   DemuxFacts &f = facts_;
   f.container = m.fmt->iformat ? m.fmt->iformat->name : "";
   // MPEG-TS clocks start anywhere; Matroska and MP4 start at the film's zero

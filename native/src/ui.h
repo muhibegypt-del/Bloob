@@ -84,7 +84,7 @@ struct Ctx {
   bool subtitle_styled = true;                  // 4.0: ASS/SSA subtitles as their authors styled them
   bool text_crisp = false;                      // 4.0: glyphs on whole pixels (a test against the default, Smooth)
   std::string preferred_cut = "Theatrical";     // the edition the versions list opens on (2.8): the last one chosen
-  std::string picture = "best";                 // picture preference: "best", "hdr10" or "sdr"
+  std::string picture = "hdr10";                // picture preference (4.1 default HDR10): "best", "hdr10" or "sdr"
   std::string sources = "all";                  // source indexes: "all" or "torrentio"
   bool autoplay_next = true;                    // Up next starts the next episode by itself
   std::string skip_intros = "button";           // 4.0: intros and recaps: "button", "auto" or "off"

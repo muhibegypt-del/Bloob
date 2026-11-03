@@ -49,8 +49,6 @@ std::unique_ptr<Screen> make_browse(Browse kind);
 std::unique_ptr<Screen> make_search();
 std::unique_ptr<Screen> make_settings();
 std::unique_ptr<Screen> make_diagnostics();
-// greyscale_only (4.0.1): the Greyscale app's screen, measuring only.
-std::unique_ptr<Screen> make_calibrate(bool greyscale_only = false);
 std::unique_ptr<Screen> make_about();
 std::unique_ptr<Screen> make_details(const Item &item);
 // `autostart`: resolve the best match straight away (up next).
