@@ -798,7 +798,7 @@ class SourcesScreen : public Screen {
     // AllDebrid connection, quietly.
     int ay = H - safe_y - 52;
     bool paired = c.paired;
-    c.gfx.fill_rect(LX, ay + 10, 12, 12, !account_known_ ? label(Label::Tertiary) : paired ? rgba(0xffffff) : signal);
+    c.gfx.fill_rect(LX, ay + 10, 12, 12, !account_known_ ? label(Label::Tertiary) : paired ? rgba(0xffffff) : theme::signal);
     std::string status = !account_known_ ? "Checking AllDebrid\xE2\x80\xA6"
                          : paired ? (durable_ ? "AllDebrid connected" : "AllDebrid connected until restart")
                                   : "AllDebrid not connected. You\xE2\x80\x99ll pair once when you press Play.";
@@ -897,7 +897,7 @@ class SourcesScreen : public Screen {
     text(Text::Caption1Semi, kind, RX, y + 14, label(Label::Primary));
     if (o.ready == 1) {
       int rw = text_right(Text::Caption1, "Ready", RX + RW, y + 14, label(Label::Primary));
-      c.gfx.fill_rect(RX + RW - rw - 26, y + 22, 14, 14, signal);
+      c.gfx.fill_rect(RX + RW - rw - 26, y + 22, 14, 14, theme::signal);
     } else if (!o.cautions.empty()) {
       text_right(Text::Caption1, o.cautions[0], RX + RW, y + 14, caution);
     }
@@ -949,7 +949,7 @@ class SourcesScreen : public Screen {
       int cxk = x + 16 + (cols[k] * (span_w(1) + grid_gutter)), cwk = (cols[k + 1] - cols[k]) * (span_w(1) + grid_gutter) - grid_gutter;
       text(Text::Caption1, cells[k], cxk, ty, k == 0 || k == 2 ? fg : fg2, cwk);
     }
-    if (o.ready == 1) c.gfx.fill_rect(x + w - 16 - 12, y + (ROW - 12) / 2, 12, 12, signal);
+    if (o.ready == 1) c.gfx.fill_rect(x + w - 16 - 12, y + (ROW - 12) / 2, 12, 12, theme::signal);
     else if (!o.cautions.empty()) text_right(Text::Caption2, o.cautions[0], x + w - 16, y + (ROW - line_for(Text::Caption2)) / 2, focused ? caution_ink : caution);
   }
 
@@ -1009,54 +1009,70 @@ class SourcesScreen : public Screen {
     c.gfx.fill_rect(0, 0, W, H, with_alpha(black, static_cast<int>(200 * a)));
     int w = 920, x = (W - w) / 2;
     if (modal_ == Modal::Resolving) {
+      // 4.1 Swiss starting sheet: the whole screen, dimmed; the logo top left;
+      // at the foot how far along it is as a big number over a red bar, the
+      // steps as numbered columns on rules, the version, and the buttons.
+      c.gfx.fill_rect(0, 0, W, H, with_alpha(black, static_cast<int>(40 * a)));
+      draw_title(req_.item, LX, 80, span_w(4), 120, a);
       struct StepRow { const char *id; const char *label; };
-      std::vector<StepRow> steps = {{"adding", "Sending to AllDebrid"}};
+      std::vector<StepRow> steps = {{"adding", "Sent to AllDebrid"}};
       if (saw_caching_) steps.push_back({"caching", "AllDebrid is fetching it"});
       steps.push_back({"files", "Finding the right file"});
       steps.push_back({"unlocking", "Getting the stream"});
-      int h = 330 + static_cast<int>(steps.size()) * 58 + (saw_caching_ ? 34 : 0), y = (H - h) / 2;
-      sheet(x, y, w, h, a);
-      std::string starting = chosen_.match == "same" ? "Starting \xC2\xB7 same version as your last episode"
-                             : chosen_.match == "like" ? "Starting \xC2\xB7 like your last episode" : "Starting";
-      text(Text::Caption1, starting, x + 56, y + 48, label(Label::Secondary, a));
-      text(Text::Title3, chosen_.headline, x + 56, y + 84, label(Label::Primary, a), w - 112);
       static const char *order[] = {"starting", "adding", "caching", "files", "unlocking", "preparing", "ready"};
       auto rank = [](const std::string &id) {
         for (int i = 0; i < 7; i++) if (id == order[i]) return i;
         return 0;
       };
-      int now_rank = rank(step_);
-      int sy = y + 162;
+      int now_rank = rank(step_), done_count = 0;
+      std::string current_label = "Starting";
       for (auto &st : steps) {
-        std::string id = st.id;
-        int r = rank(id);
-        bool preparing = id == "unlocking" && step_ == "preparing";
-        bool done = now_rank > r && !preparing;
-        bool current = now_rank == r || preparing;
-        if (done) c.icons.draw(Icon::Check, x + 56, sy, 30, fade(good, a));
-        else if (current) draw_spinner(x + 71, sy + 15, 30, label(Label::Primary, a));
-        else c.gfx.fill_circle(x + 71, sy + 15, 5, label(Label::Tertiary, a));
-        text(Text::Body, st.label, x + 108, sy - 2, label(done ? Label::Secondary : current ? Label::Primary : Label::Tertiary, a));
-        if (id == "caching" && fraction_ >= 0 && current) {
-          draw_progress(x + 108, sy + 44, 520, 8, fraction_);
-          text(Text::Callout, std::to_string(static_cast<int>(fraction_ * 100)) + "%", x + 648, sy + 32, label(Label::Secondary, a));
-        }
-        sy += id == "caching" ? 92 : 58;
+        bool preparing = std::string(st.id) == "unlocking" && step_ == "preparing";
+        if (now_rank > rank(st.id) && !preparing) done_count++;
+        else if (now_rank == rank(st.id) || preparing) current_label = st.label;
       }
+      double frac = (done_count + (step_ == "caching" && fraction_ >= 0 ? fraction_ : 0.5)) / static_cast<double>(steps.size() + 1);
+      int pct = static_cast<int>(std::min(99.0, frac * 100));
+      int y = H - safe_y - 360;
+      int pw = c.fonts.bold.measure(std::to_string(pct) + "%", 120);
+      c.fonts.bold.draw(std::to_string(pct) + "%", LX, y, 120, fade(rgba(0xffffff), a));
+      text(Text::Callout, current_label, LX + pw + 28, y + 70, label(Label::Primary, a), span_w(8));
+      int by = y + 140;
+      c.gfx.fill_rect(LX, by, span_w(12), 8, fade(rgba(0xffffff, 64), a));
+      c.gfx.fill_rect(LX, by, static_cast<int>(span_w(12) * frac), 8, fade(theme::signal, a));
+      int n = static_cast<int>(steps.size()) + 1, cw = (span_w(12) - (n - 1) * grid_gutter) / n;
+      for (int k = 0; k < n; k++) {
+        bool is_last = k == n - 1;
+        std::string id = is_last ? "ready" : steps[static_cast<size_t>(k)].id;
+        std::string lab = is_last ? "First picture" : steps[static_cast<size_t>(k)].label;
+        bool preparing = id == "unlocking" && step_ == "preparing";
+        bool done = !is_last && now_rank > rank(id) && !preparing;
+        bool current = !is_last && (now_rank == rank(id) || preparing);
+        int sx = LX + k * (cw + grid_gutter), sy = by + 40;
+        c.gfx.fill_rect(sx, sy, cw, current ? 3 : 2, fade(current ? theme::signal : done ? rgba(0xffffff) : rgba(0xffffff, 77), a));
+        char num[16];
+        std::snprintf(num, sizeof num, "%02d", k + 1);
+        int nw = text(Text::Caption1Semi, num, sx, sy + 14, label(done || current ? Label::Primary : Label::Tertiary, a));
+        text(current ? Text::Caption1Semi : Text::Caption1, lab, sx + nw + 12, sy + 14, label(done || current ? Label::Primary : Label::Tertiary, a), cw - nw - 12);
+      }
+      std::string facts = join({chosen_.resolution, chosen_.picture, chosen_.audio, chosen_.size});
+      if (chosen_.match == "same") facts = join({"Same version as your last episode", facts});
+      text(Text::Caption1, facts, LX, by + 120, label(Label::Secondary, a), span_w(7));
       GlassButton cancel;
       cancel.label = "Cancel";
       cancel.focused = sheet_focus_ == 0;
-      cancel.variant = ButtonStyle::Default;
       cancel.alpha = a;
-      int bx = x + 56 + draw_glass_button(x + 56, y + h - 100, cancel) + theme::stack_gap;
-      if (can_show_others()) {
-        GlassButton others;
-        others.label = "Other versions";
-        others.focused = sheet_focus_ == 1;
-        others.variant = ButtonStyle::Default;
-        others.alpha = a;
-        draw_glass_button(bx, y + h - 100, others);
-      }
+      cancel.h = 60;
+      GlassButton others;
+      others.label = "Other versions";
+      others.focused = sheet_focus_ == 1;
+      others.alpha = a;
+      others.h = 60;
+      int total = glass_button_width(cancel) + (can_show_others() ? 12 + glass_button_width(others) : 0);
+      int bx = W - safe_x - total;
+      bx += draw_glass_button(bx, by + 106, cancel) + 12;
+      if (can_show_others()) draw_glass_button(bx, by + 106, others);
+      c.redraw_at(c.now + 100);
       return;
     }
     if (modal_ == Modal::ChooseFile || modal_ == Modal::ChooseQuality) {

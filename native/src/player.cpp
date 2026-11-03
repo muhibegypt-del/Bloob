@@ -1637,19 +1637,22 @@ class PlayerScreen : public Screen {
   // it, the controls row 22 above the bar, and the title above the controls on
   // the left. Video plays in the TV's plane under this window.
 
-  static constexpr int kBarX = safe_x, kBarRight = W - 100, kBarW = kBarRight - safe_x;  // right padding 100
-  static constexpr int kTrackH = 14, kTrackBottom = 110;         // bar 14 high, radius 7
+  // 4.1 Swiss: the bar spans the grid, 8 px high; under it the times on the left
+  // and the controls on the right; the title's logo stands above it.
+  static constexpr int kBarX = safe_x, kBarRight = W - safe_x, kBarW = kBarRight - safe_x;
+  static constexpr int kTrackH = 8, kTrackBottom = 142;
   static constexpr int kTimeBaseline = 32;                       // bar to time-label baseline
   static constexpr int kControlsGap = 22;                        // bar to controls
   static constexpr int kControlGap = 25;                         // between controls
   static constexpr int kHeaderGap = 12;                          // header to subheader
-  static constexpr int kGradientH = 384;                         // protection gradient [EoA V15]
+  static constexpr int kGradientH = 540;                         // 4.1 Swiss: protection gradient under the logo and bar
   const Color kGray92 = rgba(0xebebeb);                          // header colour [EoA V16]
 
   int track_y() const { return H - kTrackBottom - kTrackH; }
-  int controls_y() const { return track_y() - kControlsGap - theme::button_h; }
+  int controls_y() const { return track_y() + kTrackH + 22; }  // 4.1 Swiss: under the bar
   // Top of everything the HUD draws, for the track menu and subtitles.
-  int bar_y(bool reduced) const { return reduced ? track_y() - 24 : controls_y(); }
+  int bar_y(bool reduced) const { return reduced ? track_y() - 24 : track_y() - 40 - kLogoH; }
+  static constexpr int kLogoH = 110;
 
   void draw_hud(float a, Phase phase) {
     bool reduced = hud_mode_ == HudMode::Reduced;
@@ -1658,52 +1661,35 @@ class PlayerScreen : public Screen {
     if (!reduced) {
       draw_clock_pill(a, phase);
       draw_controls(a, phase, controls_y());
-      draw_hud_title(a, phase, controls_y() + theme::button_h);
+      draw_hud_title(a, phase, 0);
     }
     draw_timeline(a, phase, track_y());
   }
 
-  // Time now and when this ends, in a small smoked pill top right.
+  // 4.1 Swiss: the time now and when this ends, as plain text top right.
   void draw_clock_pill(float a, Phase phase) {
     long long duration = session_.duration_ms(), left = duration - session_.display_ms(ctx().now);
     std::string now = wall_clock();
     std::string ends = duration > 0 && left > 0 && phase != Phase::Ended ? "Ends " + wall_clock(left) : "";
-    int w = measure(Text::Caption1, now) + 52 + (ends.empty() ? 0 : measure(Text::Caption1, ends) + 18);
-    int x = W - safe_x - w, y = 48, h = 60;
-    GlassSpec g;
-    g.x = x;
-    g.y = y;
-    g.w = w;
-    g.h = h;
-    g.radius = h / 2;
-    g.kind = GlassKind::Smoke;
-    g.alpha = a;
-    g.shadow = false;
-    draw_glass(g);
-    int ty = y + (h - line_for(Text::Caption1)) / 2;
-    int tx = x + 26 + text(Text::Caption1, now, x + 26, ty, label(Label::Primary, a)) + 18;
-    if (!ends.empty()) text(Text::Caption1, ends, tx, ty, label(Label::Secondary, a));
+    ctx().gfx.gradient_v(0, 0, W, 200, rgba(0x000000), static_cast<Uint8>(150 * a), 0);
+    text_right(Text::Caption1, ends.empty() ? now : now + "   " + ends, W - safe_x, 60, label(Label::Primary, a));
   }
 
-  void draw_hud_title(float a, Phase phase, int bottom) {
-    std::string title = req_.item.series() ? req_.episode_title.empty() ? req_.item.name : req_.episode_title : req_.item.name;
+  // 4.1 Swiss: the state and what is playing top left; the title's logo above the bar.
+  void draw_hud_title(float a, Phase phase, int) {
     std::vector<std::string> meta;
-    if (phase == Phase::Paused) meta.push_back("Paused");
-    else if (phase == Phase::Seeking) meta.push_back("Seeking\xE2\x80\xA6");
-    else if (phase == Phase::Ended) meta.push_back("Finished");
     if (req_.item.series()) {
-      meta.push_back(req_.item.name);
       meta.push_back(episode_code(req_.season, req_.episode));
+      if (!req_.episode_title.empty()) meta.push_back(req_.episode_title);
     } else {
       meta.push_back(req_.item.year);
-      if (!req_.item.genres.empty()) meta.push_back(req_.item.genres[0]);
     }
     for (auto &b : badges()) meta.push_back(b);
-    // Header Emphasized.Title2 and subheader Standard.Caption1, both Gray92 [EoA V16].
-    int x = kBarX, w = right_controls_x(0) - x - 40;
-    int sub_y = bottom - line_for(Text::Caption1), head_y = sub_y - kHeaderGap - line_for(Text::Title2);
-    text(Text::Title2, title, x, head_y, fade(kGray92, a), w);
-    text(Text::Caption1, join(meta), x, sub_y, fade(kGray92, a), w);
+    std::string state = phase == Phase::Paused ? "Paused" : phase == Phase::Seeking ? "Seeking" : phase == Phase::Ended ? "Finished" : "";
+    int x = kBarX;
+    if (!state.empty()) x += text(Text::Caption1Semi, state, x, 60, label(Label::Primary, a)) + 24;
+    text(Text::Caption1, join(meta), x, 60, label(Label::Secondary, a), W / 2);
+    draw_title(req_.item, kBarX, track_y() - 40 - kLogoH, span_w(4), kLogoH, a);
   }
 
   GlassButton control_button(Ctl ctl, bool focused, Phase phase, float a) const {
@@ -1743,35 +1729,30 @@ class PlayerScreen : public Screen {
     }
   }
 
+  // 4.1 Swiss timeline: white at 25% with the watched part in theme::signal red and a
+  // white bar for the playhead; under it Watched and Left as big numbers.
   void draw_timeline(float a, Phase phase, int bar_top) {
-    (void)phase;
     Ctx &c = ctx();
     long long t = c.now;
     long long display = session_.display_ms(t), duration = session_.duration_ms(), position = session_.position_ms(t);
-    std::string now_text = clock_text(display);
-    std::string left_text = duration > 0 ? "\xE2\x88\x92" + clock_text(std::max(0LL, duration - display)) : "--:--";
     bool timeline = zone_ == Zone::Timeline && panel_ == Panel::None;
-    // Time labels: Emphasized.Caption2, white when the bar has focus, else 50% [EoA V18].
-    Color time_fg = fade(rgba(0xffffff, timeline ? 255 : 128), a);
-    int baseline = bar_top + kTrackH + kTimeBaseline;
-    int label_y = baseline - static_cast<int>(font_for(Text::Caption2Bold).ascent(size_for(Text::Caption2Bold)));
-    text(Text::Caption2Bold, now_text, kBarX, label_y, time_fg);
-    text_right(Text::Caption2Bold, left_text, kBarRight, label_y, time_fg);
-    // Track 14 high, radius 7. Colours A / C from the reference; which one is
-    // played and which remaining is not recorded, so the brighter one is played.
-    int tx = kBarX, tw = kBarW, th = kTrackH, ty = bar_top + th / 2;
-    c.gfx.fill_round(tx, bar_top, tw, th, th / 2, fade(rgba(0xececec, 66), a));
+    int tx = kBarX, tw = kBarW, th = kTrackH;
+    c.gfx.fill_rect(tx, bar_top, tw, th, fade(rgba(0xffffff, 64), a));
     double frac = duration > 0 ? std::min(1.0, std::max(0.0, static_cast<double>(display) / duration)) : 0;
-    c.gfx.fill_round(tx, bar_top, std::max(th, static_cast<int>(tw * frac)), th, th / 2, fade(rgba(0xf4f4f4, 143), a));
     int kx = tx + static_cast<int>(tw * frac);
+    c.gfx.fill_rect(tx, bar_top, kx - tx, th, fade(theme::signal, a));
     bool seeking = session_.preview_ms() || session_.pending_ms();
-    if (timeline || seeking) {
-      int r = timeline ? 13 : 10;  // playhead 26 large, 20 [EoA V17]
-      c.gfx.shadow(kx - r, ty - r, 2 * r, 2 * r, r, 10, 2, static_cast<Uint8>(90 * a));
-      c.gfx.fill_circle(kx, ty, r, fade(rgba(0xffffff), a));
+    if (timeline || seeking) c.gfx.fill_rect(kx - 2, bar_top - 10, 4, th + 20, fade(rgba(0xffffff), a));
+    if (hud_mode_ != HudMode::Reduced && phase != Phase::Ended) {
+      Font &bold = c.fonts.bold;
+      int ty = controls_y();
+      text(Text::Caption2, "Watched", col_x(0), ty, label(Label::Secondary, a));
+      bold.draw(clock_text(display), col_x(0), ty + 24, 44, fade(rgba(0xffffff, timeline ? 255 : 210), a));
+      text(Text::Caption2, "Left", col_x(3), ty, label(Label::Secondary, a));
+      c.fonts.regular.draw(duration > 0 ? clock_text(std::max(0LL, duration - display)) : "--:--", col_x(3), ty + 24, 44, fade(rgba(0xffffff, 210), a));
     }
     if (seeking) {
-      // The target, in a white bubble above the knob.
+      // The target in a white block above the playhead.
       long long delta = display - session_.seek_origin_ms(position);
       long long s = (delta < 0 ? -delta : delta) / 1000;
       std::string d = std::string(delta < 0 ? "\xE2\x88\x92" : "+") + (s < 60 ? std::to_string(s) + " s" : clock_text(s * 1000));
@@ -1779,9 +1760,8 @@ class PlayerScreen : public Screen {
       int lw = std::max(measure(Text::Headline, target), measure(Text::Caption2, d)) + 48;
       int lh = 88;
       int lx = std::max(kBarX, std::min(kBarRight - lw, kx - lw / 2));
-      int ly = ty - 30 - lh;
-      c.gfx.shadow(lx, ly, lw, lh, 22, 22, 10, static_cast<Uint8>(150 * a));
-      c.gfx.fill_round(lx, ly, lw, lh, 22, fade(rgba(0xffffff), a));
+      int ly = bar_top - 24 - lh;
+      c.gfx.fill_rect(lx, ly, lw, lh, fade(rgba(0xffffff), a));
       text_center(Text::Headline, target, lx + lw / 2, ly + 6, fade(rgba(0x000000), a));
       text_center(Text::Caption2, d, lx + lw / 2, ly + 52, fade(rgba(0x000000, 166), a));
     }
@@ -1804,11 +1784,14 @@ class PlayerScreen : public Screen {
     int bottom = controls_y() - 20 + static_cast<int>((1.0f - a) * 30);
     int y = bottom - h;
     if (!c.lite()) c.gfx.shadow(x, y, w, h, kMenuRadius, 30, 10, static_cast<Uint8>(77 * a));
-    Color bg = c.reduce_transparency ? rgba(0x262626) : rgba(0x1e1e1e, 230);
-    c.gfx.fill_round(x, y, w, h, kMenuRadius, fade(bg, a));
+    // 4.1 Swiss: a near-black block under a white rule, the panel's name in Bold with a red bar.
+    Color bg = c.reduce_transparency ? rgba(0x000000) : rgba(0x000000, 235);
+    c.gfx.fill_rect(x, y, w, h, fade(bg, a));
+    c.gfx.fill_rect(x, y, w, theme::rule, fade(rgba(0xffffff), a));
+    c.gfx.fill_rect(x + kMenuPad + 25, y + kMenuPad + 12, 48, 3, fade(theme::signal, a));
     c.gfx.stroke_round(x, y, w, h, kMenuRadius, 1, fade(c.high_contrast ? theme::hairline_high : theme::hairline, a));
     // Header: Standard.Caption2 at 50% [EoA V20].
-    text(Text::Caption2, panel_ == Panel::Audio ? "Audio" : "Subtitles", x + kMenuPad + 25, y + kMenuPad + 22, fade(rgba(0xffffff, 128), a));
+    text(Text::Caption2Bold, panel_ == Panel::Audio ? "Audio" : "Subtitles", x + kMenuPad + 25, y + kMenuPad + 22, fade(rgba(0xffffff), a));
     int ry = y + kMenuPad + kMenuHeader;
     if (panel_ == Panel::Audio && rows == 0) paragraph(Text::Caption1, "This video reports no audio tracks.", x + kMenuPad + 25, ry, label(Label::Secondary, a), w - 2 * kMenuPad - 50, 2);
     auto labels = distinct_labels(panel_ == Panel::Audio ? info.audio : info.text, panel_ == Panel::Audio);
@@ -1837,7 +1820,7 @@ class PlayerScreen : public Screen {
       }
       if (f) {
         if (!c.lite()) c.gfx.shadow(rx, ry, rw, kRowH, kRowH / 2, theme::shadow_blur, theme::shadow_dy, static_cast<Uint8>(theme::shadow_alpha * a));
-        c.gfx.fill_round(rx, ry, rw, kRowH, kRowH / 2, fade(kGray92, a));
+        c.gfx.fill_rect(rx, ry, rw, kRowH, fade(rgba(0xffffff), a));
       }
       Color fg = f ? fade(rgba(0x000000), a) : label(Label::Primary, a);
       // Leading box 66 holds the check (20 high); title Standard.Caption1 [EoA V21].
@@ -1854,75 +1837,80 @@ class PlayerScreen : public Screen {
       paragraph(Text::Caption1, online_asked_ ? "This video has no subtitles, and none were found online." : "This video has no built-in subtitles.", x + kMenuPad + 25, ry + 8, label(Label::Tertiary, a), w - 2 * kMenuPad - 50, 2);
   }
 
+  // A red bar sliding along a white rule: Bloob's only "busy" sign (4.1 Swiss).
+  void busy_rule(int x, int y, int w, long long since, float a = 1.0f) {
+    Ctx &c = ctx();
+    c.gfx.fill_rect(x, y, w, theme::rule, fade(rgba(0xffffff, 90), a));
+    int bw = w / 6;
+    int pos = static_cast<int>((c.now - since) % 1600 * (w - bw) / 1600);
+    c.gfx.fill_rect(x + pos, y - 1, bw, 4, fade(theme::signal, a));
+    c.redraw_at(c.now + 16);
+  }
+
+  // 4.1 Swiss starting screen: the dimmed still, the logo top left, and at the
+  // foot a big word on a rule with the version's facts.
   void draw_startup() {
     Ctx &c = ctx();
     c.gfx.clear(black);
     ImageRef soft = c.images.get(req_.item.backdrop, W, H, 0, Fit::Cover, false, 48);
     if (soft.texture) {
       c.gfx.texture(soft.texture, 0, 0, W, H, soft.alpha);
-      c.gfx.fill_rect(0, 0, W, H, with_alpha(black, 150));
+      c.gfx.fill_rect(0, 0, W, H, with_alpha(black, 185));
     }
-    int y = draw_title(req_.item, W / 2 - 380, 300, 760, 200, 1.0f, true) + 28;
+    draw_title(req_.item, safe_x, 80, span_w(4), 120);
+    int y = H - safe_y - 300;
     if (req_.item.series()) {
-      text_center(Text::Title3, episode_code(req_.season, req_.episode), W / 2, y, label(Label::Primary));
-      y += line_for(Text::Title3);
-      if (!req_.episode_title.empty()) text_center(Text::Callout, req_.episode_title, W / 2, y + 4, label(Label::Secondary), 900);
-      y += line_for(Text::Callout) + 8;
+      int w = text(Text::Caption1Semi, episode_code(req_.season, req_.episode), safe_x, y - 50, label(Label::Primary));
+      if (!req_.episode_title.empty()) text(Text::Caption1, req_.episode_title, safe_x + w + 16, y - 50, label(Label::Secondary), 1000);
     }
-    draw_spinner(W / 2, y + 70, 48, label(Label::Primary), opened_at_);
-    std::string what = reconnecting_ ? "Reconnecting\xE2\x80\xA6" : join({"Starting", source_});
-    if (c.now - opened_at_ > spinner_delay_ms) text_center(Text::Callout, what, W / 2, y + 120, label(Label::Tertiary));
+    c.fonts.bold.draw(reconnecting_ ? "Reconnecting" : "Starting", safe_x, y, 120, rgba(0xffffff));
+    busy_rule(safe_x, y + 150, span_w(12), opened_at_);
+    if (!source_.empty()) text(Text::Caption1, source_, safe_x, y + 176, label(Label::Secondary), span_w(8));
   }
 
+  // 4.1 Swiss error: a red rule across the grid, "Error" in red on the left,
+  // what happened in Bold beside it, the choices on the right.
   void draw_error() {
     Ctx &c = ctx();
-    c.gfx.fill_rect(0, 0, W, H, with_alpha(black, 200));
-    int w = 1000, h = 360, x = (W - w) / 2, y = (H - h) / 2;
-    GlassSpec g;
-    g.x = x;
-    g.y = y;
-    g.w = w;
-    g.h = h;
-    g.kind = GlassKind::Smoke;
-    draw_glass(g);
-    c.icons.draw(Icon::Warning, x + 56, y + 58, 40, caution);
-    text(Text::Title3, "Playback stopped", x + 112, y + 52, label(Label::Primary));
-    paragraph(Text::Body, failure_.empty() ? session_.error() : failure_, x + 56, y + 130, label(Label::Secondary), w - 112, 3);
+    c.gfx.fill_rect(0, 0, W, H, with_alpha(black, 215));
+    int y = H / 2 - 120;
+    c.gfx.fill_rect(safe_x, y, span_w(12), 3, theme::signal);
+    text(Text::Caption1Semi, "Error", col_x(0), y + 18, theme::signal);
+    c.fonts.bold.draw("Playback stopped", col_x(2), y + 14, 52, rgba(0xffffff));
+    paragraph(Text::Body, failure_.empty() ? session_.error() : failure_, col_x(2), y + 86, label(Label::Secondary), span_w(7), 3);
     const char *names[3] = {"Try again", "Choose another version", "Exit"};
-    int bx = x + 56;
+    int by = y + 210, bx = col_x(2);
     for (int i = 0; i < 3; i++) {
       GlassButton b;
       b.label = names[i];
       b.focused = error_focus_ == i;
-      b.variant = ButtonStyle::Player;
-      bx += draw_glass_button(bx, y + h - 120, b) + theme::title_button_gap;
+      b.h = 60;
+      bx += draw_glass_button(bx, by, b) + 12;
     }
   }
 
-  // Up next: the post-play lockup [EoA V23], 454 × 460, bottom right over the
-  // credits. Title Emphasized.Title2, body Standard.Body, buttons 66.
+  // 4.1 Swiss Up next: over the credits, on the right five columns: a rule
+  // with the countdown, the episode as a big number and its title, the buttons.
   void draw_up_next() {
     Ctx &c = ctx();
     const NextEpisode &n = *req_.next;
-    c.gfx.gradient_v(0, H - 520, W, 520, rgba(0x000000), 0, 128);  // autoplay background Black50 [EoA V24]
+    c.gfx.gradient_h(W - 1100, 0, 1100, H, rgba(0x000000), 0, 235);
     long long elapsed = c.now - up_next_at_;
     long long left = std::max(0LL, (kUpNextMs - elapsed + 999) / 1000);
-    int w = 454, h = 460, x = kBarRight - w, y = H - kTrackBottom - h;
-    if (!c.lite()) c.gfx.shadow(x, y, w, h, glass_radius, 30, 10, 77);
-    c.gfx.fill_round(x, y, w, h, glass_radius, c.reduce_transparency ? rgba(0x262626) : rgba(0x1e1e1e, 230));
-    int px = x + 40, pw = w - 80, py = y + 40;
-    text(Text::Caption1, "Up next \xC2\xB7 " + episode_code(n.season, n.episode), px, py, label(Label::Secondary));
-    py += line_for(Text::Caption1) + 18;
-    py = paragraph(Text::Title2, n.title.empty() ? episode_code(n.season, n.episode) : n.title, px, py, label(Label::Primary), pw, 3);
+    int x = col_x(7), w = span_w(5), y = H - safe_y - 380;
+    c.gfx.fill_rect(x, y, w, theme::rule, rgba(0xffffff));
+    if (c.autoplay_next) c.gfx.fill_rect(x, y - 1, static_cast<int>(w * std::min(1.0, static_cast<double>(elapsed) / kUpNextMs)), 4, theme::signal);
+    text(Text::Caption1Semi, "Up next", x, y + 16, label(Label::Primary));
+    if (c.autoplay_next) text_right(Text::Caption1, "in " + std::to_string(left) + " s", x + w, y + 16, label(Label::Primary));
+    c.fonts.bold.draw(episode_code(n.season, n.episode), x, y + 66, 72, rgba(0xffffff));
+    paragraph(Text::Callout, n.title, x, y + 160, label(Label::Primary), w, 2);
     GlassButton play;
     play.label = "Play now";
     play.icon = kPlayIcon;
     play.focused = true;
-    int by = y + h - 40 - theme::button_h - (c.autoplay_next ? 44 : 0);
-    draw_glass_button(px, by, play);
-    std::string note = c.autoplay_next ? "Starts in " + std::to_string(left) + " s \xC2\xB7 Back to stay" : "Back to stay";
-    text(Text::Caption1, note, px, by + theme::button_h + 14, label(Label::Secondary), pw);
-    if (c.autoplay_next) draw_progress(x + 40, y + h - 24, w - 80, 4, static_cast<double>(elapsed) / kUpNextMs, rgba(0xffffff), rgba(0xffffff, 50));
+    play.h = 60;
+    draw_glass_button(x, y + 260, play);
+    text(Text::Caption2, "Back to watch the credits", x, y + 336, label(Label::Secondary), w);
   }
 
  private:

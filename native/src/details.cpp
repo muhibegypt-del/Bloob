@@ -531,7 +531,7 @@ class DetailsScreen : public Screen {
         // A red bar sliding along the rule while it waits.
         int span = span_w(12), bw = span / 6;
         int pos = static_cast<int>((ctx().now - opened_at_) % 1600 * (span - bw) / 1600);
-        ctx().gfx.fill_rect(X0 + pos, y - 1, bw, 4, fade(signal, alpha));
+        ctx().gfx.fill_rect(X0 + pos, y - 1, bw, 4, fade(theme::signal, alpha));
         ctx().redraw_at(ctx().now + 16);
       }
       return;
@@ -545,7 +545,7 @@ class DetailsScreen : public Screen {
       bool best = i == 0;
       if (focused) ctx().gfx.fill_rect(tx, ty, tw, th, fade(rgba(0xffffff), alpha));
       else ctx().gfx.fill_rect(tx, ty, tw, 1, fade(with_alpha(rgba(0xffffff), 64), alpha));
-      if (best && !focused) ctx().gfx.fill_rect(tx, ty, span_w(1), 3, fade(signal, alpha));
+      if (best && !focused) ctx().gfx.fill_rect(tx, ty, span_w(1), 3, fade(theme::signal, alpha));
       Color main = focused ? fade(rgba(0x000000), alpha) : label(Label::Primary, alpha);
       Color sub = focused ? fade(rgba(0x000000, 166), alpha) : label(Label::Secondary, alpha);
       std::string kind = best ? "Best version" : !o.cautions.empty() ? o.cautions[0] : !o.size.empty() ? o.size : "Another version";

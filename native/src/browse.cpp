@@ -621,7 +621,7 @@ class BrowseScreen : public Screen {
       if (s.has_resume && s.resume.kind == "resume" && s.resume.duration > 0) {
         // A red bar along the rule: how much is watched.
         int w = static_cast<int>(span_w(12) * std::max(0.0, std::min(1.0, static_cast<double>(s.resume.position) / s.resume.duration)));
-        ctx().gfx.fill_rect(X0, rule_y - 2, w, 4, fade(signal, hero_only * t));
+        ctx().gfx.fill_rect(X0, rule_y - 2, w, 4, fade(theme::signal, hero_only * t));
       }
     }
   }

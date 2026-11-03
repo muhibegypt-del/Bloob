@@ -89,40 +89,46 @@ std::string Pairing::spoken() const {
   return "Pair this TV once. On your phone or computer, go to alldebrid.com/pin and enter " + spelled + ". Cancel, button";
 }
 
+// 4.1 Swiss pairing: the whole screen in black, the instruction as a headline,
+// the code very large on a white rule, the time left and the state beside it.
 void Pairing::draw() {
   if (!active_) return;
   Ctx &c = ctx();
   using namespace theme;
-  c.gfx.fill_rect(0, 0, W, H, with_alpha(black, 170));
-  int w = 1000, h = 560, x = (W - w) / 2, y = (H - h) / 2;
-  draw_panel(x, y, w, h);
-  text(Text::Caption1, "Connect AllDebrid", x + 64, y + 52, label(Label::Secondary));
-  text(Text::Title2, "Pair this TV once", x + 64, y + 88, label(Label::Primary));
-  paragraph(Text::Body, "On your phone or computer, open the address below and enter the code. Bloob remembers the connection.",
-            x + 64, y + 164, label(Label::Secondary), w - 128, 2);
-  int by = y + 266;
-  c.gfx.fill_round(x + 64, by, w - 128, 160, 24, rgba(0xffffff, 26));
-  text(Text::Title3, "alldebrid.com/pin", x + 104, by + 36, label(Label::Primary));
+  c.gfx.fill_rect(0, 0, W, H, rgba(0x000000, 245));
+  int x = safe_x;
+  text(Text::Caption1, "Connect AllDebrid, once", x, 80, label(Label::Secondary));
+  Font &bold = c.fonts.bold;
+  int hy = 130;
+  for (auto &l : wrap(bold, "On your phone, open alldebrid.com/pin and enter this code.", 88, span_w(9), 3)) {
+    bold.draw(l, x, hy, 88, rgba(0xffffff));
+    hy += 92;
+  }
+  int ry = 560;
+  c.gfx.fill_rect(x, ry, span_w(12), rule, rgba(0xffffff));
   if (pin_.empty()) {
-    if (error_.empty()) draw_spinner(x + w - 180, by + 80, 44, label(Label::Primary));
+    if (error_.empty()) {
+      int bw = span_w(12) / 6;
+      int pos = static_cast<int>(c.now % 1600 * (span_w(12) - bw) / 1600);
+      c.gfx.fill_rect(x + pos, ry - 1, bw, 4, theme::signal);
+      c.redraw_at(c.now + 16);
+    }
   } else {
-    Font &f = c.fonts.bold;
-    int pw = f.measure(pin_, 84);
-    f.draw(pin_, x + w - 104 - pw, by + 30, 84, rgba(0xffffff));
+    bold.draw(pin_, x, ry + 20, 260, rgba(0xffffff));
     long long left = std::max(0LL, (expires_at_ - c.now) / 1000);
-    text(Text::Caption1, "New code in " + std::to_string(left / 60) + ":" + (left % 60 < 10 ? "0" : "") + std::to_string(left % 60),
-         x + 104, by + 98, label(Label::Tertiary));
+    std::string t = std::to_string(left / 60) + ":" + (left % 60 < 10 ? "0" : "") + std::to_string(left % 60);
+    text(Text::Caption2, "New code in", col_x(7), ry + 40, label(Label::Secondary));
+    bold.draw(t, col_x(7), ry + 70, 56, rgba(0xffffff));
+    text(Text::Caption2, "Status", col_x(9), ry + 40, label(Label::Secondary));
+    c.gfx.fill_rect(col_x(9), ry + 86, 14, 14, theme::signal);
+    text(Text::Caption1, "Waiting for the code", col_x(9) + 26, ry + 76, label(Label::Primary), span_w(3) - 26);
     c.redraw_at((c.now / 1000 + 1) * 1000);
   }
-  if (!error_.empty()) {
-    paragraph(Text::Callout, error_, x + 64, by + 186, problem, w - 128, 2);
-  } else if (!pin_.empty()) {
-    draw_spinner(x + 80, by + 204, 24, label(Label::Tertiary));
-    text(Text::Callout, "Waiting for the code\xE2\x80\xA6", x + 106, by + 186, label(Label::Secondary));
-  }
+  if (!error_.empty()) paragraph(Text::Callout, error_, x, ry + 60, theme::signal, span_w(9), 2);
+  text(Text::Caption1, "Bloob keeps the connection on the TV. Your key never leaves it.", x, H - safe_y - 46, label(Label::Secondary), span_w(8));
   GlassButton cancel;
   cancel.label = "Cancel";
   cancel.focused = true;
-  cancel.variant = ButtonStyle::Default;
-  draw_glass_button(x + w - 64 - glass_button_width(cancel), y + h - 100, cancel);
+  cancel.h = 60;
+  draw_glass_button(W - safe_x - glass_button_width(cancel), H - safe_y - 60, cancel);
 }

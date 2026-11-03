@@ -545,8 +545,13 @@ void draw_spinner(int cx, int cy, int size, Color color, long long since) {
     c.redraw_at(since + theme::spinner_delay_ms);
     return;
   }
-  double angle = std::fmod(c.now * 0.36, 360.0);
-  c.icons.spinner(cx, cy, size, angle, color);
+  // 4.1 Swiss: no spinners. A red bar slides along a short white rule, centred.
+  (void)color;
+  int w = std::max(60, size * 3), x = cx - w / 2;
+  c.gfx.fill_rect(x, cy - 1, w, 2, rgba(0xffffff, 90));
+  int bw = w / 4;
+  int pos = static_cast<int>(c.now % 1200 * (w - bw) / 1200);
+  c.gfx.fill_rect(x + pos, cy - 2, bw, 4, theme::signal);
   c.animating = true;
 }
 
