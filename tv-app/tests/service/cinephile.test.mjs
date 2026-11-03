@@ -18,7 +18,12 @@ describe('cuts and tags from release names', () => {
     expect(tagsOf({ release: 'Film.2010.2160p.Hybrid.Criterion.REMUX' })).toEqual(['Hybrid', 'Criterion']);
   });
   it('places a version in a cinephile tier', () => {
-    expect(tierOf({ sourceType: 'REMUX', claims: { resolution: '4K' } })).toBe('uhd-remux');
+    expect(tierOf({ sourceType: 'REMUX', claims: { resolution: '4K', hdr: ['HDR10'] } })).toBe('uhd-remux');
+    // 4.1: SDR remuxes and season packs have sections of their own.
+    expect(tierOf({ sourceType: 'REMUX', claims: { resolution: '1080p' } })).toBe('sdr-remux');
+    expect(tierOf({ sourceType: 'REMUX', claims: { resolution: '4K' } })).toBe('sdr-remux');
+    expect(tierOf({ sourceType: 'WEB-DL', pack: true, claims: { resolution: '4K', hdr: ['DV'] } })).toBe('pack');
+    expect(tierOf({ sourceType: 'WEB-DL', pack: true, claims: { resolution: '4K', hdr: ['DV'] } }, true)).toBe('web-4k');
     expect(tierOf({ sourceType: 'WEB-DL', claims: { resolution: '1080p' } })).toBe('web-hd');
     expect(tierOf({ sourceType: 'HDTV', claims: { resolution: '720p' } })).toBe('other');
   });

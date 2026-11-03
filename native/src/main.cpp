@@ -145,12 +145,12 @@ class App {
     sdl_offset_ = now_ms() - static_cast<long long>(SDL_GetTicks());
     c.gfx.init(c.renderer, W, H);
     std::string fonts = c.dir + "/assets/fonts/";
-    // 4.1 Swiss: Inter Tight (the free stand-in for Helvetica) in three weights;
-    // the semibold slot is Medium, so every label is Regular, Medium or Bold.
-    c.fonts.regular.load(c.renderer, fonts + "InterTight-Regular.ttf");
-    c.fonts.medium.load(c.renderer, fonts + "InterTight-Medium.ttf");
-    c.fonts.semibold.load(c.renderer, fonts + "InterTight-Medium.ttf");
-    c.fonts.bold.load(c.renderer, fonts + "InterTight-Bold.ttf");
+    // 4.1 Swiss: TeX Gyre Heros (GUST Font License), a free font drawn after
+    // Helvetica, in its two weights: text in Regular, emphasis in Bold.
+    c.fonts.regular.load(c.renderer, fonts + "texgyreheros-regular.otf");
+    c.fonts.medium.load(c.renderer, fonts + "texgyreheros-regular.otf");
+    c.fonts.semibold.load(c.renderer, fonts + "texgyreheros-bold.otf");
+    c.fonts.bold.load(c.renderer, fonts + "texgyreheros-bold.otf");
     c.icons.init(c.renderer);
     c.mark("fonts");
 

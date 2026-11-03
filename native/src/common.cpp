@@ -129,7 +129,21 @@ void draw_hero_overlay(float luma, float alpha) {
 
 int draw_title(const Item &item, int x, int top, int box_w, int box_h, float alpha, bool centred) {
   Ctx &c = ctx();
-  // 4.1 Swiss: titles are set in type (never the title's logo art), in Bold as large as the box allows: one line at the
+  // 4.1 (owner): the film's or show's own logo is the title.
+  if (!item.logo.empty()) {
+    // Decoded once at the largest size used, then scaled: boxes animate, and a
+    // new size per frame would mean a new decode per frame.
+    ImageRef logo = c.images.get(item.logo, 760, 240, 0, Fit::Contain);
+    if (logo.texture) {
+      float scale = std::min(1.0f, std::min(static_cast<float>(box_w) / logo.w, static_cast<float>(box_h) / logo.h));
+      int lw = static_cast<int>(logo.w * scale), lh = static_cast<int>(logo.h * scale);
+      int lx = centred ? x + (box_w - lw) / 2 : x;
+      c.gfx.texture(logo.texture, lx, top + box_h - lh, lw, lh, static_cast<Uint8>(std::min<float>(255 * alpha, logo.alpha)));
+      return top + box_h;
+    }
+    if (!logo.failed) return top + box_h;  // still loading: hold the space rather than flash type
+  }
+  // Without a logo, the title in type (4.1 Swiss), in Bold as large as the box allows: one line at the
   // box's height if it fits the width, else two lines, else smaller.
   Font &f = c.fonts.bold;
   int size = std::min(232, box_h);

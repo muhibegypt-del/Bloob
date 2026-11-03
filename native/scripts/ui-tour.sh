@@ -12,7 +12,7 @@ PORT=${BLOOB_TOUR_PORT:-8791}
 cmake -S . -B build-host >/dev/null && cmake --build build-host -j"$(nproc)" >/dev/null
 STAGE=build-host/stage
 rm -rf "$STAGE" "$OUT" && mkdir -p "$STAGE/bin" "$STAGE/assets/fonts" "$OUT"
-cp build-host/bloob_host "$STAGE/bin/" && cp third_party/fonts/*.ttf "$STAGE/assets/fonts/"
+cp build-host/bloob_host "$STAGE/bin/" && cp third_party/fonts/*.otf "$STAGE/assets/fonts/"
 
 run() {  # run <name> <unpaired 0|1> <steps...>
   local name=$1 unpaired=$2

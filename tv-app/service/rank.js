@@ -432,6 +432,7 @@ function cinephileView(ranked, base) {
     tags,
     tier,
     tierLabel: cine.tierLabel(tier),
+    sourceTier: cine.tierOf(c, true),
     pictureName,
     lossless: cine.lossless(c),
     respected: cine.respected(c),

@@ -54,19 +54,25 @@ function respected(c) {
 // Tiers, best first, in a cinephile's words.
 const TIERS = [
   ['uhd-remux', 'UHD Blu-ray Remux'],
+  // 4.1 (owner): SDR remuxes have a row of their own, and season packs a section.
+  ['sdr-remux', 'SDR Remux'],
   ['bd-remux', 'Blu-ray Remux'],
   ['uhd-encode', '4K encodes from the disc'],
   ['web-4k', '4K web'],
   ['bd-encode', 'Blu-ray encodes'],
   ['web-hd', 'HD web'],
+  ['pack', 'Season packs'],
   ['other', 'Everything else'],
 ];
 
-function tierOf(c) {
+/** The section a version is listed in; `kind: true` gives its kind of source, ignoring a pack. */
+function tierOf(c, kind) {
   const res = (c.claims || {}).resolution || '';
   const src = c.sourceType || '';
   const uhd = res === '4K';
-  if (src === 'REMUX') return uhd ? 'uhd-remux' : 'bd-remux';
+  if (c.pack && !kind) return 'pack';
+  const sdr = !((c.claims || {}).hdr || []).length;
+  if (src === 'REMUX') return sdr ? 'sdr-remux' : uhd ? 'uhd-remux' : 'bd-remux';
   if (src === 'BluRay') return uhd ? 'uhd-encode' : res === '1080p' ? 'bd-encode' : 'other';
   if (src === 'WEB-DL' || src === 'WEBRip') return uhd ? 'web-4k' : res === '1080p' ? 'web-hd' : 'other';
   return 'other';
@@ -103,9 +109,11 @@ function line(c, parts) {
 function compare(v, best) {
   if (!best || v.id === best.id) return '';
   const out = [];
-  if (v.tier === best.tier) out.push(v.tier.indexOf('remux') >= 0 && v.cut === best.cut ? 'Same disc' : 'Same source');
-  else out.push(v.tier.indexOf('remux') >= 0 ? 'Disc remux' : v.tier.indexOf('encode') >= 0 ? 'Disc encode'
-    : v.tier.indexOf('web') === 0 ? 'Web version' : 'Lower quality');
+  // By kind of source: a season pack's file is compared by what it is, not by its section.
+  const vt = v.sourceTier || v.tier, bt = best.sourceTier || best.tier;
+  if (vt === bt) out.push(vt.indexOf('remux') >= 0 && v.cut === best.cut ? 'Same disc' : 'Same source');
+  else out.push(vt.indexOf('remux') >= 0 ? 'Disc remux' : vt.indexOf('encode') >= 0 ? 'Disc encode'
+    : vt.indexOf('web') === 0 ? 'Web version' : 'Lower quality');
   if (v.resolution !== best.resolution) out.push(v.resolution);
   if (v.cut !== best.cut) out.push(v.cut || 'Theatrical');
   const vDv = v.pictureName.indexOf('Dolby Vision') === 0, bDv = best.pictureName.indexOf('Dolby Vision') === 0;

@@ -39,11 +39,13 @@ constexpr int LIST_H = 4 * (ROW + ROW_GAP);  // the list's window
 constexpr int HEADER_H = 58;                  // a section title in the list
 
 // Source tiers, best first (the service's cinephile.js names them).
-const char *const kTiers[] = {"uhd-remux", "bd-remux", "uhd-encode", "web-4k", "bd-encode", "web-hd", "other"};
+// 4.1: SDR remuxes and season packs have sections of their own.
+const char *const kTiers[] = {"uhd-remux", "sdr-remux", "bd-remux", "uhd-encode", "web-4k", "bd-encode", "web-hd", "pack", "other"};
+constexpr int kTierCount = static_cast<int>(sizeof(kTiers) / sizeof(kTiers[0]));
 int tier_index(const std::string &tier) {
-  for (int k = 0; k < 7; k++)
+  for (int k = 0; k < kTierCount; k++)
     if (tier == kTiers[k]) return k;
-  return 7;  // a service without tiers
+  return kTierCount;  // a service without tiers
 }
 bool is_more(const SourceOption &o) { return o.id.compare(0, 5, "more:") == 0; }
 
@@ -331,9 +333,9 @@ class SourcesScreen : public Screen {
       }
     };
     std::vector<int> continuing, problems;
-    std::vector<std::vector<int>> tiers(8);
-    std::vector<int> counts(8, 0);
-    std::vector<std::string> titles(8, "Other versions");
+    std::vector<std::vector<int>> tiers(kTierCount + 1);
+    std::vector<int> counts(kTierCount + 1, 0);
+    std::vector<std::string> titles(kTierCount + 1, "Other versions");
     std::map<std::string, int> more_row;
     for (size_t i = first; i < options_.size(); i++) {
       if (section_of_[i] == "more") {
@@ -352,9 +354,9 @@ class SourcesScreen : public Screen {
     }
     for (auto &g : ranking_.groups)
       if (g.kind == "continue") section(g.label, "continue", continuing, static_cast<int>(continuing.size()));
-    for (int t = 0; t < 8; t++) {
+    for (int t = 0; t <= kTierCount; t++) {
       auto &items = tiers[static_cast<size_t>(t)];
-      auto more = more_row.find(t < 7 ? kTiers[t] : "");
+      auto more = more_row.find(t < kTierCount ? kTiers[t] : "");
       if (more != more_row.end()) items.push_back(more->second);
       section(titles[static_cast<size_t>(t)], "others", items, counts[static_cast<size_t>(t)]);
     }

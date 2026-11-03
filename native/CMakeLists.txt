@@ -90,10 +90,9 @@ if (CMAKE_CROSSCOMPILING)
     COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_SOURCE_DIR}/launcher/LICENSE-native-tv ${PKG}/bin/
     COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_SOURCE_DIR}/package/appinfo.json ${CMAKE_SOURCE_DIR}/package/icon.png ${PKG}/
     COMMAND ${CMAKE_COMMAND} -E copy
-      ${CMAKE_SOURCE_DIR}/third_party/fonts/InterTight-Regular.ttf
-      ${CMAKE_SOURCE_DIR}/third_party/fonts/InterTight-Medium.ttf
-      ${CMAKE_SOURCE_DIR}/third_party/fonts/InterTight-Bold.ttf
-      ${CMAKE_SOURCE_DIR}/third_party/fonts/InterTight-LICENSE.txt
+      ${CMAKE_SOURCE_DIR}/third_party/fonts/texgyreheros-regular.otf
+      ${CMAKE_SOURCE_DIR}/third_party/fonts/texgyreheros-bold.otf
+      ${CMAKE_SOURCE_DIR}/third_party/fonts/TeXGyreHeros-LICENSE.txt
       ${PKG}/assets/fonts/
     COMMAND ${CMAKE_COMMAND} -E copy
       ${CMAKE_SOURCE_DIR}/../tv-app/service/www/media/big-buck-bunny-480p-30sec.mp4
