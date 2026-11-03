@@ -27,6 +27,7 @@
 const { getJson, postJson } = require('./net');
 const anime = require('./anime');
 const { parseStream, parseStreams } = require('./release');
+const match = require('./match');
 
 const USER_TIMEOUT_MS = 6000;     // a provider slower than this is skipped for this search
 const GRACE_AFTER_FIRST_MS = 2500; // after Torrentio answers, wait at most this for the rest
@@ -431,8 +432,31 @@ function merge(lists) {
  * merged list if a provider answers after the reply went back.
  * Resolves to { candidates, report: [{ id, label, count, ms, error }] }.
  */
+/**
+ * What the releases must be called (4.1.1): the catalogue's title, TMDB's titles
+ * and aliases, and for anime AniList's names; the film's year. null when the
+ * catalogue can't be read, so nothing is dropped on a bad network.
+ */
+async function expectedTitles(type, id) {
+  const imdb = String(id).split(':')[0];
+  const meta = await require('./catalog').meta(type, imdb).catch(() => null);
+  if (!meta || !meta.name) return null;
+  const titles = [meta.name];
+  const more = await require('./tmdb').aliases(type, imdb).catch(() => []);
+  more.forEach(t => titles.push(t));
+  const ctx = await anime.context(type, id).catch(() => null);
+  if (ctx && ctx.anime) (ctx.titles || []).concat(ctx.showTitles || []).forEach(t => titles.push(t));
+  return { type, titles, year: Number(String(meta.year || '').slice(0, 4)) || 0 };
+}
+
 function discoverAll(type, id, options) {
   options = options || {};
+  // Every searcher's results are held to the title (strict, 4.1.1). Tests pass
+  // `expect` themselves, or `expect: false` to see everything.
+  const expectP = options.expect !== undefined ? Promise.resolve(options.expect || null) : expectedTitles(type, id).catch(() => null);
+  let expect = null;
+  expectP.then(e => { expect = e; });
+  const strictMerge = l => match.strict(merge(l), expect);
   const chosen = PROVIDERS.filter(p => (options.only ? options.only.indexOf(p.id) >= 0 : true) && (!p.series || type === 'series'));
   const providers = options.providers || chosen;
   const started = Date.now();
@@ -446,7 +470,10 @@ function discoverAll(type, id, options) {
       if (replied) return;
       replied = true;
       if (graceTimer) clearTimeout(graceTimer);
-      resolve({ candidates: merge(lists), report: report.map(r => Object.assign({}, r)) });
+      // Wait (briefly) for the titles; the catalogue's answer is usually cached.
+      Promise.race([expectP, new Promise(r => setTimeout(r, 3000))]).then(() => {
+        resolve({ candidates: strictMerge(lists), report: report.map(r => Object.assign({}, r)) });
+      });
     };
     const hardTimer = setTimeout(finish, USER_TIMEOUT_MS + 500);
     providers.forEach((p, i) => {
@@ -461,11 +488,11 @@ function discoverAll(type, id, options) {
         if (pending === 0) {
           clearTimeout(hardTimer);
           if (!replied) finish();
-          else if (options.onLate) options.onLate(merge(lists), report);
+          else if (options.onLate) options.onLate(strictMerge(lists), report);
           return;
         }
         if (replied) {
-          if (options.onLate) options.onLate(merge(lists), report);
+          if (options.onLate) options.onLate(strictMerge(lists), report);
           return;
         }
         if (p.primary && !graceTimer) graceTimer = setTimeout(finish, GRACE_AFTER_FIRST_MS);

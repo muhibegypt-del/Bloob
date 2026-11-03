@@ -1784,10 +1784,9 @@ class PlayerScreen : public Screen {
     int bottom = controls_y() - 20 + static_cast<int>((1.0f - a) * 30);
     int y = bottom - h;
     if (!c.lite()) c.gfx.shadow(x, y, w, h, kMenuRadius, 30, 10, static_cast<Uint8>(77 * a));
-    // 4.1 Swiss: a near-black block under a white rule, the panel's name in Bold with a red bar.
+    // 4.1 Swiss: a near-black block, the panel's name in Bold with a red bar.
     Color bg = c.reduce_transparency ? rgba(0x000000) : rgba(0x000000, 235);
     c.gfx.fill_rect(x, y, w, h, fade(bg, a));
-    c.gfx.fill_rect(x, y, w, theme::rule, fade(rgba(0xffffff), a));
     c.gfx.fill_rect(x + kMenuPad + 25, y + kMenuPad + 12, 48, 3, fade(theme::signal, a));
     c.gfx.stroke_round(x, y, w, h, kMenuRadius, 1, fade(c.high_contrast ? theme::hairline_high : theme::hairline, a));
     // Header: Standard.Caption2 at 50% [EoA V20].
@@ -1840,7 +1839,6 @@ class PlayerScreen : public Screen {
   // A red bar sliding along a white rule: Bloob's only "busy" sign (4.1 Swiss).
   void busy_rule(int x, int y, int w, long long since, float a = 1.0f) {
     Ctx &c = ctx();
-    c.gfx.fill_rect(x, y, w, theme::rule, fade(rgba(0xffffff, 90), a));
     int bw = w / 6;
     int pos = static_cast<int>((c.now - since) % 1600 * (w - bw) / 1600);
     c.gfx.fill_rect(x + pos, y - 1, bw, 4, fade(theme::signal, a));
@@ -1898,7 +1896,6 @@ class PlayerScreen : public Screen {
     long long elapsed = c.now - up_next_at_;
     long long left = std::max(0LL, (kUpNextMs - elapsed + 999) / 1000);
     int x = col_x(7), w = span_w(5), y = H - safe_y - 380;
-    c.gfx.fill_rect(x, y, w, theme::rule, rgba(0xffffff));
     if (c.autoplay_next) c.gfx.fill_rect(x, y - 1, static_cast<int>(w * std::min(1.0, static_cast<double>(elapsed) / kUpNextMs)), 4, theme::signal);
     text(Text::Caption1Semi, "Up next", x, y + 16, label(Label::Primary));
     if (c.autoplay_next) text_right(Text::Caption1, "in " + std::to_string(left) + " s", x + w, y + 16, label(Label::Primary));

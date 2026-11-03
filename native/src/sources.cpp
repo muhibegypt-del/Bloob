@@ -772,7 +772,7 @@ class SourcesScreen : public Screen {
   }
 
   // 4.1 Swiss title column: the logo, what is being chosen, then the count of
-  // versions as a big number on a white rule, and AllDebrid's state at the foot.
+  // versions as a big number , and AllDebrid's state at the foot.
   void draw_title_column() {
     Ctx &c = ctx();
     int y = draw_title(req_.item, LX, 120, LW, 130) + 28;
@@ -791,7 +791,6 @@ class SourcesScreen : public Screen {
       for (auto &o : options_) ready += o.ready == 1 ? 1 : 0;
       if (ranking_.recommended && ranking_.recommended->ready == 1) ready++;
       int ry = 560;
-      c.gfx.fill_rect(LX, ry, LW, rule, rgba(0xffffff));
       c.fonts.bold.draw(std::to_string(ranking_.total), LX, ry + 14, 88, rgba(0xffffff));
       text(Text::Caption1, ready > 0 ? "versions found, " + std::to_string(ready) + " ready" : "versions found", LX, ry + 118, label(Label::Secondary), LW);
     }
@@ -809,10 +808,9 @@ class SourcesScreen : public Screen {
     Ctx &c = ctx();
     if (has_recommended()) draw_best(*ranking_.recommended, focus_index_ == 0 && !pills_focused_);
     draw_pills();
-    // 4.1 Swiss: the table's column names on a white rule above the list.
+    // 4.1 Swiss: the table's column names  above the list.
     {
       int hy = LIST_TOP - 26;
-      c.gfx.fill_rect(RX, hy - 6, RW, rule, rgba(0xffffff));
       const int cols[6] = {0, 1, 3, 5, 6, 8};
       const char *names[6] = {"Resolution", "Picture", "Sound", "Size", "Group", "Ready"};
       for (int k = 0; k < 5; k++) text(Text::Caption3, names[k], RX + 16 + cols[k] * (span_w(1) + grid_gutter), hy, label(Label::Secondary));
@@ -891,7 +889,6 @@ class SourcesScreen : public Screen {
   void draw_best(const SourceOption &o, bool focused) {
     Ctx &c = ctx();
     int y = 120;
-    c.gfx.fill_rect(RX, y, RW, rule, rgba(0xffffff));
     std::string kind = o.match == "same" ? "Same as your last episode" : o.match == "like" ? "Like your last episode"
                        : all_.cuts.size() > 1 ? "Best " + cut_ + " version" : "Best for this TV";
     text(Text::Caption1Semi, kind, RX, y + 14, label(Label::Primary));
@@ -932,7 +929,6 @@ class SourcesScreen : public Screen {
     Ctx &c = ctx();
     int x = RX, w = RW;
     if (focused) c.gfx.fill_rect(x, y, w, ROW, rgba(0xffffff));
-    else c.gfx.fill_rect(x, y + ROW - 1, w, 1, rgba(0xffffff, 51));
     Color fg = focused ? rgba(0x000000) : label(o.excluded ? Label::Disabled : Label::Primary);
     Color fg2 = focused ? rgba(0x000000, 166) : label(o.excluded ? Label::Disabled : Label::Secondary);
     int ty = y + (ROW - line_for(Text::Caption1)) / 2;

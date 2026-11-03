@@ -294,14 +294,13 @@ class SearchScreen : public Screen {
     draw_glass(g);
     // Field.
     // Field 85 high, White10, padding 20 [EoA S5].
-    // 4.1 Swiss: the query large in Bold on a white rule, with a red caret.
+    // 4.1 Swiss: the query large in Bold , with a red caret.
     Font &bold = c.fonts.bold;
     int qx = x0, qy = iy - 6;
     std::string shown = ellipsize(bold, query_, 72, KW - 20);
     int qw = bold.measure(shown, 72);
     if (query_.empty()) bold.draw("Search", qx, qy, 72, label(Label::Tertiary, a));
     else bold.draw(shown, qx, qy, 72, fade(rgba(0xffffff), a));
-    c.gfx.fill_rect(x0, iy + FIELD_H - 2, KW, theme::rule, fade(rgba(0xffffff), a));
     if (zone_ == Zone::Keys && !tabs_ && caret_) c.gfx.fill_rect(qx + (query_.empty() ? 0 : qw + 6), iy + 6, 6, FIELD_H - 22, fade(theme::signal, a));
 
     // Keys.
@@ -364,7 +363,6 @@ class SearchScreen : public Screen {
       return;
     }
     bool waiting = searching_ || due_at_;
-    c.gfx.fill_rect(rx, TOP + 2, rw, theme::rule, rgba(0xffffff));
     text(Text::Caption1Semi, "Results for \xE2\x80\x9C" + q + "\xE2\x80\x9D", rx, TOP + 18, label(Label::Primary), rw - 120);
     if (!waiting) text_right(Text::Caption1, std::to_string(results_.size()), rx + rw, TOP + 18, label(Label::Secondary));
     if (waiting) draw_spinner(rx + rw - 24, TOP + 40, 34, label(Label::Secondary), searching_ ? searching_since_ : 0);

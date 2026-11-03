@@ -198,4 +198,21 @@ function warm() {
   browse('movie').then(() => browse('series')).catch(() => {});
 }
 
-module.exports = { enabled, home, browse, warm, item, COLLECTIONS };
+/**
+ * A title's other names (4.1.1), for strict release matching: TMDB's own and
+ * original title and its Latin-script alternative titles. [] without a key.
+ */
+async function aliases(type, imdb) {
+  if (!(await enabled()) || !/^tt\d+$/.test(String(imdb))) return [];
+  return cached(`aliases:${type}:${imdb}`, async () => {
+    const found = await api(`/find/${imdb}`, { external_source: 'imdb_id' });
+    const r = type === 'series' ? (found.tv_results || [])[0] : (found.movie_results || [])[0];
+    if (!r) return [];
+    const out = [r.name || r.title, r.original_name || r.original_title];
+    const alt = await api(`/${type === 'series' ? 'tv' : 'movie'}/${r.id}/alternative_titles`).catch(() => null);
+    ((alt && (alt.results || alt.titles)) || []).forEach(a => { if (a && /^[\x20-\x7e]+$/.test(a.title || '')) out.push(a.title); });
+    return out.filter(Boolean);
+  });
+}
+
+module.exports = { enabled, home, browse, warm, item, aliases, COLLECTIONS };

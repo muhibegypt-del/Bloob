@@ -90,7 +90,7 @@ std::string Pairing::spoken() const {
 }
 
 // 4.1 Swiss pairing: the whole screen in black, the instruction as a headline,
-// the code very large on a white rule, the time left and the state beside it.
+// the code very large , the time left and the state beside it.
 void Pairing::draw() {
   if (!active_) return;
   Ctx &c = ctx();
@@ -105,7 +105,6 @@ void Pairing::draw() {
     hy += 92;
   }
   int ry = 560;
-  c.gfx.fill_rect(x, ry, span_w(12), rule, rgba(0xffffff));
   if (pin_.empty()) {
     if (error_.empty()) {
       int bw = span_w(12) / 6;

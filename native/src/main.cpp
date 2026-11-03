@@ -844,9 +844,8 @@ class App {
       int w = std::max(200, std::min(600, tw + 80));
       int th = std::max(112, static_cast<int>(lines.size()) * line_for(Text::Caption1) + 60);
       int tx = W - theme::safe_x - w, ty = 57;
-      // 4.1 Swiss: a black block under a white rule.
+      // 4.1 Swiss: a black block .
       c.gfx.fill_rect(tx, ty, w, th, rgba(0x000000, 235));
-      c.gfx.fill_rect(tx, ty, w, theme::rule, rgba(0xffffff));
       int ly = ty + (th - static_cast<int>(lines.size()) * line_for(Text::Caption1)) / 2;
       for (auto &l : lines) {
         text(Text::Caption1, l, tx + 40, ly, label(Label::Primary));

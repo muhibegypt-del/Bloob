@@ -387,7 +387,7 @@ class DetailsScreen : public Screen {
     const Item &it = meta_.item;
     // 4.1 Swiss title page, laid out from the buttons up: a line of facts, the
     // title's logo, the summary across five columns, the ratings as big numbers
-    // on a white rule, then the buttons and the line about the version.
+    // , then the buttons and the line about the version.
     int by = kPanelY - 32 - theme::button_h - (has_episodes() ? 46 : 0);
     bool ratings = !it.scores.empty() || !it.rating.empty();
     int ry = by - 32 - (ratings ? 112 : 0);
@@ -418,11 +418,10 @@ class DetailsScreen : public Screen {
     if (has_episodes()) draw_episodes(p);
   }
 
-  // 4.1 Swiss: the ratings as big numbers in columns on a white rule, each
+  // 4.1 Swiss: the ratings as big numbers in columns , each
   // site's name (or logo) small above its score.
   void draw_ratings(const Item &it, int ry, float alpha) {
     Ctx &c = ctx();
-    draw_rule(0, 6, ry, alpha);
     std::vector<std::pair<std::string, std::string>> cols;
     std::vector<std::string> logos;
     for (auto &sc : it.scores) {
@@ -513,12 +512,11 @@ class DetailsScreen : public Screen {
     }
   }
 
-  // 4.1 Swiss How to watch: a white rule across the grid, the label and status
+  // 4.1 Swiss How to watch: the label and status
   // on it, and the first three versions in four-column blocks; the best one
   // carries a red bar, the focused one is a white block.
   void draw_versions(float alpha) {
     int y = kPanelY + 20;
-    draw_rule(0, 12, y, alpha);
     text(Text::Caption1Semi, "How to watch", X0, y + 14, label(Label::Primary, alpha));
     std::string status;
     if (versions_state_ == Versions::Loading) status = "Finding versions\xE2\x80\xA6";
@@ -544,7 +542,6 @@ class DetailsScreen : public Screen {
       bool focused = zone_ == Zone::Versions && i == version_;
       bool best = i == 0;
       if (focused) ctx().gfx.fill_rect(tx, ty, tw, th, fade(rgba(0xffffff), alpha));
-      else ctx().gfx.fill_rect(tx, ty, tw, 1, fade(with_alpha(rgba(0xffffff), 64), alpha));
       if (best && !focused) ctx().gfx.fill_rect(tx, ty, span_w(1), 3, fade(theme::signal, alpha));
       Color main = focused ? fade(rgba(0x000000), alpha) : label(Label::Primary, alpha);
       Color sub = focused ? fade(rgba(0x000000, 166), alpha) : label(Label::Secondary, alpha);
@@ -590,8 +587,6 @@ class DetailsScreen : public Screen {
         auto pr = progress_.find(e.id);
         if (pr != progress_.end() && pr->second.watched) watched++;
       }
-      int ry = sy + theme::pill_h + 6;
-      c.gfx.fill_rect(X0, ry, W - 2 * X0, theme::rule, with_alpha(rgba(0xffffff), 64));
       text_right(Text::Caption2, std::to_string(sn.episodes.size()) + " episodes \xC2\xB7 " + std::to_string(watched) + " watched", W - X0,
                  sy + (theme::pill_h - line_for(Text::Caption2)) / 2, label(Label::Secondary));
     }
@@ -642,7 +637,6 @@ class DetailsScreen : public Screen {
     if (p > 0.6f) {
       float a = (p - 0.6f) / 0.4f;
       int ay = H - safe_y - 96;
-      c.gfx.fill_rect(X0, ay - 26, W - 2 * X0, 1, fade(frost_hairline, a));
       std::vector<std::string> about = {meta_line(meta_.item)};
       for (auto &sc : meta_.item.scores) about.push_back(sc.label);
       if (meta_.item.scores.empty() && !meta_.item.rating.empty()) about.push_back("IMDb " + meta_.item.rating);

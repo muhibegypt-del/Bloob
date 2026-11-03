@@ -421,9 +421,8 @@ void draw_panel(int x, int y, int w, int h, float alpha) {
 void draw_glass(const GlassSpec &g) {
   Ctx &c = ctx();
   if (g.w <= 0 || g.h <= 0 || g.alpha <= 0.01f) return;
-  // 4.1 Swiss: no frosted glass. Every panel is near-black with a white rule on top.
+  // 4.1 Swiss: no frosted glass. Every panel is near-black, with no border.
   c.gfx.fill_rect(g.x, g.y, g.w, g.h, fade(g.kind == GlassKind::Smoke ? theme::smoke : theme::solid, g.alpha));
-  c.gfx.fill_rect(g.x, g.y, g.w, theme::rule, fade(rgba(0xffffff), g.alpha));
 }
 
 std::string position(int index, int count) {
@@ -545,10 +544,9 @@ void draw_spinner(int cx, int cy, int size, Color color, long long since) {
     c.redraw_at(since + theme::spinner_delay_ms);
     return;
   }
-  // 4.1 Swiss: no spinners. A red bar slides along a short white rule, centred.
+  // 4.1 Swiss: no spinners. A red bar slides along a short track, centred.
   (void)color;
   int w = std::max(60, size * 3), x = cx - w / 2;
-  c.gfx.fill_rect(x, cy - 1, w, 2, rgba(0xffffff, 90));
   int bw = w / 4;
   int pos = static_cast<int>(c.now % 1200 * (w - bw) / 1200);
   c.gfx.fill_rect(x + pos, cy - 2, bw, 4, theme::signal);

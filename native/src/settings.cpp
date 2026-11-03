@@ -306,7 +306,7 @@ class SettingsScreen : public Screen {
   }
 
   // List buttons [EoA R1-R5]: multiline 120 high, radius 33, padding 30, 14 apart.
-  // 4.1 Swiss: rows on the right eight columns under a white rule, 96 high, no gaps.
+  // 4.1 Swiss: rows on the right eight columns , 96 high, no gaps.
   static constexpr int kRowH = 96, kGap = 0, kRowR = 0, kRowPad = 20;
   static int row_top(int i) { return 182 + i * (kRowH + kGap); }
 
@@ -317,7 +317,6 @@ class SettingsScreen : public Screen {
     int x = col_x(4), w = span_w(8);
     int off = static_cast<int>(std::lround(scroll_.value));
     c.fonts.bold.draw("Settings", safe_x, 170, 96, rgba(0xffffff));
-    c.gfx.fill_rect(x, row_top(0) - off - 2, w, rule, rgba(0xffffff));
     auto list = rows();
     for (size_t i = 0; i < list.size(); i++) {
       int y = row_top(static_cast<int>(i)) - off;
@@ -325,7 +324,6 @@ class SettingsScreen : public Screen {
       bool f = row_ == static_cast<int>(i) && !tabs_ && !pairing_.active();
       // Glass rows: white with a soft lift when focused, a faint white fill at rest.
       if (f) c.gfx.fill_rect(x, y, w, kRowH, rgba(0xffffff));
-      else c.gfx.fill_rect(x, y + kRowH - 1, w, 1, rgba(0xffffff, 51));
       std::string title, value, action;
       bool choice = false;
       int toggle = -1;  // a switch: 0 off, 1 on

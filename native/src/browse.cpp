@@ -27,8 +27,8 @@ constexpr int kFirstShelf = 742;
 // Hero text block [EoA H1-H8]: logo at most 420 × 126 (283 × 85 when compact),
 // title → metadata 13, metadata → description 18, description 570 wide in 3
 // lines, description → buttons 32. The block ends 32 above the first shelf.
-// 4.1 Swiss: the logo box across six columns, up to 200 px high; the white rule
-// under it at kRuleY, the buttons 60 high on its right.
+// 4.1 Swiss: the logo box across six columns, up to 200 px high; the facts
+// line at kRuleY (4.1.1: no rule drawn), the buttons 60 high on its right.
 constexpr int kLogoW = 868, kLogoH = 200, kLogoSmallW = 560, kLogoSmallH = 110;
 constexpr int kRuleY = 640, kButtonH = 60, kButtonGap = 12;
 constexpr int kTitleToMeta = 13, kMetaToBody = 18, kBodyToButtons = 32, kBodyW = 760, kBodyLines = 3;
@@ -562,7 +562,7 @@ class BrowseScreen : public Screen {
     for (int i = 0; i < 5; i++) c.gfx.fill_round(X0 + i * STRIDE, kFirstShelf + kHeaderH + kHeaderToItems, card_w, card_h, card_radius, tone);
   }
 
-  // 4.1 Swiss hero: the title's logo, a white rule across the grid, the facts in
+  // 4.1 Swiss hero: the title's logo, the facts in
   // columns under it and the buttons on the right of the same line. Moving down
   // to the shelves lifts the block to the top, without the buttons.
   void draw_top(float m) {
@@ -574,7 +574,6 @@ class BrowseScreen : public Screen {
     int box_h = static_cast<int>(lerp(kLogoH, kLogoSmallH, m));
     int box_w = static_cast<int>(lerp(kLogoW, kLogoSmallW, m));
     draw_title(s.item, X0, rule_y - 28 - box_h, box_w, box_h, t);
-    draw_rule(0, 12, rule_y, t);
 
     std::vector<Fact> facts;
     if (s.has_resume) {
