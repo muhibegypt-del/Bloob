@@ -92,11 +92,11 @@ struct Availability {
 
 Availability availability(const SourceOption &o) {
   if (!o.cautions.empty()) return {o.cautions[0], caution};
-  if (o.ready == 1) return {"Ready now", good};
-  if (o.availability == "Direct link") return {"Direct link", good};
+  if (o.ready == 1) return {"Ready now", theme::signal};  // 4.1 Swiss: the one colour
+  if (o.availability == "Direct link") return {"Direct link", label(Label::Secondary)};
   int seeders = std::atoi(o.availability.c_str());
-  if (seeders >= 20) return {"Readily available", good};
-  if (seeders >= 5) return {"Available", good};
+  if (seeders >= 20) return {"Readily available", label(Label::Secondary)};
+  if (seeders >= 5) return {"Available", label(Label::Secondary)};
   if (o.availability.find("seeder") != std::string::npos) return {"Slow to prepare", caution};
   return {"Availability unknown", label(Label::Tertiary)};
 }

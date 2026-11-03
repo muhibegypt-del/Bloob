@@ -737,6 +737,7 @@ void Gfx::fill_circle(int cx, int cy, int radius, Color color) {
 }
 
 void Gfx::fill_round(int x, int y, int w, int h, int radius, Color color) {
+  if (square) return fill_rect(x, y, w, h, color);  // 4.1 Swiss: every shape is square
   radius = std::max(0, std::min(radius, std::min(w, h) / 2));
   if (radius == 0) return fill_rect(x, y, w, h, color);
   SDL_Texture *t = disc(radius);
@@ -815,6 +816,13 @@ SDL_Texture *Gfx::ring(int radius, int width) {
 }
 
 void Gfx::stroke_round(int x, int y, int w, int h, int radius, int width, Color color) {
+  if (square) {  // 4.1 Swiss: a square outline
+    fill_rect(x, y, w, width, color);
+    fill_rect(x, y + h - width, w, width, color);
+    fill_rect(x, y + width, width, h - 2 * width, color);
+    fill_rect(x + w - width, y + width, width, h - 2 * width, color);
+    return;
+  }
   radius = std::max(width, std::min(radius, std::min(w, h) / 2));
   SDL_Texture *t = ring(radius, width);
   if (t) {

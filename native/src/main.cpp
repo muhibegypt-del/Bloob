@@ -145,10 +145,12 @@ class App {
     sdl_offset_ = now_ms() - static_cast<long long>(SDL_GetTicks());
     c.gfx.init(c.renderer, W, H);
     std::string fonts = c.dir + "/assets/fonts/";
-    c.fonts.regular.load(c.renderer, fonts + "Inter-Regular.ttf");
-    c.fonts.medium.load(c.renderer, fonts + "Inter-Medium.ttf");
-    c.fonts.semibold.load(c.renderer, fonts + "Inter-SemiBold.ttf");
-    c.fonts.bold.load(c.renderer, fonts + "Inter-Bold.ttf");
+    // 4.1 Swiss: Inter Tight (the free stand-in for Helvetica) in three weights;
+    // the semibold slot is Medium, so every label is Regular, Medium or Bold.
+    c.fonts.regular.load(c.renderer, fonts + "InterTight-Regular.ttf");
+    c.fonts.medium.load(c.renderer, fonts + "InterTight-Medium.ttf");
+    c.fonts.semibold.load(c.renderer, fonts + "InterTight-Medium.ttf");
+    c.fonts.bold.load(c.renderer, fonts + "InterTight-Bold.ttf");
     c.icons.init(c.renderer);
     c.mark("fonts");
 
@@ -750,17 +752,15 @@ class App {
     int total = 0;
     for (int i = 0; i < kTabCount; i++)
       if (i != kYouTubeTab || youtube_) total += glass_button_width(pill(i)) + (i ? kTabGap : 0);
-    int pad = 9, h = theme::pill_h;  // segment platter: padding 9, buttons 8 apart [EoA N2]
-    int bw = total + pad * 2, bh = h + pad * 2, bx = (W - bw) / 2, by = theme::safe_y + dy;
-    GlassSpec bar;
-    bar.x = bx;
-    bar.y = by;
-    bar.w = bw;
-    bar.h = bh;
-    bar.radius = bh / 2;
-    bar.alpha = a;
-    top()->shell_glass(bar);
-    int x = bx + pad;
+    // 4.1 Swiss: no platter. The wordmark sits on the left margin and the tabs
+    // follow it on the image, over a shallow black wash from the top edge.
+    (void)total;
+    Ctx &c = ctx();
+    int pad = 9, by = theme::safe_y + dy - pad;
+    c.gfx.gradient_v(0, 0, W, 220, theme::black, static_cast<Uint8>(150 * a), 0);
+    Font &bold = c.fonts.bold;
+    bold.draw("Bloob", theme::safe_x, by + pad + (theme::pill_h - bold.line_height(34)) / 2, 34, fade(rgba(0xffffff), a));
+    int x = theme::safe_x + bold.measure("Bloob", 34) + 72 - theme::pill_pad;
     for (int i = 0; i < kTabCount; i++)
       if (i != kYouTubeTab || youtube_) x += draw_glass_button(x, by + pad, pill(i)) + kTabGap;
   }
@@ -787,7 +787,7 @@ class App {
     c.images.upload();
     long long uploaded = now_ms();
     stages.upload = uploaded - render_started;
-    c.gfx.shadows = !c.lite();
+    c.gfx.shadows = false;  // 4.1 Swiss: no shadows
     c.gfx.begin_frame();
     Screen *screen = top();
     bool entering = entering_.value < 0.999f && below_top();
@@ -844,9 +844,9 @@ class App {
       int w = std::max(200, std::min(600, tw + 80));
       int th = std::max(112, static_cast<int>(lines.size()) * line_for(Text::Caption1) + 60);
       int tx = W - theme::safe_x - w, ty = 57;
-      if (!c.lite()) c.gfx.shadow(tx, ty, w, th, 30, 36, 15, 38);
-      c.gfx.fill_round(tx, ty, w, th, 30, rgba(0x2c2c2e));
-      c.gfx.stroke_round(tx, ty, w, th, 30, 1, c.high_contrast ? theme::hairline_high : theme::hairline);
+      // 4.1 Swiss: a black block under a white rule.
+      c.gfx.fill_rect(tx, ty, w, th, rgba(0x000000, 235));
+      c.gfx.fill_rect(tx, ty, w, theme::rule, rgba(0xffffff));
       int ly = ty + (th - static_cast<int>(lines.size()) * line_for(Text::Caption1)) / 2;
       for (auto &l : lines) {
         text(Text::Caption1, l, tx + 40, ly, label(Label::Primary));

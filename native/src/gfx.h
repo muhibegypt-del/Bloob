@@ -165,6 +165,7 @@ class Gfx {
   void shadow(int x, int y, int w, int h, int radius, int blur, int dy, Uint8 alpha);
   // Off in the Lite effects tier: depth comes from fills and focus colour alone.
   bool shadows = true;
+  bool square = true;  // 4.1 Swiss: fill_round and stroke_round draw square shapes
   // Glass card focus: white light across the top-left of a rounded box, fading out
   // by 40% of the diagonal. Baked once per resting size and stretched while the
   // card lifts. Off with shadows.

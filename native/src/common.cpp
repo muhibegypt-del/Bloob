@@ -35,13 +35,8 @@ void Backdrop::update(double dt) {
   }
   // Hold the fade until the picture is decoded, and the frost of every glass
   // panel over it is baked, so neither pops in half-drawn.
+  // 4.1 Swiss: panels are solid, so there is no frost to wait for.
   bool ready = images.settled(current_, W, H);
-  if (ready && !ctx().lite() && !ctx().reduce_transparency)
-    for (auto &g : glass_) {
-      if (ctx().now - g.used_at > 2000) continue;  // a panel no longer shown
-      ImageRef f = images.frost(current_, g.rect, g.radius);
-      ready = ready && (f.texture || f.failed);
-    }
   if (ready) {
     if (fade_.step(dt)) ctx().animating = true;
     if (fade_.value >= 1.0f) previous_.clear();
@@ -87,13 +82,7 @@ void Backdrop::glass(GlassSpec g) const {
   }
   bool fading = !previous_.empty() && fade_.value < 0.999f;
   g.art = fading ? previous_ : current_;
-  draw_glass(g);
-  if (fading) {
-    // The new picture's frost fades in with it (no second shadow or solid).
-    ImageRef f = c.images.frost(current_, GlassRect{g.x, g.y, g.w, g.h}, g.radius);
-    if (f.texture && !c.lite() && !c.reduce_transparency)
-      c.gfx.texture(f.texture, g.x, g.y, g.w, g.h, static_cast<Uint8>(f.alpha * g.alpha * fade_.value));
-  }
+  draw_glass(g);  // 4.1 Swiss: a solid panel; nothing to fade in
 }
 
 float Backdrop::luma() const {
@@ -140,28 +129,27 @@ void draw_hero_overlay(float luma, float alpha) {
 
 int draw_title(const Item &item, int x, int top, int box_w, int box_h, float alpha, bool centred) {
   Ctx &c = ctx();
-  if (!item.logo.empty()) {
-    // Decoded once at the largest size used, then scaled: boxes animate, and a
-    // new size per frame would mean a new decode per frame.
-    ImageRef logo = c.images.get(item.logo, 760, 240, 0, Fit::Contain);
-    if (logo.texture) {
-      float scale = std::min(1.0f, std::min(static_cast<float>(box_w) / logo.w, static_cast<float>(box_h) / logo.h));
-      int lw = static_cast<int>(logo.w * scale), lh = static_cast<int>(logo.h * scale);
-      int lx = centred ? x + (box_w - lw) / 2 : x;
-      c.gfx.texture(logo.texture, lx, top + box_h - lh, lw, lh, static_cast<Uint8>(std::min<float>(255 * alpha, logo.alpha)));
-      return top + box_h;
-    }
-    if (!logo.failed) return top + box_h;  // still loading: hold the space rather than flash type
-  }
-  // Display type, sized down for long names.
+  // 4.1 Swiss: titles are set in type (never the title's logo art), in Bold as large as the box allows: one line at the
+  // box's height if it fits the width, else two lines, else smaller.
   Font &f = c.fonts.bold;
-  int size = box_h >= 200 ? 76 : box_h >= 140 ? 60 : 48;
-  auto lines = wrap(f, item.name, size, box_w + 120, 2);
-  if (lines.size() > 1 && size > 48) {
-    size = size * 4 / 5;
-    lines = wrap(f, item.name, size, box_w + 120, 2);
+  int size = std::min(232, box_h);
+  std::vector<std::string> lines;
+  for (;;) {
+    if (f.measure(item.name, size) <= box_w) {
+      lines = {item.name};
+      break;
+    }
+    int two = std::min(size, box_h * 10 / 19);
+    lines = wrap(f, item.name, two, box_w, 2);
+    bool fits = lines.size() <= 2 && f.measure(lines[0], two) <= box_w && (lines.size() < 2 || f.measure(lines[1], two) <= box_w) &&
+                lines.back().find("\xE2\x80\xA6") == std::string::npos;
+    if (fits || two <= 40) {
+      size = two;
+      break;
+    }
+    size -= 8;
   }
-  int line = size + size / 10;
+  int line = size * 92 / 100;
   int y = top + box_h - static_cast<int>(lines.size()) * line;
   for (auto &l : lines) {
     int lx = centred ? x + (box_w - f.measure(l, size)) / 2 : x;

@@ -23,7 +23,9 @@ namespace theme {
 
 // ---- ground and status colours. Text colours come from label() by role (ui.h).
 const Color black = rgba(0x000000);                // ground behind full-bleed artwork and video
-const Color plain = rgba(0x2c2c2e);                // ground of pages without artwork [EoA C5]; 3.0: Glass graphite again (the 2.6 black was dropped by the owner)
+const Color plain = rgba(0x000000);                // 4.1 Swiss: pages without artwork are black (was #2C2C2E [EoA C5])
+const Color signal = rgba(0xff3b21);               // 4.1 Swiss: the one colour: ready, progress, the current tab
+constexpr int rule = 2;                            // 4.1 Swiss: white rules between sections, in px                // ground of pages without artwork [EoA C5]; 3.0: Glass graphite again (the 2.6 black was dropped by the owner)
 const Color candidate = rgba(0xffffff, 26);        // 10%: chosen but not focused [EoA P5]
 const Color hairline = rgba(0xffffff, 20);         // 8% [EoA C3]
 const Color hairline_high = rgba(0xffffff, 82);    // 32%, Increase contrast [EoA C4]
@@ -38,10 +40,10 @@ const Color problem = rgba(0xff453a);              // SystemRed [EoA C11]
 // ---- layout: the tvOS safe area and grid
 constexpr int safe_x = 80, safe_y = 60;            // [EoA S1, S2]
 constexpr int card_w = 320, card_h = 180, card_gap = 40;  // 16:9 cards, tvOS 5-column grid
-constexpr int card_radius = 20;                    // grid preset D, radius M [EoA K1]
-constexpr int card_grow = 50;                      // focused cards grow 50 wider, height in proportion [EoA K2]
+constexpr int card_radius = 0;                     // 4.1 Swiss: square (was 20)                    // grid preset D, radius M [EoA K1]
+constexpr int card_grow = 0;                       // 4.1 Swiss: focus is a white frame, no growth (was 50)                      // focused cards grow 50 wider, height in proportion [EoA K2]
 constexpr int episode_w = 410, episode_h = 231;    // 4-column grid item (inferred episode card) [EoA K3]
-constexpr int glass_radius = 32, badge_radius = 6;
+constexpr int glass_radius = 0, badge_radius = 0;  // 4.1 Swiss: square
 constexpr int button_grow = 8;                     // focused buttons grow 8 wider; no scale [EoA B4]
 
 // ---- buttons [EoA B1-B9]: Regular 66 high, padding 30, icon gap 12
@@ -50,7 +52,7 @@ constexpr int button_pad = 30, button_icon_gap = 12;
 constexpr int title_button_gap = 24;               // between hero and title-page buttons [EoA B7]
 constexpr int stack_gap = 14;                      // settings and modal button stacks [EoA B8]
 constexpr int title_button_min_w = 220, title_button_max_w = 420;  // [EoA B9]
-const Color button_focus = rgba(0xffffff, 230);    // White90 [EoA B5]
+const Color button_focus = rgba(0xffffff);         // 4.1 Swiss: solid white    // White90 [EoA B5]
 const Color button_dark = rgba(0x000000, 128);     // Dark variant at rest: Black50 + 16% outline [EoA B10]
 const Color button_dark_candidate = rgba(0xffffff, 51);  // White20
 const Color button_default = rgba(0xffffff, 26);   // Default variant at rest: White10, candidate White60 [EoA B11]
@@ -59,16 +61,16 @@ const Color button_player = rgba(0x1e1e1e, 230);   // DarkPlayer at rest: RGB(30
 const Color button_player_candidate = rgba(0x7c7c7c, 204);
 // Shared rounded shadow at elevation 1: opacity 0.4, blur 25, offset y 20 [EoA E1]
 constexpr int shadow_blur = 25, shadow_dy = 20;
-constexpr Uint8 shadow_alpha = 102;
+constexpr Uint8 shadow_alpha = 0;                  // 4.1 Swiss: no shadows
 // Cards [EoA K4]: idle dy 4, blur 12, Black18; focused dy 40, blur 45, Black30
 constexpr int card_shadow_blur = 12, card_shadow_dy = 4, card_focus_shadow_blur = 45, card_focus_shadow_dy = 40;
-constexpr Uint8 card_shadow_alpha = 46, card_focus_shadow_alpha = 77;
+constexpr Uint8 card_shadow_alpha = 0, card_focus_shadow_alpha = 0;  // 4.1 Swiss: no shadows
 constexpr int card_text_pad = 14;                  // lockup padding, grid D [EoA K5]
 constexpr int progress_pad_x = 18, progress_pad_y = 12;  // [EoA K6]
 const Color progress_back = rgba(0xffffff, 77);    // LabelTertiary under LabelPrimary [EoA K7]
 
 // ---- season pills [EoA P1-P6]
-constexpr int pill_h = 66, pill_radius = 33, pill_pad = 30;
+constexpr int pill_h = 66, pill_radius = 0, pill_pad = 30;  // 4.1 Swiss: square
 constexpr int pill_focus_grow = 8;                 // horizontal expansion when focused
 
 // ---- spacing [EoA F1-F4]
@@ -83,9 +85,9 @@ constexpr double card_scrim_light_luma = 0.5;      // where "light" starts (no r
 // ---- glass materials (GLASS-PLAN.md). Frost is baked from the blurred backdrop;
 // over video the glass is smoked because the video plane cannot be read.
 const Color frost_hairline = rgba(0xffffff, 41);   // 16%: outline on art, logos and buttons [EoA C13]
-const Color smoke = rgba(0x000000, 115);           // 45%: glass over video
+const Color smoke = rgba(0x000000, 200);           // 4.1 Swiss: a near-black panel (was 45%)           // 45%: glass over video
 const Color smoke_hairline = rgba(0xffffff, 31);   // 12%
-const Color solid = rgba(0x2c2c2e, 240);           // 94%: Lite, Reduce transparency, frost still baking
+const Color solid = rgba(0x000000, 225);           // 4.1 Swiss: panels are black, never frosted           // 94%: Lite, Reduce transparency, frost still baking
 constexpr float frost_tint = 0.14f;                // white mixed into the blurred art
 constexpr float frost_light = 0.10f;               // extra white along the top edge
 constexpr float frost_saturation = 1.3f;           // glass makes colour a little richer

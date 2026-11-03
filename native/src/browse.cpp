@@ -26,8 +26,9 @@ constexpr int kFirstShelf = 742;
 // Hero text block [EoA H1-H8]: logo at most 420 × 126 (283 × 85 when compact),
 // title → metadata 13, metadata → description 18, description 570 wide in 3
 // lines, description → buttons 32. The block ends 32 above the first shelf.
-constexpr int kLogoW = 420, kLogoH = 126, kLogoSmallW = 283, kLogoSmallH = 85;
-constexpr int kTitleToMeta = 13, kMetaToBody = 18, kBodyToButtons = 32, kBodyW = 570, kBodyLines = 3;
+// 4.1 Swiss: the box holds the title set in type, up to 200 px high across nine columns.
+constexpr int kLogoW = 1300, kLogoH = 200, kLogoSmallW = 900, kLogoSmallH = 96;
+constexpr int kTitleToMeta = 13, kMetaToBody = 18, kBodyToButtons = 32, kBodyW = 760, kBodyLines = 3;
 constexpr int X0 = safe_x;
 constexpr long long kAutoAdvanceMs = 9000;
 constexpr int kFeatured = 6;
@@ -614,7 +615,7 @@ class BrowseScreen : public Screen {
       }
       if (s.has_resume && s.resume.kind == "resume" && s.resume.duration > 0) {
         bx += 14;
-        draw_progress(bx, by + theme::button_h / 2 - 3, 200, 5, static_cast<double>(s.resume.position) / s.resume.duration, fade(rgba(0xffffff), hero_only),
+        draw_progress(bx, by + theme::button_h / 2 - 3, 200, 5, static_cast<double>(s.resume.position) / s.resume.duration, fade(theme::signal, hero_only),
                       fade(with_alpha(rgba(0xffffff), 72), hero_only));
         text(Text::Caption2, minutes_left(s.resume.duration - s.resume.position), bx, by + theme::button_h / 2 + 8, label(Label::Secondary, hero_only));
       }
@@ -626,7 +627,7 @@ class BrowseScreen : public Screen {
       for (int i = 0; pages > 1 && i < pages; i++) {
         bool on = i == feature_;
         int w = on ? 28 : 8;
-        c.gfx.fill_round(dx, by + 36, w, 8, 4, fade(on ? rgba(0xffffff) : with_alpha(rgba(0xffffff), 102), hero_only));
+        c.gfx.fill_rect(dx, by + 36, w, 4, fade(on ? rgba(0xffffff) : with_alpha(rgba(0xffffff), 102), hero_only));  // 4.1 Swiss: square
         dx += w + 10;
       }
     }

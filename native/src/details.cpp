@@ -389,15 +389,15 @@ class DetailsScreen : public Screen {
     // description (Standard.Caption1, secondary) 667 wide in 4 lines → buttons 32.
     // Laid out from the buttons up so they always sit in the same place, above
     // the seasons peeking below (series) or How to watch (films).
-    constexpr int kTitleToMeta = 13, kMetaToBody = 18, kBodyToButtons = 32, kBodyW = 667, kBodyLines = 4;
+    constexpr int kTitleToMeta = 13, kMetaToBody = 18, kBodyToButtons = 32, kBodyW = 760, kBodyLines = 4;
     int line = line_for(Text::Caption1);
     int lines = std::max(1, static_cast<int>(wrap(font_for(Text::Caption1), it.description, size_for(Text::Caption1), kBodyW, kBodyLines).size()));
     int by = kPanelY - kBodyToButtons - theme::button_h - (has_episodes() ? 46 : 0);
-    int hero_top = by - kBodyToButtons - lines * line - kMetaToBody - line - kTitleToMeta - 126;
+    int hero_top = by - kBodyToButtons - lines * line - kMetaToBody - line - kTitleToMeta - 220;  // 4.1 Swiss: a 220 px title box
     // Title art shrinks and rises as the page continues into episodes.
     int box_top = static_cast<int>(lerp(static_cast<float>(hero_top), 80, p));
-    int box_h = static_cast<int>(lerp(126, 85, p));
-    int box_w = static_cast<int>(lerp(420, 283, p));
+    int box_h = static_cast<int>(lerp(220, 96, p));
+    int box_w = static_cast<int>(lerp(1300, 900, p));
     int y = draw_title(it, X0, box_top, box_w, box_h);
 
     float top_only = std::max(0.0f, 1.0f - 1.6f * p);

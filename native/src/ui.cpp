@@ -199,7 +199,7 @@ Spec spec(Text style) {
   switch (style) {
     // Nothing below 22 px: the smallest size that stays readable at three metres.
     // Headings are the Emphasized roles (Bold); text is Standard (Medium) [EoA T12].
-    case Text::Display: return {3, 104, 112};
+    case Text::Display: return {3, 200, 176};       // 4.1 Swiss: the huge title, set tight
     case Text::Title1: return {3, 76, 96};
     case Text::Title2: return {3, 57, 66};
     case Text::Title3: return {3, 48, 56};
@@ -215,7 +215,7 @@ Spec spec(Text style) {
     case Text::Caption1: return {1, 25, 32};
     case Text::Caption2: return {1, 23, 30};
     case Text::Caption3: return {1, 21, 28};  // [EoA T9]; only where text is fitted, never body copy
-    case Text::Button: return {2, 29, 36};
+    case Text::Button: return {3, 29, 36};          // 4.1 Swiss: Bold
     case Text::Pill: return {3, 31, 38};      // Emphasized.Callout, Bold [EoA P2]
   }
   return {0, 24, 32};
@@ -389,14 +389,20 @@ SDL_Rect draw_card(int x, int y, const CardSpec &cs) {
   }
   if (!body) return SDL_Rect{cx, cy, w, h};
   if (cs.progress >= 0) {
-    // Progress inset 18 / 12 inside the card [EoA K6]; tertiary under primary [EoA K7].
-    int pw = w - 2 * theme::progress_pad_x, py = cy + h - theme::progress_pad_y - 5;
-    c.gfx.fill_round(cx + theme::progress_pad_x, py, pw, 5, 2, fade(theme::progress_back, cs.alpha));
-    int fw = static_cast<int>(pw * std::max(0.0, std::min(1.0, cs.progress)));
-    if (fw > 0) c.gfx.fill_round(cx + theme::progress_pad_x, py, std::max(5, fw), 5, 2, fade(rgba(0xffffff), cs.alpha));
+    // 4.1 Swiss: a 4 px bar along the card's bottom edge, signal red over 25% white.
+    int py = cy + h - 4;
+    c.gfx.fill_rect(cx, py, w, 4, fade(with_alpha(rgba(0xffffff), 64), cs.alpha));
+    int fw = static_cast<int>(w * std::max(0.0, std::min(1.0, cs.progress)));
+    if (fw > 0) c.gfx.fill_rect(cx, py, std::max(4, fw), 4, fade(theme::signal, cs.alpha));
   }
-  // Focus: the lift and shadow above, plus a diagonal sheen across the art.
-  if (cs.focus > 0.01f && !missing) c.gfx.sheen(cx, cy, w, h, cs.radius, cs.w, cs.h, static_cast<Uint8>(56 * cs.focus * cs.alpha));
+  // 4.1 Swiss focus: a 3 px white frame 5 px outside the art; no lift, shadow or sheen.
+  if (cs.focus > 0.01f) {
+    Color ring = fade(rgba(0xffffff), cs.focus * cs.alpha);
+    c.gfx.fill_rect(cx - 8, cy - 8, w + 16, 3, ring);
+    c.gfx.fill_rect(cx - 8, cy + h + 5, w + 16, 3, ring);
+    c.gfx.fill_rect(cx - 8, cy - 5, 3, h + 10, ring);
+    c.gfx.fill_rect(cx + w + 5, cy - 5, 3, h + 10, ring);
+  }
   return SDL_Rect{cx, cy, w, h};
 }
 
@@ -415,18 +421,9 @@ void draw_panel(int x, int y, int w, int h, float alpha) {
 void draw_glass(const GlassSpec &g) {
   Ctx &c = ctx();
   if (g.w <= 0 || g.h <= 0 || g.alpha <= 0.01f) return;
-  if (g.shadow) c.gfx.shadow(g.x, g.y, g.w, g.h, g.radius, 40, 18, static_cast<Uint8>(90 * g.alpha));
-  if (g.kind == GlassKind::Smoke && !c.reduce_transparency) {
-    c.gfx.fill_round(g.x, g.y, g.w, g.h, g.radius, fade(theme::smoke, g.alpha));
-    c.gfx.stroke_round(g.x, g.y, g.w, g.h, g.radius, 1, fade(theme::smoke_hairline, g.alpha));
-    return;
-  }
-  bool frost = g.kind == GlassKind::Frost && !g.art.empty() && !c.lite() && !c.reduce_transparency;
-  ImageRef f = frost ? c.images.frost(g.art, GlassRect{g.x, g.y, g.w, g.h}, g.radius) : ImageRef{};
-  // Solid underneath until the frost has faded in.
-  if (!f.texture || f.alpha < 255) c.gfx.fill_round(g.x, g.y, g.w, g.h, g.radius, fade(theme::solid, g.alpha));
-  if (f.texture) c.gfx.texture(f.texture, g.x, g.y, g.w, g.h, static_cast<Uint8>(f.alpha * g.alpha));
-  c.gfx.stroke_round(g.x, g.y, g.w, g.h, g.radius, 1, fade(theme::frost_hairline, g.alpha));
+  // 4.1 Swiss: no frosted glass. Every panel is near-black with a white rule on top.
+  c.gfx.fill_rect(g.x, g.y, g.w, g.h, fade(g.kind == GlassKind::Smoke ? theme::smoke : theme::solid, g.alpha));
+  c.gfx.fill_rect(g.x, g.y, g.w, theme::rule, fade(rgba(0xffffff), g.alpha));
 }
 
 std::string position(int index, int count) {
@@ -479,23 +476,29 @@ int draw_glass_button(int x, int y, const GlassButton &b) {
   // one shifted it a pixel left on alternate frames, a visible wobble (3.1.4).
   int grow = b.focused && !c.reduce_motion ? 2 * static_cast<int>(std::lround(grow_by * b.lift / 2.0f)) : 0;
   int gx = x - grow / 2, gy = y, gw = w + grow, gh = h;
-  int radius = gh / 2;
   Color rest = b.variant == ButtonStyle::Player ? theme::button_player
                : b.variant == ButtonStyle::Default ? theme::button_default : theme::button_dark;
   Color cand = b.pill ? theme::candidate
                : b.variant == ButtonStyle::Player ? theme::button_player_candidate
                : b.variant == ButtonStyle::Default ? theme::button_default_candidate : theme::button_dark_candidate;
   // The shadow shows when focused or candidate [EoA B14]; pills only when focused.
-  if (b.focused || (b.candidate && !b.pill))
-    c.gfx.shadow(gx, gy, gw, gh, radius, theme::shadow_blur, theme::shadow_dy, static_cast<Uint8>(theme::shadow_alpha * b.alpha * (b.focused ? 1.0f : 0.5f)));
+  (void)rest;
+  (void)cand;
+  // 4.1 Swiss: focus is a solid white block with black type. At rest a button is
+  // its label with a 2 px white outline; a pill is its label alone, and the chosen
+  // pill (the current tab, the season) carries a signal-red bar above it.
   if (b.focused) {
-    c.gfx.fill_round(gx, gy, gw, gh, radius, fade(b.pill ? rgba(0xffffff) : theme::button_focus, b.alpha));
+    c.gfx.fill_rect(gx, gy, gw, gh, fade(theme::button_focus, b.alpha));
   } else if (b.pill) {
-    if (b.candidate) c.gfx.fill_round(gx, gy, gw, gh, radius, fade(cand, b.alpha));
+    if (b.candidate) c.gfx.fill_rect(gx + l.pad, gy + 4, gw - 2 * l.pad, 3, fade(theme::signal, b.alpha));
   } else {
-    c.gfx.fill_round(gx, gy, gw, gh, radius, fade(b.candidate ? cand : rest, b.alpha));
-    if (b.variant != ButtonStyle::Default && !b.candidate)
-      c.gfx.stroke_round(gx, gy, gw, gh, radius, 1, fade(c.high_contrast ? theme::hairline_high : theme::frost_hairline, b.alpha));
+    if (b.candidate) c.gfx.fill_rect(gx, gy, gw, gh, fade(with_alpha(rgba(0xffffff), 38), b.alpha));
+    if (b.variant == ButtonStyle::Player) c.gfx.fill_rect(gx, gy, gw, gh, fade(with_alpha(rgba(0x000000), 140), b.alpha));
+    Color edge = fade(with_alpha(rgba(0xffffff), b.disabled ? 90 : 255), b.alpha);
+    c.gfx.fill_rect(gx, gy, gw, 2, edge);
+    c.gfx.fill_rect(gx, gy + gh - 2, gw, 2, edge);
+    c.gfx.fill_rect(gx, gy + 2, 2, gh - 4, edge);
+    c.gfx.fill_rect(gx + gw - 2, gy + 2, 2, gh - 4, edge);
   }
   // Pills: secondary at rest, primary as candidate [EoA P5].
   Label rest_label = b.disabled ? Label::Disabled : b.pill && !b.candidate ? Label::Secondary : Label::Primary;
@@ -524,17 +527,16 @@ int draw_glass_button(int x, int y, const GlassButton &b) {
 int draw_glass_badge(int x, int y, const std::string &s, float alpha) {
   Ctx &c = ctx();
   int w = measure(Text::Caption2, s) + 24, h = 36;
-  c.gfx.fill_round(x, y, w, h, theme::badge_radius, fade(with_alpha(rgba(0xffffff), 40), alpha));
-  c.gfx.stroke_round(x, y, w, h, theme::badge_radius, 1, fade(with_alpha(rgba(0xffffff), 70), alpha));
+  c.gfx.fill_rect(x, y, w, h, fade(with_alpha(rgba(0xffffff), 30), alpha));  // 4.1 Swiss: square
   text(Text::Caption2, s, x + 12, y + (h - line_for(Text::Caption2)) / 2, label(Label::Primary, alpha));
   return w;
 }
 
 void draw_progress(int x, int y, int w, int h, double fraction, Color fill, Color track) {
   Ctx &c = ctx();
-  c.gfx.fill_round(x, y, w, h, h / 2, track);
+  c.gfx.fill_rect(x, y, w, h, track);  // 4.1 Swiss: square
   int fw = static_cast<int>(w * std::max(0.0, std::min(1.0, fraction)));
-  if (fw > 0) c.gfx.fill_round(x, y, std::max(fw, h), h, h / 2, fill);
+  if (fw > 0) c.gfx.fill_rect(x, y, std::max(fw, h), h, fill);
 }
 
 void draw_spinner(int cx, int cy, int size, Color color, long long since) {
