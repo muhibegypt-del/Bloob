@@ -19,6 +19,7 @@ using namespace theme;
 constexpr int ESTRIDE = episode_w + card_gap;
 constexpr int X0 = safe_x;
 constexpr int kPanelY = 790, kPanelH = 214;
+constexpr int kTitleH = 200;  // 4.1 Swiss: the title logo box
 
 float lerp(float a, float b, float t) { return a + (b - a) * t; }
 
@@ -384,37 +385,66 @@ class DetailsScreen : public Screen {
     draw_scrims(sc, static_cast<int>(lerp(520, 200, p)), std::min(1.0f, 0.6f + 0.4f * sc));
 
     const Item &it = meta_.item;
-    // Title page, the canonical lockup [EoA H1-H8]: logo at most 420 × 126,
-    // title → metadata 13, metadata (Standard.Caption1, primary) → description 18,
-    // description (Standard.Caption1, secondary) 667 wide in 4 lines → buttons 32.
-    // Laid out from the buttons up so they always sit in the same place, above
-    // the seasons peeking below (series) or How to watch (films).
-    constexpr int kTitleToMeta = 13, kMetaToBody = 18, kBodyToButtons = 32, kBodyW = 760, kBodyLines = 4;
-    int line = line_for(Text::Caption1);
-    int lines = std::max(1, static_cast<int>(wrap(font_for(Text::Caption1), it.description, size_for(Text::Caption1), kBodyW, kBodyLines).size()));
-    int by = kPanelY - kBodyToButtons - theme::button_h - (has_episodes() ? 46 : 0);
-    int hero_top = by - kBodyToButtons - lines * line - kMetaToBody - line - kTitleToMeta - 220;  // 4.1 Swiss: a 220 px title box
-    // Title art shrinks and rises as the page continues into episodes.
+    // 4.1 Swiss title page, laid out from the buttons up: a line of facts, the
+    // title's logo, the summary across five columns, the ratings as big numbers
+    // on a white rule, then the buttons and the line about the version.
+    int by = kPanelY - 32 - theme::button_h - (has_episodes() ? 46 : 0);
+    bool ratings = !it.scores.empty() || !it.rating.empty();
+    int ry = by - 32 - (ratings ? 112 : 0);
+    int bline = line_for(Text::Body), bw = span_w(5);
+    int lines = std::max(1, static_cast<int>(wrap(font_for(Text::Body), it.description, size_for(Text::Body), bw, 3).size()));
+    int summary_top = ry - 32 - lines * bline;
+    int hero_top = summary_top - 28 - kTitleH;
     int box_top = static_cast<int>(lerp(static_cast<float>(hero_top), 80, p));
-    int box_h = static_cast<int>(lerp(220, 96, p));
-    int box_w = static_cast<int>(lerp(1300, 900, p));
-    int y = draw_title(it, X0, box_top, box_w, box_h);
-
+    int box_h = static_cast<int>(lerp(kTitleH, 96, p));
+    int box_w = static_cast<int>(lerp(span_w(6), 560, p));
     float top_only = std::max(0.0f, 1.0f - 1.6f * p);
     if (top_only > 0.01f) {
-      y += kTitleToMeta;
-      std::string facts = meta_line(it);
-      int mw = text(Text::Caption1, facts, X0, y, label(Label::Primary, top_only), 1100);
-      // Scores (MDBList): each site's logo and its score; without them, Cinemeta's IMDb rating.
-      if (!it.scores.empty()) draw_scores(it.scores, X0 + mw + 32, y + line / 2, top_only);
-      else if (!it.rating.empty()) draw_glass_badge(X0 + mw + 18, y - 2, "IMDb " + it.rating, top_only);
-      y += line + kMetaToBody;
-      paragraph(Text::Caption1, it.description, X0, y, label(Label::Secondary, top_only), kBodyW, kBodyLines);
+      std::vector<std::string> facts{it.series() ? "Series" : "Film"};
+      if (!it.year.empty()) facts.push_back(it.year);
+      for (size_t g = 0; g < it.genres.size() && g < 2; g++) facts.push_back(it.genres[g]);
+      if (!it.series() && !it.runtime.empty()) facts.push_back(runtime_text(it.runtime));
+      int fx = X0;
+      for (auto &f : facts) fx += text(Text::Caption2, f, fx, hero_top - 30 - line_for(Text::Caption2), label(Label::Secondary, top_only)) + 28;
+    }
+    draw_title(it, X0, box_top, box_w, box_h);
+    if (top_only > 0.01f) {
+      paragraph(Text::Body, it.description, X0, summary_top, label(Label::Primary, top_only), bw, 3);
+      if (ratings) draw_ratings(it, ry, top_only);
       draw_buttons(by, top_only);
       if (has_episodes()) draw_version_line(by + theme::button_h + 18, top_only);
       if (has_versions_panel()) draw_versions(top_only);
     }
     if (has_episodes()) draw_episodes(p);
+  }
+
+  // 4.1 Swiss: the ratings as big numbers in columns on a white rule, each
+  // site's name (or logo) small above its score.
+  void draw_ratings(const Item &it, int ry, float alpha) {
+    Ctx &c = ctx();
+    draw_rule(0, 6, ry, alpha);
+    std::vector<std::pair<std::string, std::string>> cols;
+    std::vector<std::string> logos;
+    for (auto &sc : it.scores) {
+      cols.push_back({sc.label, sc.text});
+      logos.push_back(sc.logo);
+    }
+    if (cols.empty()) {
+      cols.push_back({"IMDb", it.rating});
+      logos.push_back("");
+    }
+    Font &bold = c.fonts.bold;
+    for (size_t k = 0; k < cols.size() && k < 4; k++) {
+      int x = X0 + static_cast<int>(k) * (span_w(6) + theme::grid_gutter) / 4, w = span_w(6) / 4 - 8;
+      ImageRef logo = logos[k].empty() ? ImageRef{} : c.images.get(logos[k], 24, 24, 0, Fit::Contain);
+      int lx = x;
+      if (logo.texture) {
+        c.gfx.texture(logo.texture, lx, ry + 16, logo.w, logo.h, static_cast<Uint8>(logo.alpha * alpha));
+        lx += 32;
+      }
+      text(Text::Caption2, cols[k].first, lx, ry + 16, label(Label::Secondary, alpha), w);
+      bold.draw(cols[k].second, x, ry + 46, 56, fade(rgba(0xffffff), alpha));
+    }
   }
 
   // Logo, then score, for each site, centred on `cy`: a 30 px logo slot (they
@@ -483,46 +513,46 @@ class DetailsScreen : public Screen {
     }
   }
 
-  // How to watch: a frosted panel along the bottom, best version ticked.
+  // 4.1 Swiss How to watch: a white rule across the grid, the label and status
+  // on it, and the first three versions in four-column blocks; the best one
+  // carries a red bar, the focused one is a white block.
   void draw_versions(float alpha) {
-    GlassSpec g;
-    g.x = X0;
-    g.y = kPanelY;
-    g.w = W - 2 * X0;
-    g.h = kPanelH;
-    g.alpha = alpha;
-    backdrop_.glass(g);
-    int px = g.x + 36, py = g.y + 26;
-    text(Text::Headline, "How to watch", px, py, label(Label::Primary, alpha));
+    int y = kPanelY + 20;
+    draw_rule(0, 12, y, alpha);
+    text(Text::Caption1Semi, "How to watch", X0, y + 14, label(Label::Primary, alpha));
     std::string status;
     if (versions_state_ == Versions::Loading) status = "Finding versions\xE2\x80\xA6";
     else if (versions_state_ == Versions::Empty) status = "No versions found right now. Try again later.";
     else if (versions_state_ == Versions::Failed) status = versions_error_;
     else status = ctx().paired ? "Play shows every version, the best first" : "Play connects AllDebrid first, then shows the versions";
-    text_right(Text::Caption1, status, g.x + g.w - 36, py + 8, label(Label::Secondary, alpha));
+    text_right(Text::Caption2, status, W - safe_x, y + 16, label(Label::Secondary, alpha));
     if (versions_state_ != Versions::Ready) {
-      if (versions_state_ == Versions::Loading) draw_spinner(px + 24, py + 110, 34, label(Label::Secondary), opened_at_);
+      if (versions_state_ == Versions::Loading) {
+        // A red bar sliding along the rule while it waits.
+        int span = span_w(12), bw = span / 6;
+        int pos = static_cast<int>((ctx().now - opened_at_) % 1600 * (span - bw) / 1600);
+        ctx().gfx.fill_rect(X0 + pos, y - 1, bw, 4, fade(signal, alpha));
+        ctx().redraw_at(ctx().now + 16);
+      }
       return;
     }
-    int n = static_cast<int>(versions_.size());
-    int gap = 18, tw = (g.w - 72 - gap * 2) / 3, th = 96, ty = py + 64;
+    int n = std::min(3, static_cast<int>(versions_.size()));
+    int ty = y + 64, th = 104;
     for (int i = 0; i < n; i++) {
       const SourceOption &o = versions_[static_cast<size_t>(i)];
-      int tx = px + i * (tw + gap);
+      int tx = theme::col_x(i * 4), tw = span_w(4);
       bool focused = zone_ == Zone::Versions && i == version_;
       bool best = i == 0;
-      if (focused) {
-        ctx().gfx.shadow(tx, ty, tw, th, 20, 24, 10, static_cast<Uint8>(140 * alpha));
-        ctx().gfx.fill_round(tx, ty, tw, th, 20, fade(rgba(0xffffff), alpha));
-      } else if (best) {
-        ctx().gfx.fill_round(tx, ty, tw, th, 20, fade(candidate, alpha));
-      }
+      if (focused) ctx().gfx.fill_rect(tx, ty, tw, th, fade(rgba(0xffffff), alpha));
+      else ctx().gfx.fill_rect(tx, ty, tw, 1, fade(with_alpha(rgba(0xffffff), 64), alpha));
+      if (best && !focused) ctx().gfx.fill_rect(tx, ty, span_w(1), 3, fade(signal, alpha));
       Color main = focused ? fade(rgba(0x000000), alpha) : label(Label::Primary, alpha);
       Color sub = focused ? fade(rgba(0x000000, 166), alpha) : label(Label::Secondary, alpha);
       std::string kind = best ? "Best version" : !o.cautions.empty() ? o.cautions[0] : !o.size.empty() ? o.size : "Another version";
-      text(Text::Caption2, kind, tx + 24, ty + 14, sub, tw - 80);
-      text(Text::Callout, o.headline, tx + 24, ty + 46, main, tw - (best ? 84 : 48));
-      if (best) ctx().icons.draw(Icon::Check, tx + tw - 56, ty + (th - 32) / 2, 32, main);
+      if (o.ready == 1) kind += " \xC2\xB7 Ready";
+      int pad = focused ? 20 : 0;
+      text(Text::Caption2, kind, tx + pad, ty + 16, sub, tw - 2 * pad);
+      text(Text::Caption1Semi, o.headline, tx + pad, ty + 52, main, tw - 2 * pad);
     }
   }
 
@@ -550,7 +580,20 @@ class DetailsScreen : public Screen {
       if (off > 0) c.icons.draw(Icon::ChevronLeft, X0 - 56, sy + 12, 36, label(Label::Tertiary));
       if (xs.back() - 12 - off > W - 2 * X0) c.icons.draw(Icon::ChevronRight, W - X0 + 20, sy + 12, 36, label(Label::Tertiary));
     } else {
-      text(Text::CalloutBold, meta_.seasons[0].label, X0, sy + 16, label(Label::Primary));
+      text(Text::Caption1Semi, meta_.seasons[0].label, X0, sy + 16, label(Label::Primary));
+    }
+    // 4.1 Swiss: a quiet rule under the seasons, the season's count at its right end.
+    {
+      const Season &sn = meta_.seasons[static_cast<size_t>(season_)];
+      int watched = 0;
+      for (auto &e : sn.episodes) {
+        auto pr = progress_.find(e.id);
+        if (pr != progress_.end() && pr->second.watched) watched++;
+      }
+      int ry = sy + theme::pill_h + 6;
+      c.gfx.fill_rect(X0, ry, W - 2 * X0, theme::rule, with_alpha(rgba(0xffffff), 64));
+      text_right(Text::Caption2, std::to_string(sn.episodes.size()) + " episodes \xC2\xB7 " + std::to_string(watched) + " watched", W - X0,
+                 sy + (theme::pill_h - line_for(Text::Caption2)) / 2, label(Label::Secondary));
     }
 
     const Season &season = meta_.seasons[static_cast<size_t>(season_)];
@@ -578,19 +621,19 @@ class DetailsScreen : public Screen {
       bool watched = prog != progress_.end() && prog->second.watched;
       if (prog != progress_.end() && !watched && prog->second.duration > 0)
         cs.progress = static_cast<double>(prog->second.position) / prog->second.duration;
-      SDL_Rect box = draw_card(x, ey, cs);
-      if (watched) {
-        c.gfx.fill_circle(box.x + box.w - 30, box.y + 30, 18, with_alpha(rgba(0x000000), 170));
-        c.icons.draw(Icon::Check, box.x + box.w - 43, box.y + 17, 26, rgba(0xffffff));
-      }
+      if (watched) cs.progress = 1.0;  // 4.1 Swiss: a full red bar marks a watched episode
+      draw_card(x, ey, cs);
       // Under the card: number, title, then a short summary once the page has risen.
       // The 16:9 lockup with description [EoA K9, inferred]: eyebrow Caption3,
       // title Caption1, description Caption2 in up to 5 lines, 2 apart; text 4
       // below the card at rest, 24 when focused (growth 14 + separation 10).
-      int ty = ey + episode_h + (focused ? 24 : 4);
-      text(Text::Caption3, e.season == 0 ? "Special" : "Episode " + std::to_string(e.episode), x, ty, label(Label::Secondary));
-      ty += line_for(Text::Caption3) + 2;
-      text(Text::Caption1, e.title.empty() ? "Episode " + std::to_string(e.episode) : e.title, x, ty, label(focused ? Label::Primary : Label::Secondary), episode_w);
+      // 4.1 Swiss: the number in Bold, then the title, on one line under the frame.
+      int ty = ey + episode_h + 16;
+      char num[16];
+      std::snprintf(num, sizeof num, "%02d", e.episode);
+      int nw = text(Text::Caption1Semi, e.season == 0 ? std::string("SP") : std::string(num), x, ty, label(focused ? Label::Primary : Label::Secondary));
+      text(focused ? Text::Caption1Semi : Text::Caption1, e.title.empty() ? "Episode " + std::to_string(e.episode) : e.title, x + nw + 14, ty,
+           label(focused ? Label::Primary : Label::Secondary), episode_w - nw - 14);
       if (p > 0.05f) paragraph(Text::Caption2, e.overview, x, ty + line_for(Text::Caption1) + 2, label(Label::Secondary, p * (focused ? 1.0f : 0.75f)), episode_w, 5);
     }
     if (count > 4 && hs + 4 < count) c.icons.draw(Icon::ChevronRight, W - 64, ey + episode_h / 2 - 20, 40, label(Label::Tertiary));

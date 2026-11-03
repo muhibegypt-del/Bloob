@@ -202,6 +202,25 @@ std::string meta_line(const Item &item) {
 
 std::string meta_key(const Item &item) { return item.type + ":" + item.id; }
 
+int draw_facts(int col, int y, const std::vector<Fact> &facts, float alpha) {
+  int c = col, bottom = y;
+  for (const Fact &f : facts) {
+    if (c >= theme::grid_cols) break;
+    int span = std::min(f.span, theme::grid_cols - c);
+    int x = theme::col_x(c), w = theme::span_w(span);
+    text(Text::Caption2, f.label, x, y, label(Label::Secondary, alpha), w);
+    text(f.bold ? Text::Caption1Semi : Text::Body, f.value, x, y + 30, label(Label::Primary, alpha), w);
+    bottom = std::max(bottom, y + 30 + line_for(Text::Body));
+    c += span;
+  }
+  return bottom;
+}
+
+void draw_rule(int col, int span, int y, float alpha, Color color) {
+  int x = theme::col_x(col), w = theme::span_w(span);
+  ctx().gfx.fill_rect(x, y, w, theme::rule, fade(color, alpha));
+}
+
 void prefetch_meta(const Item &item) {
   Ctx &c = ctx();
   std::string key = meta_key(item);

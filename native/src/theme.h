@@ -39,10 +39,15 @@ const Color problem = rgba(0xff453a);              // SystemRed [EoA C11]
 
 // ---- layout: the tvOS safe area and grid
 constexpr int safe_x = 80, safe_y = 60;            // [EoA S1, S2]
-constexpr int card_w = 320, card_h = 180, card_gap = 40;  // 16:9 cards, tvOS 5-column grid
+// 4.1 Swiss: a 12-column grid, 80 px margins, 24 px gutters; a card spans two columns.
+constexpr int grid_cols = 12, grid_gutter = 24;
+constexpr float grid_col = (1920 - 2 * 80 - (12 - 1) * 24) / 12.0f;  // 124.67 px
+inline int col_x(int c) { return 80 + static_cast<int>(c * (grid_col + grid_gutter) + 0.5f); }  // left edge of column c (0-based)
+inline int span_w(int n) { return static_cast<int>(n * grid_col + (n - 1) * grid_gutter + 0.5f); }
+constexpr int card_w = 273, card_h = 154, card_gap = 24;  // 16:9, two columns wide
 constexpr int card_radius = 0;                     // 4.1 Swiss: square (was 20)                    // grid preset D, radius M [EoA K1]
 constexpr int card_grow = 0;                       // 4.1 Swiss: focus is a white frame, no growth (was 50)                      // focused cards grow 50 wider, height in proportion [EoA K2]
-constexpr int episode_w = 410, episode_h = 231;    // 4-column grid item (inferred episode card) [EoA K3]
+constexpr int episode_w = 422, episode_h = 237;  // 4.1 Swiss: three columns wide (was 410 x 231)    // 4-column grid item (inferred episode card) [EoA K3]
 constexpr int glass_radius = 0, badge_radius = 0;  // 4.1 Swiss: square
 constexpr int button_grow = 8;                     // focused buttons grow 8 wider; no scale [EoA B4]
 

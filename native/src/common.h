@@ -45,6 +45,16 @@ int draw_title(const Item &item, int x, int top, int box_w, int box_h, float alp
 // Essential context only: "2024 · Action, Thriller · 2h 26m". Ratings and
 // technical facts are elsewhere, on request.
 std::string meta_line(const Item &item);
+// 4.1 Swiss: a row of facts on the grid, each a small grey label over its value.
+struct Fact {
+  std::string label, value;
+  int span = 2;  // columns it takes
+  bool bold = false;
+};
+// Draws from column `col` at y; returns the bottom.
+int draw_facts(int col, int y, const std::vector<Fact> &facts, float alpha = 1.0f);
+// A white rule across columns [col, col + span).
+void draw_rule(int col, int span, int y, float alpha = 1.0f, Color color = rgba(0xffffff));
 std::string runtime_text(const std::string &runtime);
 int runtime_minutes(const std::string &runtime);  // 0 when unknown
 

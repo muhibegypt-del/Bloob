@@ -30,13 +30,14 @@ namespace {
 using namespace theme;
 
 constexpr long long kPollMs = 700;
-constexpr int LX = safe_x, LW = 600;           // title column
-constexpr int RX = 760, RW = W - safe_x - 760;  // options column
-constexpr int ROW = 96, ROW_GAP = 10;
+// 4.1 Swiss: the title column takes three grid columns, the versions the other nine.
+const int LX = safe_x, LW = span_w(3);
+const int RX = col_x(3), RW = span_w(9);
+constexpr int ROW = 56, ROW_GAP = 0;  // one-line table rows
 constexpr int PILLS_Y = 436;                  // the filter strip, under the best version
 constexpr int LIST_TOP = 530;
-constexpr int LIST_H = 4 * (ROW + ROW_GAP);  // the list's window
-constexpr int HEADER_H = 58;                  // a section title in the list
+constexpr int LIST_H = 8 * (ROW + ROW_GAP);  // the list's window
+constexpr int HEADER_H = 44;                  // a section title in the list
 
 // Source tiers, best first (the service's cinephile.js names them).
 // 4.1: SDR remuxes and season packs have sections of their own.
@@ -98,16 +99,6 @@ struct Availability {
   Color dot;
 };
 
-Availability availability(const SourceOption &o) {
-  if (!o.cautions.empty()) return {o.cautions[0], caution};
-  if (o.ready == 1) return {"Ready now", theme::signal};  // 4.1 Swiss: the one colour
-  if (o.availability == "Direct link") return {"Direct link", label(Label::Secondary)};
-  int seeders = std::atoi(o.availability.c_str());
-  if (seeders >= 20) return {"Readily available", label(Label::Secondary)};
-  if (seeders >= 5) return {"Available", label(Label::Secondary)};
-  if (o.availability.find("seeder") != std::string::npos) return {"Slow to prepare", caution};
-  return {"Availability unknown", label(Label::Tertiary)};
-}
 
 class SourcesScreen : public Screen {
  public:
@@ -780,35 +771,53 @@ class SourcesScreen : public Screen {
     pairing_.draw();
   }
 
+  // 4.1 Swiss title column: the logo, what is being chosen, then the count of
+  // versions as a big number on a white rule, and AllDebrid's state at the foot.
   void draw_title_column() {
     Ctx &c = ctx();
-    int y = draw_title(req_.item, LX, 120, LW, 150);
-    y += 34;
-    text(Text::Headline, "All versions", LX, y, label(Label::Primary));
-    y += line_for(Text::Headline) + 8;
+    int y = draw_title(req_.item, LX, 120, LW, 130) + 28;
     if (req_.item.series()) {
-      text(Text::Callout, episode_code(req_.season, req_.episode), LX, y, label(Label::Secondary));
-      y += line_for(Text::Callout) + 4;
-      if (!req_.episode_title.empty()) y = paragraph(Text::Callout, req_.episode_title, LX, y, label(Label::Secondary), LW, 2);
+      std::string ep = episode_code(req_.season, req_.episode);
+      int w = text(Text::Caption1Semi, ep, LX, y, label(Label::Primary));
+      if (!req_.episode_title.empty()) text(Text::Caption1Semi, req_.episode_title, LX + w + 14, y, label(Label::Primary), LW - w - 14);
     } else {
-      text(Text::Callout, meta_line(req_.item), LX, y, label(Label::Secondary), LW);
-      y += line_for(Text::Callout);
+      text(Text::Caption1, meta_line(req_.item), LX, y, label(Label::Secondary), LW);
     }
-    if (req_.resume_ms > 0) text(Text::Callout, "Continues from " + clock_text(req_.resume_ms), LX, y + 16, label(Label::Primary));
+    y += line_for(Text::Caption1Semi) + 6;
+    text(Text::Caption1, "Choose how to watch", LX, y, label(Label::Secondary), LW);
+    if (req_.resume_ms > 0) text(Text::Caption1, "Continues from " + clock_text(req_.resume_ms), LX, y + 34, label(Label::Primary), LW);
+    if (state_ == State::Ready && ranking_.total > 0) {
+      int ready = 0;
+      for (auto &o : options_) ready += o.ready == 1 ? 1 : 0;
+      if (ranking_.recommended && ranking_.recommended->ready == 1) ready++;
+      int ry = 560;
+      c.gfx.fill_rect(LX, ry, LW, rule, rgba(0xffffff));
+      c.fonts.bold.draw(std::to_string(ranking_.total), LX, ry + 14, 88, rgba(0xffffff));
+      text(Text::Caption1, ready > 0 ? "versions found, " + std::to_string(ready) + " ready" : "versions found", LX, ry + 118, label(Label::Secondary), LW);
+    }
     // AllDebrid connection, quietly.
     int ay = H - safe_y - 52;
     bool paired = c.paired;
-    c.gfx.fill_circle(LX + 8, ay + 16, 6, !account_known_ ? label(Label::Tertiary) : paired ? good : caution);
+    c.gfx.fill_rect(LX, ay + 10, 12, 12, !account_known_ ? label(Label::Tertiary) : paired ? rgba(0xffffff) : signal);
     std::string status = !account_known_ ? "Checking AllDebrid\xE2\x80\xA6"
                          : paired ? (durable_ ? "AllDebrid connected" : "AllDebrid connected until restart")
                                   : "AllDebrid not connected. You\xE2\x80\x99ll pair once when you press Play.";
-    text(Text::Caption1, status, LX + 28, ay, label(Label::Secondary), LW);
+    paragraph(Text::Caption2, status, LX + 24, ay, label(Label::Secondary), LW - 24, 2);
   }
 
   void draw_options() {
     Ctx &c = ctx();
     if (has_recommended()) draw_best(*ranking_.recommended, focus_index_ == 0 && !pills_focused_);
     draw_pills();
+    // 4.1 Swiss: the table's column names on a white rule above the list.
+    {
+      int hy = LIST_TOP - 26;
+      c.gfx.fill_rect(RX, hy - 6, RW, rule, rgba(0xffffff));
+      const int cols[6] = {0, 1, 3, 5, 6, 8};
+      const char *names[6] = {"Resolution", "Picture", "Sound", "Size", "Group", "Ready"};
+      for (int k = 0; k < 5; k++) text(Text::Caption3, names[k], RX + 16 + cols[k] * (span_w(1) + grid_gutter), hy, label(Label::Secondary));
+      text_right(Text::Caption3, names[5], RX + RW - 16, hy, label(Label::Secondary));
+    }
     float sv = scroll_.value;
     for (auto &row : rows_) {
       float ry = LIST_TOP + row.y - sv;
@@ -817,7 +826,7 @@ class SourcesScreen : public Screen {
       if (row.option < 0) {
         bool problems = row.kind == "problems";
         if (problems) c.icons.draw(Icon::Warning, RX, static_cast<int>(ry) + 14, 24, caution);
-        text(Text::Caption1, row.label, RX + (problems ? 34 : 0), static_cast<int>(ry) + 14, problems ? caution : label(Label::Secondary));
+        text(Text::Caption2Bold, row.label, RX + (problems ? 34 : 0) + 16, static_cast<int>(ry) + 14, problems ? caution : label(Label::Primary));
       } else {
         draw_version(options_[static_cast<size_t>(row.option)], static_cast<int>(ry), row.option == focus_index_ && !pills_focused_);
       }
@@ -870,71 +879,78 @@ class SourcesScreen : public Screen {
     }
   }
 
-  void draw_best(const SourceOption &o, bool focused) {
-    Ctx &c = ctx();
-    int x = RX, y = 120, w = RW, h = 290;
-    float lift = focused ? lift_.value : 0;
-    // Frosted at rest, white when focused (the frost stays put; the white lifts).
-    sheet(x, y, w, h, 1.0f);
-    if (focused) {
-      float k = 1.0f + 0.02f * lift;
-      int fw = static_cast<int>(w * k), fh = static_cast<int>(h * k);
-      int fx = x - (fw - w) / 2, fy = y - (fh - h) / 2;
-      c.gfx.shadow(fx, fy, fw, fh, glass_radius, 30, 14, static_cast<Uint8>(150 * lift));
-      c.gfx.fill_round(fx, fy, fw, fh, glass_radius, rgba(0xffffff));
-    }
-    Color fg = focused ? rgba(0x000000) : label(Label::Primary);
-    Color fg2 = focused ? rgba(0x000000, 166) : label(Label::Secondary);
-    std::string kind = o.match == "same" ? "Same as your last episode" : o.match == "like" ? "Like your last episode"
-                       : all_.cuts.size() > 1 ? "Best " + cut_ + " version" : "Best version";
-    if (o.ready == 1) kind += " \xC2\xB7 Ready now";
-    text(Text::Caption1, kind, x + 40, y + 36, fg2);
-    text(Text::Title2, o.headline, x + 40, y + 72, fg, w - 260);
-    text(Text::Body, o.line.empty() ? picture_words(o) + " \xC2\xB7 " + o.audio : o.line, x + 40, y + 146, fg2, w - 260);
-    paragraph(Text::Caption1, ranking_.why, x + 40, y + 190, fg2, w - 260, 2);
-    // Play affordance.
-    int r = 52, cx = x + w - 40 - r, cy = y + h / 2;
-    c.gfx.fill_circle(cx, cy, r, focused ? rgba(0x000000) : candidate);
-    c.gfx.triangle_right(cx - 16, cy - 20, 40, focused ? rgba(0xffffff) : label(Label::Primary));
-    if (!o.cautions.empty()) {
-      c.icons.draw(Icon::Warning, x + 40, y + h - 46, 26, focused ? caution_ink : caution);
-      text(Text::Caption2, o.warnings[0], x + 76, y + h - 46, focused ? caution_ink : caution, w - 360);
-    }
+  // A value set large in Bold, shrunk until it fits `w`.
+  static void big(const std::string &v, int x, int y, int w, int size, Color color) {
+    Font &f = ctx().fonts.bold;
+    while (size > 28 && f.measure(v, size) > w) size -= 4;
+    f.draw(ellipsize(f, v, size, w), x, y, size, color);
   }
 
+  // 4.1 Swiss best version: a white rule, what it is and whether it's ready, the
+  // facts as big numbers in columns with small words under them, and Play.
+  void draw_best(const SourceOption &o, bool focused) {
+    Ctx &c = ctx();
+    int y = 120;
+    c.gfx.fill_rect(RX, y, RW, rule, rgba(0xffffff));
+    std::string kind = o.match == "same" ? "Same as your last episode" : o.match == "like" ? "Like your last episode"
+                       : all_.cuts.size() > 1 ? "Best " + cut_ + " version" : "Best for this TV";
+    text(Text::Caption1Semi, kind, RX, y + 14, label(Label::Primary));
+    if (o.ready == 1) {
+      int rw = text_right(Text::Caption1, "Ready", RX + RW, y + 14, label(Label::Primary));
+      c.gfx.fill_rect(RX + RW - rw - 26, y + 22, 14, 14, signal);
+    } else if (!o.cautions.empty()) {
+      text_right(Text::Caption1, o.cautions[0], RX + RW, y + 14, caution);
+    }
+    // Columns on the nine-column grid: resolution 2, picture 2, sound 3, size 2.
+    int cx[4] = {col_x(3), col_x(5), col_x(7), col_x(10)}, cw[4] = {span_w(2), span_w(2), span_w(3), span_w(2)};
+    std::string picture = o.family == "DV" ? "Dolby Vision" : o.family == "HDR" ? (o.picture.empty() ? "HDR" : o.picture.substr(0, o.picture.find(" ("))) : "SDR";
+    std::string sound = o.audio;
+    for (auto &r : std::vector<std::pair<std::string, std::string>>{{"Dolby Digital Plus", "DD+"}, {"Dolby Digital", "DD"}}) {
+      size_t at = sound.find(r.first);
+      if (at != std::string::npos) sound.replace(at, r.first.size(), r.second);
+    }
+    std::string vals[4] = {o.resolution, picture, sound, o.size};
+    std::string subs[4] = {o.tier_label.empty() ? source_words(o.source) : o.tier_label, o.picture_name, o.cut.empty() ? "" : o.cut, o.group};
+    for (int k = 0; k < 4; k++) {
+      big(vals[k], cx[k], y + 54, cw[k], 56, k == 3 ? label(Label::Secondary) : label(Label::Primary));
+      text(Text::Caption2, subs[k], cx[k], y + 126, label(Label::Secondary), cw[k]);
+    }
+    GlassButton b;
+    b.label = "Play";
+    b.icon = kPlayIcon;
+    b.h = 60;
+    b.focused = focused;
+    b.lift = lift_.value;
+    draw_glass_button(RX, y + 176, b);
+    if (!ranking_.why.empty()) text(Text::Caption2, ranking_.why, RX + glass_button_width(b) + 24, y + 176 + (60 - line_for(Text::Caption2)) / 2,
+                                    label(Label::Secondary), RW - glass_button_width(b) - 24);
+  }
+
+  // 4.1 Swiss: one line per version in table columns; the focused row is a
+  // white block, the others sit on a hairline.
   void draw_version(const SourceOption &o, int y, bool focused) {
     Ctx &c = ctx();
     int x = RX, w = RW;
-    if (focused) {
-      c.gfx.shadow(x, y, w, ROW, 20, 18, 8, 120);
-      c.gfx.fill_round(x, y, w, ROW, 20, rgba(0xffffff));
-    } else {
-      c.gfx.fill_round(x, y, w, ROW, 20, rgba(0xffffff, is_more(o) ? 13 : 26));
-    }
+    if (focused) c.gfx.fill_rect(x, y, w, ROW, rgba(0xffffff));
+    else c.gfx.fill_rect(x, y + ROW - 1, w, 1, rgba(0xffffff, 51));
     Color fg = focused ? rgba(0x000000) : label(o.excluded ? Label::Disabled : Label::Primary);
     Color fg2 = focused ? rgba(0x000000, 166) : label(o.excluded ? Label::Disabled : Label::Secondary);
+    int ty = y + (ROW - line_for(Text::Caption1)) / 2;
     if (is_more(o)) {  // "+N more": one quiet line
-      text(Text::BodySemi, o.headline, x + 28, y + (ROW - line_for(Text::BodySemi)) / 2, focused ? fg : label(Label::Secondary), w - 56);
+      text(Text::Caption1, o.headline, x + 16, ty, focused ? fg : label(Label::Secondary), w - 32);
       return;
     }
-    Availability a = availability(o);
-    int aw = measure(Text::Caption1, a.words);
-    int ax = x + w - 28 - aw;
-    text(Text::Caption1, a.words, ax, y + (ROW - line_for(Text::Caption1)) / 2, focused && a.dot.r == caution.r ? caution_ink : fg2, 300);
-    c.gfx.fill_circle(ax - 18, y + ROW / 2, 6, a.dot);
-    int right = ax - 44;
-    // Line one: what you will see and hear. Line two: where it comes from.
-    int block = line_for(Text::BodySemi) + 4 + line_for(Text::Caption1);
-    int ty = y + (ROW - block) / 2;
-    // 2.8: line one is the release itself (picture · audio · size · group · cut);
-    // line two how it compares with the best of its cut.
-    std::string first = o.line.empty() ? o.headline + " \xC2\xB7 " + o.audio : o.line;
-    if (!o.line.empty()) first = o.resolution + " \xC2\xB7 " + first;
-    text(Text::BodySemi, first, x + 28, ty, fg, right - x - 28);
-    std::string from = o.compare.empty() ? join({source_words(o.source), o.size, o.group}) : o.compare;
-    if (o.respected) from = join({"Trusted group", from});
-    if (req_.item.series()) from = join({from, o.pack ? "Season pack" : "Single episode"});
-    text(Text::Caption1, from, x + 28, ty + line_for(Text::BodySemi) + 4, fg2, right - x - 28);
+    std::string picture = o.picture_name.empty() ? o.picture : o.picture_name;
+    std::string group = o.group;
+    if (req_.item.series() && o.pack) group = join({group, "whole season"});
+    const int cols[6] = {0, 1, 3, 5, 6, 8};  // resolution, picture, sound, size, group, ready
+    std::string cells[5] = {o.resolution, picture, o.audio, o.size, group};
+    for (int k = 0; k < 5; k++) {
+      int cxk = x + 16 + (cols[k] * (span_w(1) + grid_gutter)), cwk = (cols[k + 1] - cols[k]) * (span_w(1) + grid_gutter) - grid_gutter;
+      text(Text::Caption1, cells[k], cxk, ty, k == 0 || k == 2 ? fg : fg2, cwk);
+    }
+    if (o.ready == 1) c.gfx.fill_rect(x + w - 16 - 12, y + (ROW - 12) / 2, 12, 12, signal);
+    else if (!o.cautions.empty()) text_right(Text::Caption2, o.cautions[0], x + w - 16, y + (ROW - line_for(Text::Caption2)) / 2, focused ? caution_ink : caution);
   }
 
   // Release details for the focused version: everything technical, on request.

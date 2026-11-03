@@ -20,14 +20,17 @@ using namespace theme;
 constexpr int STRIDE = card_w + card_gap;
 // Shelves [EoA H11-H14]: header block 72 (text 20 down), 14 to the cards, 55 below;
 // the first shelf starts at 742 under the hero.
-constexpr int kHeaderH = 72, kHeaderTop = 20, kHeaderToItems = 14, kShelfBottom = 55;
+// 4.1 Swiss: a Bold header with its count, the frames, and each title under its frame.
+constexpr int kHeaderH = 52, kHeaderTop = 10, kHeaderToItems = 14, kShelfBottom = 76;
 constexpr int ROW_H = kHeaderH + kHeaderToItems + card_h + kShelfBottom;  // 321
 constexpr int kFirstShelf = 742;
 // Hero text block [EoA H1-H8]: logo at most 420 × 126 (283 × 85 when compact),
 // title → metadata 13, metadata → description 18, description 570 wide in 3
 // lines, description → buttons 32. The block ends 32 above the first shelf.
-// 4.1 Swiss: the box holds the title set in type, up to 200 px high across nine columns.
-constexpr int kLogoW = 1300, kLogoH = 200, kLogoSmallW = 900, kLogoSmallH = 96;
+// 4.1 Swiss: the logo box across six columns, up to 200 px high; the white rule
+// under it at kRuleY, the buttons 60 high on its right.
+constexpr int kLogoW = 868, kLogoH = 200, kLogoSmallW = 560, kLogoSmallH = 110;
+constexpr int kRuleY = 640, kButtonH = 60, kButtonGap = 12;
 constexpr int kTitleToMeta = 13, kMetaToBody = 18, kBodyToButtons = 32, kBodyW = 760, kBodyLines = 3;
 constexpr int X0 = safe_x;
 constexpr long long kAutoAdvanceMs = 9000;
@@ -559,49 +562,49 @@ class BrowseScreen : public Screen {
     for (int i = 0; i < 5; i++) c.gfx.fill_round(X0 + i * STRIDE, kFirstShelf + kHeaderH + kHeaderToItems, card_w, card_h, card_radius, tone);
   }
 
+  // 4.1 Swiss hero: the title's logo, a white rule across the grid, the facts in
+  // columns under it and the buttons on the right of the same line. Moving down
+  // to the shelves lifts the block to the top, without the buttons.
   void draw_top(float m) {
-    Ctx &c = ctx();
     const Shown &s = shown_;
     if (s.item.id.empty()) return;
     float t = text_in_.value;  // new title text eases in
-    std::string meta = meta_line(s.item);
-    if (s.has_resume && s.item.series()) {
-      const Resume &r = s.resume;
-      if (r.kind == "upcoming" && r.next)
-        meta = episode_code(r.next->season, r.next->episode) + " arrives " + air_day_text(r.next->released, today_iso());
-      else if (r.kind == "next" && r.next) meta = episode_code(r.next->season, r.next->episode) + " \xC2\xB7 " + r.next->title;
-      else meta = join({episode_code(r.season, r.episode), r.episode_title});
-    }
-    // Hero positions, laid out from the bottom so the block always ends in the same place.
-    int lines = std::max(1, static_cast<int>(wrap(font_for(Text::Caption1), s.item.description, size_for(Text::Caption1), kBodyW, kBodyLines).size()));
-    int line = line_for(Text::Caption1);
-    int hero_by = kFirstShelf - kBodyToButtons - theme::button_h;
-    int hero_box_top = hero_by - kBodyToButtons - lines * line - kMetaToBody - line - kTitleToMeta - kLogoH;
-    int box_top = static_cast<int>(lerp(static_cast<float>(hero_box_top), 140, m));
+    float hero_only = std::max(0.0f, 1.0f - 2.0f * m);
+    int rule_y = static_cast<int>(lerp(static_cast<float>(kRuleY), 250, m));
     int box_h = static_cast<int>(lerp(kLogoH, kLogoSmallH, m));
     int box_w = static_cast<int>(lerp(kLogoW, kLogoSmallW, m));
+    draw_title(s.item, X0, rule_y - 28 - box_h, box_w, box_h, t);
+    draw_rule(0, 12, rule_y, t);
 
-    // Why this title is here, in plain words: Emphasized.Headline, secondary [EoA H9].
-    std::string why;
-    if (s.has_resume) why = s.resume.kind == "upcoming" ? "You\xE2\x80\x99re up to date"
-                            : s.resume.reason == "new" ? "New episode"
-                            : s.resume.kind == "next" ? "Up next" : "Continue watching";
-    else if (hero_) why = kind_ == Browse::Series ? "Popular series" : kind_ == Browse::Movies ? "Popular film" : (s.item.series() ? "Popular series" : "Popular film");
-    float hero_only = std::max(0.0f, 1.0f - 2.0f * m);
-    if (!why.empty() && hero_only > 0.01f)
-      text(Text::Headline, why, X0, box_top - 18 - line_for(Text::Headline), label(Label::Secondary, hero_only * t));
-
-    int y = draw_title(s.item, X0, box_top, box_w, box_h, t);
-    y += kTitleToMeta;
-    // Metadata Standard.Caption1 primary; description Standard.Caption1 secondary [EoA H6, H7].
-    text(Text::Caption1, meta, X0, y, label(Label::Primary, t), 1100);
-    y += line + kMetaToBody;
-    paragraph(Text::Caption1, s.item.description, X0, y, label(Label::Secondary, t), kBodyW, m > 0.5f ? 2 : kBodyLines);
-
+    std::vector<Fact> facts;
+    if (s.has_resume) {
+      const Resume &r = s.resume;
+      if (r.kind == "upcoming" && r.next)
+        facts.push_back({"Caught up", episode_code(r.next->season, r.next->episode) + " " + air_day_text(r.next->released, today_iso()), 3, true});
+      else if (r.kind == "next" && r.next)
+        facts.push_back({r.reason == "new" ? "New episode" : "Up next", episode_code(r.next->season, r.next->episode), 2, true});
+      else if (r.item.series())
+        facts.push_back({"Resume", episode_code(r.season, r.episode) + "  " + minutes_left(r.duration - r.position), 3, true});
+      else
+        facts.push_back({"Resume", minutes_left(r.duration - r.position), 2, true});
+    }
+    if (!s.item.year.empty()) facts.push_back({"Year", s.item.year, 1});
+    if (!s.item.genres.empty()) facts.push_back({"Genre", s.item.genres[0], 2});
+    if (s.item.series()) facts.push_back({"Type", "Series", 1});
+    else if (!s.item.runtime.empty()) facts.push_back({"Runtime", runtime_text(s.item.runtime), 1});
+    if (!s.item.rating.empty()) facts.push_back({"IMDb", s.item.rating, 1});
+    draw_facts(0, rule_y + 16, facts, t);
+    // Where in the featured set this is, at the right end of the rule.
+    int pages = static_cast<int>(featured_.size());
+    if (pages > 1 && hero_only > 0.01f) {
+      char buf[32];
+      std::snprintf(buf, sizeof buf, "%02d / %02d", feature_ + 1, pages);
+      text_right(Text::Caption2, buf, W - safe_x, rule_y - 8 - line_for(Text::Caption2), label(Label::Secondary, hero_only));
+    }
     if (hero_only > 0.01f) {
-      int by = hero_by;
-      int bx = X0;
       auto buttons = hero_buttons();
+      std::vector<GlassButton> bs;
+      int total = 0;
       for (size_t i = 0; i < buttons.size(); i++) {
         GlassButton b;
         b.label = buttons[i].label;
@@ -609,42 +612,35 @@ class BrowseScreen : public Screen {
         b.focused = hero_ && !tabs_ && static_cast<int>(i) == button_;
         b.lift = button_lift_.value;
         b.alpha = hero_only;
-        b.min_w = theme::title_button_min_w;
-        b.max_w = theme::title_button_max_w;
-        bx += draw_glass_button(bx, by, b) + theme::title_button_gap;
+        b.h = kButtonH;
+        total += glass_button_width(b) + (i ? kButtonGap : 0);
+        bs.push_back(b);
       }
+      int bx = W - safe_x - total;
+      for (auto &b : bs) bx += draw_glass_button(bx, rule_y + 16, b) + kButtonGap;
       if (s.has_resume && s.resume.kind == "resume" && s.resume.duration > 0) {
-        bx += 14;
-        draw_progress(bx, by + theme::button_h / 2 - 3, 200, 5, static_cast<double>(s.resume.position) / s.resume.duration, fade(theme::signal, hero_only),
-                      fade(with_alpha(rgba(0xffffff), 72), hero_only));
-        text(Text::Caption2, minutes_left(s.resume.duration - s.resume.position), bx, by + theme::button_h / 2 + 8, label(Label::Secondary, hero_only));
-      }
-      // Page dots for the featured picks, right-aligned on the button line.
-      int pages = static_cast<int>(featured_.size());
-      int dw = 0;
-      for (int i = 0; i < pages; i++) dw += (i == feature_ ? 28 : 8) + 10;
-      int dx = W - safe_x - dw + 10;
-      for (int i = 0; pages > 1 && i < pages; i++) {
-        bool on = i == feature_;
-        int w = on ? 28 : 8;
-        c.gfx.fill_rect(dx, by + 36, w, 4, fade(on ? rgba(0xffffff) : with_alpha(rgba(0xffffff), 102), hero_only));  // 4.1 Swiss: square
-        dx += w + 10;
+        // A red bar along the rule: how much is watched.
+        int w = static_cast<int>(span_w(12) * std::max(0.0, std::min(1.0, static_cast<double>(s.resume.position) / s.resume.duration)));
+        ctx().gfx.fill_rect(X0, rule_y - 2, w, 4, fade(signal, hero_only * t));
       }
     }
   }
 
   void draw_rows(float m) {
-    float base = lerp(kFirstShelf, 500, m);
+    float base = lerp(kFirstShelf, 420, m);
     for (size_t i = 0; i < rows_.size(); i++) {
       float y = base + (static_cast<float>(i) - vscroll_.value) * ROW_H;
       if (y > H || y < -ROW_H) continue;
       // Shelves that move above the focused one fade out under the title.
-      float alpha = std::max(0.0f, std::min(1.0f, (y - 320.0f) / 170.0f));
+      float alpha = std::max(0.0f, std::min(1.0f, (y - 330.0f) / 120.0f));
       if (alpha <= 0.01f) continue;
       bool focused_row = !hero_ && static_cast<int>(i) == row_;
       int hy = static_cast<int>(y);
       // Header: Emphasized.Callout, secondary [EoA H12]; the focused shelf's is primary.
-      text(Text::CalloutBold, rows_[i].title, X0, hy + kHeaderTop, label(focused_row ? Label::Primary : Label::Secondary, alpha));
+      int tw = text(Text::Caption1Semi, rows_[i].title, X0, hy + kHeaderTop, label(focused_row ? Label::Primary : Label::Secondary, alpha));
+      char count[16];
+      std::snprintf(count, sizeof count, "%02zu", rows_[i].size());
+      text(Text::Caption1, count, X0 + tw + 16, hy + kHeaderTop, label(Label::Tertiary, alpha));
       draw_shelf(i, hy + kHeaderH + kHeaderToItems, alpha, focused_row);
     }
   }
@@ -702,18 +698,16 @@ class BrowseScreen : public Screen {
         else if (res.kind == "next" && res.next) sub = (res.reason == "new" ? "New: " : "Next: ") + episode_code(res.next->season, res.next->episode);
         else if (res.item.series()) sub = join({episode_code(res.season, res.episode), minutes_left(res.duration - res.position)});
         else sub = minutes_left(res.duration - res.position);
-        // Continue watching: what and how long, on the picture itself.
-        cs.title_on_art = true;
-        // A new episode or a date is news, so it shows without focus too.
-        cs.sub = !res.item.series() || res.kind == "upcoming" || res.reason == "new" ? sub : "";
+        // 4.1 Swiss: what and how long go under the frame, not on the picture.
       }
       cs.pass = pass;
       draw_card(x, y, cs);
-      if (focused && (pass == CardPass::All || pass == CardPass::Text)) {
-        int ly = y + card_h + 24;  // 14 for the focused card's growth, then 10 [EoA K8]
-        text(Text::Caption1, it.name, x, ly, label(Label::Primary, alpha), card_w + 40);
-        std::string under = row.continue_row() ? sub : join({it.year, it.series() ? "Series" : "Film"});
-        if (!under.empty()) text(Text::Caption2, under, x, ly + 34, label(Label::Secondary, alpha), card_w + 40);
+      if (pass == CardPass::All || pass == CardPass::Text) {
+        // 4.1 Swiss: every frame has its title under it; the focused one in Bold.
+        int ly = y + card_h + 16;
+        int nw = text(focused ? Text::Caption2Bold : Text::Caption2, it.name, x, ly, label(focused ? Label::Primary : Label::Secondary, alpha), card_w);
+        if (!sub.empty() && nw + 12 < card_w)
+          text(Text::Caption2, sub, x + nw + 12, ly, label(focused ? Label::Secondary : Label::Tertiary, alpha), card_w - nw - 12);
       }
     }
   }
