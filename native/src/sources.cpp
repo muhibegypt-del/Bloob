@@ -59,13 +59,17 @@ std::string source_words(const std::string &s) {
 }
 
 // Resolution filters; a filter with no versions is not shown.
-enum class Filter { All, UHD, FullHD, Lower, Problems };
+// 4.1 (owner): SDR remuxes and season packs have tabs of their own; the
+// resolution tabs list single files, so a pack is only under Season packs.
+enum class Filter { All, UHD, FullHD, Lower, SdrRemux, Packs, Problems };
 bool passes(Filter f, const SourceOption &o, bool problem) {
   switch (f) {
     case Filter::All: return true;
-    case Filter::UHD: return !problem && o.resolution == "4K";
-    case Filter::FullHD: return !problem && o.resolution == "1080p";
-    case Filter::Lower: return !problem && o.resolution != "4K" && o.resolution != "1080p";
+    case Filter::UHD: return !problem && !o.pack && o.resolution == "4K";
+    case Filter::FullHD: return !problem && !o.pack && o.resolution == "1080p";
+    case Filter::Lower: return !problem && !o.pack && o.resolution != "4K" && o.resolution != "1080p";
+    case Filter::SdrRemux: return !problem && o.tier == "sdr-remux";
+    case Filter::Packs: return !problem && o.pack;
     case Filter::Problems: return problem;
   }
   return true;
@@ -76,6 +80,8 @@ const char *filter_name(Filter f) {
     case Filter::UHD: return "4K";
     case Filter::FullHD: return "1080p";
     case Filter::Lower: return "720p and below";
+    case Filter::SdrRemux: return "SDR Remux";
+    case Filter::Packs: return "Season packs";
     case Filter::Problems: return "May not play well";
   }
   return "";
@@ -298,13 +304,20 @@ class SourcesScreen : public Screen {
     pills_.clear();
     if (all_.cuts.size() > 1) {
       for (auto &c : all_.cuts) pills_.push_back({Filter::All, c.second, c.first});
+      // 4.1: the SDR Remux and Season packs tabs follow the editions (within the cut shown).
+      size_t first_cut = ranking_.recommended ? 1 : 0;
+      for (Filter f : {Filter::SdrRemux, Filter::Packs}) {
+        int count = 0;
+        for (size_t i = first_cut; i < options_.size(); i++) count += section_of_[i] != "more" && passes(f, options_[i], problem(i)) ? 1 : 0;
+        if (count) pills_.push_back({f, count, ""});
+      }
       pill_ = 0;
       for (size_t i = 0; i < pills_.size(); i++)
-        if (pills_[i].cut == cut_) pill_ = static_cast<int>(i);
+        if (filter_ == Filter::All ? pills_[i].cut == cut_ : pills_[i].filter == filter_ && pills_[i].cut.empty()) pill_ = static_cast<int>(i);
       return;
     }
     size_t first = ranking_.recommended ? 1 : 0;
-    for (Filter f : {Filter::All, Filter::UHD, Filter::FullHD, Filter::Lower, Filter::Problems}) {
+    for (Filter f : {Filter::All, Filter::UHD, Filter::FullHD, Filter::Lower, Filter::SdrRemux, Filter::Packs, Filter::Problems}) {
       int count = 0;
       for (size_t i = first; i < options_.size(); i++) count += section_of_[i] != "more" && passes(f, options_[i], problem(i)) ? 1 : 0;
       if (count || f == Filter::All) pills_.push_back({f, count, ""});
@@ -379,6 +392,7 @@ class SourcesScreen : public Screen {
     pill_ = std::max(0, std::min(static_cast<int>(pills_.size()) - 1, index));
     if (!pills_[static_cast<size_t>(pill_)].cut.empty()) {
       cut_ = pills_[static_cast<size_t>(pill_)].cut;
+      filter_ = Filter::All;  // an edition shows all its versions
       arrange();  // the best card and the list follow the cut
       focus_index_ = 0;
     } else {
@@ -827,7 +841,9 @@ class SourcesScreen : public Screen {
   // The filter strip: All, 4K, 1080p, 720p and below, May not play well.
   void draw_pills() {
     if (pills_.empty()) return;
-    int x = RX;
+    std::vector<GlassButton> bs;
+    std::vector<int> at;
+    int total = 0;
     for (size_t i = 0; i < pills_.size(); i++) {
       bool selected = static_cast<int>(i) == pill_;
       GlassButton b;
@@ -836,8 +852,21 @@ class SourcesScreen : public Screen {
       b.focused = pills_focused_ && selected;
       b.candidate = selected && !b.focused;
       b.lift = lift_.value;
-      if (x + glass_button_width(b) > RX + RW) break;
-      x += draw_glass_button(x, PILLS_Y, b) + theme::control_gap;
+      at.push_back(total);
+      total += glass_button_width(b) + theme::control_gap;
+      bs.push_back(b);
+    }
+    // 4.1: more tabs than fit (SDR Remux, Season packs): the row slides so the
+    // chosen tab is always in view; tabs outside the column are not drawn.
+    int shift = 0;
+    if (pill_ >= 0 && pill_ < static_cast<int>(bs.size())) {
+      int right = at[static_cast<size_t>(pill_)] + glass_button_width(bs[static_cast<size_t>(pill_)]);
+      if (right > RW) shift = right - RW;
+    }
+    for (size_t i = 0; i < bs.size(); i++) {
+      int x = RX + at[i] - shift, w = glass_button_width(bs[i]);
+      if (x < RX || x + w > RX + RW) continue;
+      draw_glass_button(x, PILLS_Y, bs[i]);
     }
   }
 
