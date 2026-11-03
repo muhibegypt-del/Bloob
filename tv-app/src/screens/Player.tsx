@@ -1,228 +1,334 @@
-import { createSignal, For, onCleanup, onMount, Show } from 'solid-js';
-import { useKeys } from '../keys';
+import { createEffect, createMemo, createSignal, For, on, onCleanup, onMount, Show, type JSX } from 'solid-js';
+import { buna, useBunaState, type BunaSession, type PlayIntent, type ResolvedSource, type Track } from '../buna';
+import { clock, delta, timeOfDay } from '../format';
+import { useKeys, type Key } from '../keys';
 
-type AudioTrackInfo = { index: number; label: string; language: string; enabled: boolean };
-type TextTrackInfo = { index: number; label: string; language: string; mode: TextTrackMode };
-type AudioTrackListLike = { length: number; [index: number]: { label?: string; language?: string; enabled: boolean } };
-type TrackVideo = HTMLVideoElement & { audioTracks?: AudioTrackListLike };
-type Menu = 'audio' | 'subtitles' | null;
+export type PlayerExit = 'back' | 'choose-source';
 
-export function Player(props: { url: string; title: string; onBack: () => void }) {
-  let video!: TrackVideo;
-  const [state, setState] = createSignal('Preparing video…');
-  const [position, setPosition] = createSignal(0);
-  const [duration, setDuration] = createSignal(0);
-  const [buffered, setBuffered] = createSignal(0);
-  const [visible, setVisible] = createSignal(true);
-  const [area, setArea] = createSignal<'timeline' | 'actions'>('timeline');
-  const [actionFocus, setActionFocus] = createSignal(1);
-  const [menu, setMenu] = createSignal<Menu>(null);
-  const [menuFocus, setMenuFocus] = createSignal(0);
-  const [seekTarget, setSeekTarget] = createSignal<number | null>(null);
-  const [audioTracks, setAudioTracks] = createSignal<AudioTrackInfo[]>([]);
-  const [textTracks, setTextTracks] = createSignal<TextTrackInfo[]>([]);
-  let hideTimer: number | undefined;
-  let clockTimer: number | undefined;
-  let seekTimer: number | undefined;
-  const start = performance.now();
-
-  const stamp = (seconds: number) => {
-    if (!Number.isFinite(seconds) || seconds < 0) return '--:--';
-    const s = Math.floor(seconds);
-    const hours = Math.floor(s / 3600);
-    return `${hours ? hours + ':' : ''}${hours ? String(Math.floor((s % 3600) / 60)).padStart(2, '0') : Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
-  };
-
-  function syncClock() {
-    if (!video) return;
-    if (Number.isFinite(video.currentTime) && video.currentTime >= 0) setPosition(video.currentTime);
-    let length = video.duration;
-    if ((!Number.isFinite(length) || length <= 0) && video.seekable.length) length = video.seekable.end(video.seekable.length - 1);
-    if (Number.isFinite(length) && length > 0) setDuration(length);
-    if (video.buffered.length) setBuffered(video.buffered.end(video.buffered.length - 1));
-  }
-
-  function syncTracks() {
-    const audio = video.audioTracks;
-    setAudioTracks(audio ? Array.from({ length: audio.length }, (_, index) => ({
-      index, label: audio[index].label || `Audio ${index + 1}`,
-      language: audio[index].language || '', enabled: !!audio[index].enabled,
-    })) : []);
-    setTextTracks(Array.from({ length: video.textTracks.length }, (_, index) => ({
-      index, label: video.textTracks[index].label || `Subtitle ${index + 1}`,
-      language: video.textTracks[index].language || '', mode: video.textTracks[index].mode,
-    })));
-  }
-
-  function reveal() {
-    setVisible(true);
-    window.clearTimeout(hideTimer);
-    if (!video.paused && !menu()) hideTimer = window.setTimeout(() => setVisible(false), 9000);
-  }
-
-  function seekTo(seconds: number) {
-    syncClock();
-    if (!duration() || !video.seekable.length) return setState('Seeking is unavailable for this file');
-    const lower = video.seekable.start(0);
-    const upper = video.seekable.end(video.seekable.length - 1);
-    const target = Math.min(Math.max(seconds, lower), upper);
-    video.currentTime = target;
-    setPosition(target);
-    setState('Seeking…');
-    reveal();
-  }
-
-  function previewSeek(delta: number) {
-    syncClock();
-    if (!video.seekable.length) return setState('Seeking is unavailable for this file');
-    const lower = video.seekable.start(0);
-    const upper = video.seekable.end(video.seekable.length - 1);
-    const target = Math.min(Math.max((seekTarget() ?? video.currentTime) + delta, lower), upper);
-    setSeekTarget(target);
-    setVisible(true);
-    window.clearTimeout(hideTimer);
-    window.clearTimeout(seekTimer);
-    seekTimer = window.setTimeout(() => {
-      video.currentTime = target;
-      setPosition(target);
-      setSeekTarget(null);
-      reveal();
-    }, 550);
-  }
-
-  function toggle() {
-    if (video.paused) video.play().catch(error => setState(error.message || 'Unable to resume'));
-    else video.pause();
-    reveal();
-  }
-
-  function openMenu(next: Exclude<Menu, null>) {
-    syncTracks(); setMenu(next); setMenuFocus(0); setVisible(true);
-    window.clearTimeout(hideTimer);
-  }
-
-  function selectMenu(index: number) {
-    if (menu() === 'audio') {
-      const tracks = video.audioTracks;
-      if (!tracks || index >= tracks.length) return;
-      for (let i = 0; i < tracks.length; i++) tracks[i].enabled = i === index;
-    } else if (menu() === 'subtitles') {
-      for (let i = 0; i < video.textTracks.length; i++) video.textTracks[i].mode = index === i + 1 ? 'showing' : 'disabled';
-    }
-    syncTracks(); setMenu(null); reveal();
-  }
-
-  const actions = [
-    { label: 'Back 10 seconds', glyph: () => <svg viewBox="0 0 40 40" aria-hidden="true"><path d="M10 10v9h9M11 19a13 13 0 1 1 .8 10" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/><text x="20" y="26" text-anchor="middle" fill="currentColor" font-size="11" font-weight="700">10</text></svg>, run: () => previewSeek(-10) },
-    { label: 'Play or pause', glyph: () => video?.paused
-      ? <svg viewBox="0 0 40 40" aria-hidden="true"><path d="M15 10l17 10-17 10z" fill="currentColor"/></svg>
-      : <svg viewBox="0 0 40 40" aria-hidden="true"><rect x="12" y="10" width="5" height="20" rx="1" fill="currentColor"/><rect x="23" y="10" width="5" height="20" rx="1" fill="currentColor"/></svg>, run: toggle },
-    { label: 'Forward 10 seconds', glyph: () => <svg viewBox="0 0 40 40" aria-hidden="true"><path d="M30 10v9h-9M29 19a13 13 0 1 0-.8 10" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/><text x="20" y="26" text-anchor="middle" fill="currentColor" font-size="11" font-weight="700">10</text></svg>, run: () => previewSeek(10) },
-    { label: 'Audio', glyph: () => <svg viewBox="0 0 40 40" aria-hidden="true"><path d="M8 16h7l9-7v22l-9-7H8zM29 15c3 3 3 7 0 10M33 11c5 5 5 13 0 18" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/></svg>, run: () => openMenu('audio') },
-    { label: 'Subtitles', glyph: () => <svg viewBox="0 0 40 40" aria-hidden="true"><rect x="5" y="8" width="30" height="24" rx="4" fill="none" stroke="currentColor" stroke-width="2.4"/><path d="M11 21h7M11 26h5M22 21h7M22 26h6" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg>, run: () => openMenu('subtitles') },
-  ];
-
-  function release() {
-    window.clearTimeout(hideTimer); window.clearTimeout(seekTimer); window.clearInterval(clockTimer);
-    video.pause(); video.removeAttribute('src'); video.load();
-  }
-  onMount(() => {
-    video.src = props.url; video.load();
-    clockTimer = window.setInterval(syncClock, 500);
-    video.play().catch(error => setState(error.message || 'Unable to start video'));
-  });
-  onCleanup(release);
-
-  useKeys(key => {
-    if (menu()) {
-      if (key === 'back') { setMenu(null); return reveal(); }
-      const count = menu() === 'audio' ? audioTracks().length : textTracks().length + 1;
-      if (key === 'up') setMenuFocus(Math.max(0, menuFocus() - 1));
-      if (key === 'down' && count) setMenuFocus(Math.min(count - 1, menuFocus() + 1));
-      if (key === 'enter') selectMenu(menuFocus());
-      return;
-    }
-    if (key === 'back') {
-      if (seekTarget() !== null) { window.clearTimeout(seekTimer); setSeekTarget(null); return reveal(); }
-      if (visible() && state() === 'Playing') { setVisible(false); return; }
-      return props.onBack();
-    }
-    reveal();
-    if (key === 'down') return setArea('actions');
-    if (key === 'up') return setArea('timeline');
-    if (key === 'left' || key === 'right') {
-      if (area() === 'actions') setActionFocus(Math.min(actions.length - 1, Math.max(0, actionFocus() + (key === 'right' ? 1 : -1))));
-      else previewSeek(key === 'right' ? 10 : -10);
-    }
-    if (key === 'enter') area() === 'actions' ? actions[actionFocus()].run() : toggle();
-  });
-
-  const displayPosition = () => seekTarget() ?? position();
-  const percent = () => duration() > 0 ? Math.max(0, Math.min(100, displayPosition() / duration() * 100)) : 0;
-  const bufferedPercent = () => duration() > 0 ? Math.max(0, Math.min(100, buffered() / duration() * 100)) : 0;
+/**
+ * Player view. Owns presentation only: HUD visibility, focus, and menus.
+ * Everything about media comes from the Buna session's state, and every
+ * media action is a session command.
+ */
+export function Player(props: { intent: PlayIntent; source: ResolvedSource; onExit: (reason: PlayerExit) => void }) {
+  let video!: HTMLVideoElement;
+  const [session, setSession] = createSignal<BunaSession | null>(null);
+  onMount(() => setSession(buna.open({ intent: props.intent, source: props.source, video })));
+  onCleanup(() => session()?.dispose());
 
   return <div class="player-screen">
-    <video ref={video} playsinline
-      onLoadedMetadata={() => { syncClock(); syncTracks(); }}
-      onDurationChange={syncClock} onTimeUpdate={syncClock} onProgress={syncClock}
-      onSeeking={() => { syncClock(); setState('Seeking…'); }}
-      onSeeked={() => { syncClock(); setState(video.paused ? 'Paused' : 'Playing'); }}
-      onPlaying={() => { syncClock(); setState('Playing'); reveal(); console.info('[playback] first frame ms', Math.round(performance.now() - start)); }}
-      onWaiting={() => setState('Buffering…')}
-      onPause={() => { setState('Paused'); setVisible(true); window.clearTimeout(hideTimer); }}
-      onEnded={() => { setState('Ended'); setVisible(true); window.clearTimeout(hideTimer); }}
-      onError={() => setState(`Playback error ${video.error?.code || ''}: ${video.error?.message || 'Unsupported or unavailable media'}`)} />
-    <Show when={state() === 'Buffering…' || state() === 'Preparing video…'}>
-      <div class="player-center-status"><div class="loading-mark" /><span>{state()}</span></div>
-    </Show>
-    <Show when={visible() || state() !== 'Playing' || menu()}>
-      <div class="player-hud">
-        <div class="player-heading"><div><span class="player-eyebrow">NOW PLAYING</span><div class="player-title">{props.title}</div></div>
-          <Show when={state() !== 'Playing' && state() !== 'Paused'}><div class="player-state">{state()}</div></Show>
-        </div>
-        <Show when={seekTarget() !== null}><div class="player-seek-label">Seek to {stamp(displayPosition())}</div></Show>
-        <div class="player-timeline" classList={{ focused: area() === 'timeline' }} role="slider"
-          aria-label="Playback position" aria-valuemin={0} aria-valuemax={Math.round(duration())} aria-valuenow={Math.round(displayPosition())}
-          onPointerDown={event => {
-            const rect = event.currentTarget.getBoundingClientRect();
-            seekTo(((event.clientX - rect.left) / rect.width) * duration());
-          }}>
-          <div class="player-timeline-buffered" style={{ width: `${bufferedPercent()}%` }} />
-          <div class="player-timeline-played" style={{ width: `${percent()}%` }} />
-          <div class="player-timeline-thumb" style={{ left: `${percent()}%` }} />
-        </div>
-        <div class="player-times"><span>{stamp(displayPosition())}</span><span>{stamp(duration())}</span></div>
-        <div class="player-actions">
-          <For each={actions}>{(action, index) =>
-            <button classList={{ focused: area() === 'actions' && actionFocus() === index(), primary: index() === 1, secondary: index() >= 3 }}
-              aria-label={action.label} title={action.label} onClick={action.run}>
-              {action.glyph()}
-            </button>
-          }</For>
-        </div>
-        <div class="player-hint">← → seek 10 seconds <span>·</span> ↓ options <span>·</span> Back hide or exit</div>
-      </div>
-    </Show>
-    <Show when={menu()}>{current => <div class="player-menu">
-      <h2>{current() === 'audio' ? 'Audio' : 'Subtitles'}</h2>
-      <Show when={current() === 'audio'}>
-        <Show when={audioTracks().length} fallback={<p>This stream exposes no selectable audio tracks. The TV is playing its default track.</p>}>
-          <For each={audioTracks()}>{(track, index) =>
-            <button classList={{ focused: menuFocus() === index() }} onClick={() => selectMenu(index())}>
-              <span>{track.label}{track.language ? ` · ${track.language}` : ''}</span><b>{track.enabled ? '✓' : ''}</b>
-            </button>
-          }</For>
-        </Show>
-      </Show>
-      <Show when={current() === 'subtitles'}>
-        <button classList={{ focused: menuFocus() === 0 }} onClick={() => selectMenu(0)}><span>Off</span><b>{textTracks().every(track => track.mode !== 'showing') ? '✓' : ''}</b></button>
-        <For each={textTracks()}>{(track, index) =>
-          <button classList={{ focused: menuFocus() === index() + 1 }} onClick={() => selectMenu(index() + 1)}>
-            <span>{track.label}{track.language ? ` · ${track.language}` : ''}</span><b>{track.mode === 'showing' ? '✓' : ''}</b>
-          </button>
-        }</For>
-        <Show when={!textTracks().length}><p>No selectable subtitles are exposed by this file. External WebVTT support is the next step.</p></Show>
-      </Show>
-    </div>}</Show>
+    <video ref={video} playsinline />
+    <Show when={session()} keyed>{active => <PlayerChrome session={active} intent={props.intent} onExit={props.onExit} />}</Show>
   </div>;
 }
+
+type Zone = 'timeline' | 'controls';
+type Menu = 'audio' | 'subtitles' | null;
+type Control = { id: string; label: string; icon: () => JSX.Element; run: () => void; trailing?: boolean };
+
+const HUD_TIMEOUT_MS = 6000;
+const BUFFERING_DELAY_MS = 500;
+
+function PlayerChrome(props: { session: BunaSession; intent: PlayIntent; onExit: (reason: PlayerExit) => void }) {
+  const session = props.session;
+  const state = useBunaState(session);
+  const [hud, setHud] = createSignal<'hidden' | 'scrub' | 'full'>('full');
+  const [zone, setZone] = createSignal<Zone>('timeline');
+  const [controlIndex, setControlIndex] = createSignal(0);
+  const [menu, setMenu] = createSignal<Menu>(null);
+  const [menuIndex, setMenuIndex] = createSignal(0);
+  const [errorIndex, setErrorIndex] = createSignal(0);
+  const [showSpinner, setShowSpinner] = createSignal(false);
+  const [showResume, setShowResume] = createSignal(false);
+  const [now, setNow] = createSignal(Date.now());
+  let hideTimer: number | undefined;
+  let spinnerTimer: number | undefined;
+  let resumeTimer: number | undefined;
+
+  const display = () => state.previewTarget ?? state.pendingTarget ?? state.position;
+  const isPlaying = () => state.intent === 'play' && state.phase !== 'ended';
+  const remaining = () => (state.duration ? Math.max(0, state.duration - display()) : null);
+  const fraction = (seconds: number) => (state.duration ? Math.min(1, Math.max(0, seconds / state.duration)) : 0);
+
+  // ---------------------------------------------------------------- HUD visibility
+
+  /** Paused, ended, loading, menus, and errors keep the full HUD; uninterrupted playback hides it. */
+  const pinned = () => !!menu() || ['paused', 'ended', 'error', 'loading'].includes(state.phase);
+  const seekActive = () => state.previewTarget !== null || state.pendingTarget !== null;
+
+  /** Show the HUD. `scrub` is the reduced timeline-only form used for seeking from hidden. */
+  function reveal(mode: 'scrub' | 'full' = 'full') {
+    setHud(current => (current === 'full' || mode === 'full' ? 'full' : 'scrub'));
+    armHide();
+  }
+  function armHide(ms = HUD_TIMEOUT_MS) {
+    window.clearTimeout(hideTimer);
+    hideTimer = window.setTimeout(() => {
+      if (pinned() || seekActive()) armHide();
+      else setHud('hidden');
+    }, ms);
+  }
+  // A pause, error, or end the user didn't trigger from the HUD still brings it up.
+  createEffect(on(pinned, isPinned => {
+    if (isPinned && hud() === 'hidden') setHud('full');
+    armHide();
+  }, { defer: true }));
+  createEffect(on(() => state.phase, phase => {
+    // The reduced scrub HUD leaves quickly once the seek lands.
+    if (phase === 'playing' && hud() === 'scrub') armHide(2500);
+    if (phase === 'error') setErrorIndex(0);
+  }));
+
+  // Delay the spinner so short buffering blips don't flash.
+  createEffect(on(() => state.phase === 'buffering' || state.phase === 'loading', waiting => {
+    window.clearTimeout(spinnerTimer);
+    if (!waiting) return setShowSpinner(false);
+    spinnerTimer = window.setTimeout(() => setShowSpinner(true), BUFFERING_DELAY_MS);
+  }));
+
+  createEffect(on(() => state.resumedFrom, from => {
+    window.clearTimeout(resumeTimer);
+    setShowResume(!!from);
+    if (from) resumeTimer = window.setTimeout(() => setShowResume(false), 8000);
+  }));
+
+  const clockTimer = window.setInterval(() => setNow(Date.now()), 15000);
+  onMount(() => reveal());
+  onCleanup(() => {
+    window.clearTimeout(hideTimer); window.clearTimeout(spinnerTimer);
+    window.clearTimeout(resumeTimer); window.clearInterval(clockTimer);
+  });
+
+  // ---------------------------------------------------------------- controls
+
+  const controls = createMemo<Control[]>(() => [
+    ...(state.resumedFrom ? [{ id: 'restart', label: 'Start over', icon: RestartIcon, run: () => { session.restart(); reveal(); } }] : []),
+    { id: 'back10', label: 'Back 10 seconds', icon: Back10Icon, run: () => { session.nudge(-1); reveal(); } },
+    { id: 'toggle', label: isPlaying() ? 'Pause' : 'Play', icon: () => (isPlaying() ? <PauseIcon /> : <PlayGlyph />), run: () => { void session.toggle(); reveal(); } },
+    { id: 'fwd10', label: 'Forward 10 seconds', icon: Forward10Icon, run: () => { session.nudge(1); reveal(); } },
+    { id: 'audio', label: 'Audio', icon: AudioIcon, run: () => openMenu('audio'), trailing: true },
+    { id: 'subtitles', label: 'Subtitles', icon: SubtitleIcon, run: () => openMenu('subtitles'), trailing: true },
+  ]);
+  // Keep focus on the same control when the list changes (e.g. Start over disappears).
+  createEffect(on(() => controls().length, (length, previous) => {
+    if (previous !== undefined && length < previous) setControlIndex(i => Math.max(0, i - (previous - length)));
+  }, { defer: true }));
+  const focusToggle = () => setControlIndex(controls().findIndex(c => c.id === 'toggle'));
+
+  const menuTracks = (): Track[] => (menu() === 'audio' ? state.audioTracks : state.textTracks);
+  const menuCapability = () => (menu() === 'audio' ? state.capabilities.audioTrackSelection : state.capabilities.textTrackSelection);
+  /** Rows: audio tracks, or "Off" + subtitle tracks. */
+  const menuRows = () => (menu() === 'subtitles' && menuCapability().supported ? [null, ...menuTracks()] : menuCapability().supported ? menuTracks() : []);
+
+  function openMenu(next: Exclude<Menu, null>) {
+    setMenu(next);
+    const rows = next === 'audio' ? state.audioTracks : [null, ...state.textTracks];
+    setMenuIndex(Math.max(0, rows.findIndex(row => (row ? row.selected : !state.textTracks.some(t => t.selected)))));
+  }
+
+  function chooseMenuRow(index: number) {
+    const row = menuRows()[index];
+    if (menu() === 'audio' && row) session.selectAudio(row.id);
+    if (menu() === 'subtitles') session.selectSubtitle(row ? row.id : null);
+    setMenu(null);
+    reveal();
+  }
+
+  const errorActions = () => [
+    ...(state.error?.retryable ? [{ label: 'Try again', run: () => void session.retry() }] : []),
+    { label: 'Choose another source', run: () => props.onExit('choose-source') },
+    { label: 'Exit player', run: () => props.onExit('back') },
+  ];
+
+  // ---------------------------------------------------------------- remote input
+
+  function onTransportKey(key: Key): boolean {
+    switch (key) {
+      case 'play': void session.play(); break;
+      case 'pause': session.pause(); break;
+      case 'playpause': void session.toggle(); break;
+      case 'ff': session.nudge(1); break;
+      case 'rw': session.nudge(-1); break;
+      case 'stop': props.onExit('back'); return true;
+      default: return false;
+    }
+    reveal(hud() === 'hidden' && (key === 'ff' || key === 'rw') ? 'scrub' : 'full');
+    return true;
+  }
+
+  useKeys(key => {
+    if (state.phase === 'error') {
+      const actions = errorActions();
+      if (key === 'left' || key === 'up') setErrorIndex(i => Math.max(0, i - 1));
+      if (key === 'right' || key === 'down') setErrorIndex(i => Math.min(actions.length - 1, i + 1));
+      if (key === 'enter') actions[Math.min(errorIndex(), actions.length - 1)].run();
+      if (key === 'back' || key === 'stop') props.onExit('back');
+      return;
+    }
+    if (menu()) {
+      const count = menuRows().length;
+      if (key === 'up') setMenuIndex(i => Math.max(0, i - 1));
+      if (key === 'down') setMenuIndex(i => Math.min(Math.max(0, count - 1), i + 1));
+      if (key === 'enter' && count) chooseMenuRow(menuIndex());
+      if (key === 'back' || key === 'left') { setMenu(null); reveal(); }
+      return;
+    }
+    if (onTransportKey(key)) return;
+
+    if (key === 'back') {
+      if (session.cancelPreview()) return reveal();
+      if (hud() !== 'hidden' && isPlaying()) { window.clearTimeout(hideTimer); return setHud('hidden'); }
+      return props.onExit('back');
+    }
+
+    if (hud() === 'hidden') {
+      // First press wakes the HUD; left/right and OK also act immediately.
+      if (key === 'left' || key === 'right') { session.nudge(key === 'right' ? 1 : -1); return reveal('scrub'); }
+      if (key === 'enter') { void session.toggle(); setZone('controls'); focusToggle(); return reveal(); }
+      setZone(key === 'down' ? 'controls' : 'timeline');
+      if (key === 'down') focusToggle();
+      return reveal();
+    }
+
+    // Repeated seeking keeps the reduced HUD; anything else brings up the full controls.
+    reveal(hud() === 'scrub' && zone() === 'timeline' && (key === 'left' || key === 'right') ? 'scrub' : 'full');
+    if (zone() === 'timeline') {
+      if (key === 'left' || key === 'right') return void session.nudge(key === 'right' ? 1 : -1);
+      if (key === 'enter') return void (state.previewTarget !== null ? session.commitPreview() : session.toggle());
+      if (key === 'down') { setZone('controls'); if (hud() === 'scrub') setHud('full'); return focusToggle(); }
+      return;
+    }
+    if (key === 'up') return setZone('timeline');
+    if (key === 'left') return setControlIndex(i => Math.max(0, i - 1));
+    if (key === 'right') return setControlIndex(i => Math.min(controls().length - 1, i + 1));
+    if (key === 'enter') controls()[controlIndex()]?.run();
+  });
+
+  // ---------------------------------------------------------------- view
+
+  const statusLabel = () => {
+    if (state.phase === 'seeking') return 'Seeking…';
+    if (state.phase === 'buffering') return 'Buffering…';
+    if (state.phase === 'loading') return 'Starting…';
+    if (state.phase === 'ended') return 'Finished';
+    return '';
+  };
+
+  return <>
+    <Show when={state.phase === 'loading' && state.firstFrameMs === null}>
+      <div class="player-startup">
+        <div class="player-startup-title">{props.intent.title}</div>
+        <Show when={props.intent.subtitle}><div class="player-startup-subtitle">{props.intent.subtitle}</div></Show>
+        <div class="player-spinner" />
+        <Show when={state.resumedFrom}>{from => <div class="player-startup-note">Resuming from {clock(from())}</div>}</Show>
+      </div>
+    </Show>
+
+    <Show when={showSpinner() && state.phase === 'buffering'}>
+      <div class="player-buffering"><div class="player-spinner" /></div>
+    </Show>
+
+    <Show when={state.phase === 'error' && state.error}>{error => <div class="player-error" role="alert">
+      <h2>Playback stopped</h2>
+      <p>{error().message}</p>
+      <div class="player-error-actions">
+        <For each={errorActions()}>{(action, index) =>
+          <button classList={{ focused: errorIndex() === index() }} onClick={action.run}>{action.label}</button>
+        }</For>
+      </div>
+    </div>}</Show>
+
+    <div class="player-hud" classList={{ visible: hud() !== 'hidden' && state.phase !== 'error' && !(state.phase === 'loading' && state.firstFrameMs === null), scrub: hud() === 'scrub' }}>
+      <div class="player-top">
+        <div>
+          <div class="player-title">{props.intent.title}</div>
+          <Show when={props.intent.subtitle}><div class="player-subtitle">{props.intent.subtitle}</div></Show>
+        </div>
+        <div class="player-clock">
+          <span>{timeOfDay(now())}</span>
+          <Show when={remaining() !== null && state.phase !== 'ended'}><small>Ends {timeOfDay(now() + (remaining() || 0) * 1000)}</small></Show>
+        </div>
+      </div>
+
+      <div class="player-bottom">
+        <div class="player-status-row">
+          <Show when={statusLabel()}><span class="player-status">{statusLabel()}</span></Show>
+          <Show when={showResume() && state.resumedFrom}>{from => <span class="player-status quiet">Resumed from {clock(from())} · Start over is in the controls</span>}</Show>
+        </div>
+
+        <div class="player-timeline" classList={{ focused: zone() === 'timeline' && hud() !== 'hidden', previewing: state.previewTarget !== null, seeking: state.pendingTarget !== null }}
+          role="slider" aria-label="Playback position" aria-valuemin={0} aria-valuemax={Math.round(state.duration || 0)} aria-valuenow={Math.round(display())}
+          onClick={event => {
+            if (!state.duration) return;
+            const rect = event.currentTarget.getBoundingClientRect();
+            session.seekTo(((event.clientX - rect.left) / rect.width) * state.duration);
+            reveal();
+          }}>
+          <div class="player-track">
+            <div class="player-buffered" style={{ left: `${fraction(state.position) * 100}%`, width: `${Math.max(0, fraction(state.bufferedEnd) - fraction(state.position)) * 100}%` }} />
+            <div class="player-played" style={{ transform: `scaleX(${fraction(display())})` }} />
+            <Show when={state.previewTarget !== null || state.pendingTarget !== null}>
+              <div class="player-origin" style={{ left: `${fraction(state.position) * 100}%` }} />
+            </Show>
+          </div>
+          <div class="player-thumb" style={{ left: `${fraction(display()) * 100}%` }} />
+          <Show when={state.previewTarget !== null || state.pendingTarget !== null}>
+            <div class="player-bubble" style={{ left: `clamp(80px, ${fraction(display()) * 100}%, calc(100% - 80px))` }}>
+              <b>{clock(display())}</b><small>{delta(display() - state.position)}</small>
+            </div>
+          </Show>
+        </div>
+        <div class="player-times">
+          <span>{clock(display())}</span>
+          <span>{state.duration ? `−${clock(remaining())}` : '--:--'}</span>
+        </div>
+
+        <div class="player-controls">
+          <For each={controls()}>{(control, index) =>
+            <button classList={{ focused: zone() === 'controls' && controlIndex() === index(), primary: control.id === 'toggle', trailing: !!control.trailing && !controls()[index() - 1]?.trailing }}
+              aria-label={control.label} onClick={control.run}>
+              {control.icon()}
+              <span class="player-control-label">{control.label}</span>
+            </button>
+          }</For>
+        </div>
+      </div>
+    </div>
+
+    <Show when={menu()}>{current => <div class="player-menu" role="dialog" aria-label={current() === 'audio' ? 'Audio' : 'Subtitles'}>
+      <h2>{current() === 'audio' ? 'Audio' : 'Subtitles'}</h2>
+      <Show when={menuCapability().supported} fallback={<p class="player-menu-note">{menuCapability().reason}</p>}>
+        <For each={menuRows()}>{(row, index) =>
+          <button classList={{ focused: menuIndex() === index() }} onClick={() => chooseMenuRow(index())}>
+            <span>{row ? trackName(row, index()) : 'Off'}</span>
+            <b>{(row ? row.selected : !state.textTracks.some(t => t.selected)) ? '✓' : ''}</b>
+          </button>
+        }</For>
+      </Show>
+      <p class="player-menu-hint">Back to close</p>
+    </div>}</Show>
+  </>;
+}
+
+function trackName(track: Track, index: number) {
+  const language = track.language ? languageName(track.language) : '';
+  if (track.label && language && !track.label.toLowerCase().includes(language.toLowerCase())) return `${track.label} · ${language}`;
+  return track.label || language || `Track ${index + 1}`;
+}
+
+function languageName(code: string) {
+  try {
+    const names = new (Intl as unknown as { DisplayNames: new (l: string[], o: object) => { of(c: string): string } }).DisplayNames(['en'], { type: 'language' });
+    return names.of(code) || code;
+  } catch { return code; }
+}
+
+// ---------------------------------------------------------------- icons (original artwork)
+
+const PlayGlyph = () => <svg viewBox="0 0 40 40" aria-hidden="true"><path d="M14 9.5v21a1 1 0 0 0 1.5.86l17-10.5a1 1 0 0 0 0-1.72l-17-10.5A1 1 0 0 0 14 9.5z" fill="currentColor" /></svg>;
+const PauseIcon = () => <svg viewBox="0 0 40 40" aria-hidden="true"><rect x="11" y="9" width="6" height="22" rx="1.5" fill="currentColor" /><rect x="23" y="9" width="6" height="22" rx="1.5" fill="currentColor" /></svg>;
+const Back10Icon = () => <svg viewBox="0 0 40 40" aria-hidden="true"><path d="M20 9a12 12 0 1 1-11.3 8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" /><path d="M20 4.5 15.5 9l4.5 4.5" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" /><text x="20" y="25" text-anchor="middle" fill="currentColor" font-size="12.5" font-weight="700">10</text></svg>;
+const Forward10Icon = () => <svg viewBox="0 0 40 40" aria-hidden="true"><path d="M20 9a12 12 0 1 0 11.3 8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" /><path d="M20 4.5 24.5 9 20 13.5" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" /><text x="20" y="25" text-anchor="middle" fill="currentColor" font-size="12.5" font-weight="700">10</text></svg>;
+const RestartIcon = () => <svg viewBox="0 0 40 40" aria-hidden="true"><path d="M10 10v20M30 11v18L15 20z" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linejoin="round" stroke-linecap="round" /></svg>;
+const AudioIcon = () => <svg viewBox="0 0 40 40" aria-hidden="true"><path d="M8 16h6l8-6v20l-8-6H8zM27 15c2.5 2.8 2.5 7.2 0 10M31 11c5 5 5 13 0 18" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linejoin="round" stroke-linecap="round" /></svg>;
+const SubtitleIcon = () => <svg viewBox="0 0 40 40" aria-hidden="true"><rect x="6" y="9" width="28" height="22" rx="4" fill="none" stroke="currentColor" stroke-width="2.4" /><path d="M11 20h7M11 25h5M21 20h8M21 25h6" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" /></svg>;

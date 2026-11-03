@@ -1,0 +1,63 @@
+#pragma once
+// Pieces several screens share: the full-bleed backdrop (crossfades only once
+// the next picture is decoded, can soften into blur), its scrims, the title
+// block (logo art or set type) and the meta line.
+#include <string>
+#include <vector>
+
+#include "model.h"
+#include "ui.h"
+
+class Backdrop {
+ public:
+  // Change the picture; it fades in over the old one once decoded.
+  void set(const std::string &url, bool immediate = false);
+  const std::string &url() const { return current_; }
+  void update(double dt);
+  // `dim` 0..1 darkens; `blur` 0..1 crossfades to a soft version (sheets, scrolled pages).
+  void draw(float dim = 0, float blur = 0);
+  // Glass over this backdrop: frost from the pictures on screen, crossfading with them.
+  void glass(GlassSpec g) const;
+  // Brightness of the current picture where hero text sits (0..1), -1 until known.
+  float luma() const;
+
+ private:
+  std::string current_, previous_;
+  Anim fade_{theme::backdrop_rate, 1};
+  // Glass panels drawn over this backdrop: a new picture waits for their frost too.
+  struct Pane {
+    GlassRect rect;
+    int radius = 0;
+    long long used_at = 0;
+  };
+  mutable std::vector<Pane> glass_;
+};
+
+// Readable gradients over art: from the left (where text sits) and from the bottom.
+void draw_scrims(float left = 1.0f, int bottom_from = 520, float bottom = 1.0f);
+// Black over the whole hero: 55% on very bright art, else 20% [EoA H16].
+void draw_hero_overlay(float luma, float alpha = 1.0f);
+
+// Logo art when the title has one (bottom-aligned in the box), else the name in
+// display type. Returns the y just below the box.
+int draw_title(const Item &item, int x, int top, int box_w, int box_h, float alpha = 1.0f, bool centred = false);
+
+// Essential context only: "2024 · Action, Thriller · 2h 26m". Ratings and
+// technical facts are elsewhere, on request.
+std::string meta_line(const Item &item);
+// 4.1 Swiss: a row of facts on the grid, each a small grey label over its value.
+struct Fact {
+  std::string label, value;
+  int span = 2;  // columns it takes
+  bool bold = false;
+};
+// Draws from column `col` at y; returns the bottom.
+int draw_facts(int col, int y, const std::vector<Fact> &facts, float alpha = 1.0f);
+// A white rule across columns [col, col + span).
+void draw_rule(int col, int span, int y, float alpha = 1.0f, Color color = rgba(0xffffff));
+std::string runtime_text(const std::string &runtime);
+int runtime_minutes(const std::string &runtime);  // 0 when unknown
+
+// Title details ahead of need: Home asks once focus rests on a card, Details reuses it.
+std::string meta_key(const Item &item);
+void prefetch_meta(const Item &item);

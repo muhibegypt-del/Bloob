@@ -1,0 +1,505 @@
+// Source discovery across several public indexes (2.5.0).
+//
+// Before 2.5 Bloob asked one index, Torrentio. Kodi's CocoScrapers finds rarer
+// releases because it asks Torrentio plus many more indexes and merges them by
+// torrent hash; Bloob now does the same, narrowly: only JSON indexes keyed by
+// IMDb ID, none of which is ever sent the AllDebrid key.
+//
+//   torrentio   Stremio addon, pre-scraped, names the file in a pack
+//   torrentsdb  Stremio addon in Torrentio's format (YTS, EZTV, 1337x, Knaben, TPB…)
+//   stremthru   public Torznab JSON; includes Debrid Media Manager hash lists,
+//               rich in 4K remux, Dolby Vision and Atmos releases
+//   apibay      The Pirate Bay's JSON API, searched by IMDb ID
+//   eztv        EZTV's JSON API (series only)
+//   knaben      Knaben's database (3.1): many trackers, Nyaa among them, searched by title
+//   comet, meteor, zilean, bitmagnet (3.1.1): the community instances Magneto/POV
+//               use, in their keyless torrent mode (Zilean: DMM hash lists; Bitmagnet: a DHT crawler)
+//   Anime only (3.1, anime.js maps the episode to its anime entry):
+//   seadex      SeaDex (releases.moe): the community's best release per anime, Nyaa copies only
+//   kitsu       Torrentio by Kitsu ID, in the anime entry's own numbering
+//   nyaa        Nyaa's RSS, searched by the entry's romaji and English titles
+//
+// Every provider has its own timeout. The answer goes back once Torrentio (the
+// fast one) and the others have answered, or a short grace after Torrentio,
+// whichever is first; slower answers still join the cached list for the next
+// look. Every field is still a claim parsed from a release name.
+// Keep this file compatible with the TV's older Node runtime (no `?.` / `??`).
+const { getJson, postJson } = require('./net');
+const anime = require('./anime');
+const { parseStream, parseStreams } = require('./release');
+const match = require('./match');
+
+const USER_TIMEOUT_MS = 6000;     // a provider slower than this is skipped for this search
+const GRACE_AFTER_FIRST_MS = 2500; // after Torrentio answers, wait at most this for the rest
+const PER_PROVIDER_LIMIT = 250;
+
+const LANGUAGE_CODES = {
+  en: 'English', fr: 'French', es: 'Spanish', 'es-419': 'Spanish', de: 'German', it: 'Italian', pt: 'Portuguese',
+  ru: 'Russian', uk: 'Ukrainian', pl: 'Polish', hu: 'Hungarian', nl: 'Dutch', zh: 'Chinese', ja: 'Japanese',
+  ko: 'Korean', hi: 'Hindi', ta: 'Tamil', te: 'Telugu', ar: 'Arabic', tr: 'Turkish', cs: 'Czech', sv: 'Swedish',
+};
+
+/** A Stremio addon's stream list (Torrentio's format). */
+function stremio(host) {
+  return async (type, id) => {
+    const json = await getJson(`https://${host}/stream/${type}/${encodeURIComponent(id).replace(/%3A/g, ':')}.json`,
+      { timeout: USER_TIMEOUT_MS, maxBytes: 5000000 });
+    return { streams: json.streams, limit: 60 };
+  };
+}
+
+/**
+ * A torrent from a plain index, shaped as a Stremio stream so one parser reads
+ * every source. A pack's size is the whole pack, so it is kept apart from the
+ * file size the bitrate estimate uses.
+ */
+function torrentStream(t) {
+  const hints = {};
+  if (t.fileName) hints.filename = t.fileName;
+  if (t.size > 0) hints.videoSize = t.size;
+  const stats = t.seeders !== undefined ? `\n👤 ${t.seeders}` : '';
+  return { infoHash: t.hash, title: `${t.name}${stats}`, behaviorHints: hints };
+}
+
+function videoName(name) {
+  return /\.(mkv|mp4|m4v|ts|avi)$/i.test(name) ? name : undefined;
+}
+
+function attrs(item) {
+  const out = {};
+  (item.attr || []).forEach(a => {
+    const at = a && a['@attributes'];
+    if (at && at.name) out[at.name] = at.value;
+  });
+  return out;
+}
+
+function languagesOf(value) {
+  const codes = String(value || '').toLowerCase().split(',').map(s => s.trim()).filter(Boolean);
+  const multiAudio = codes.some(c => c === 'multi audio' || c === 'dual audio');
+  const languages = [];
+  codes.forEach(c => {
+    const name = LANGUAGE_CODES[c];
+    if (name && languages.indexOf(name) < 0) languages.push(name);
+  });
+  return { languages, multiAudio };
+}
+
+/** StremThru's public Torznab, as JSON. */
+async function stremthru(type, id) {
+  const [imdb, season, episode] = id.split(':');
+  const query = type === 'series'
+    ? `t=tvsearch&imdbid=${imdb}&season=${season}&ep=${episode}`
+    : `t=movie&imdbid=${imdb}`;
+  const json = await getJson(`https://stremthru.13377001.xyz/v0/torznab/api?${query}&o=json`, { timeout: USER_TIMEOUT_MS, maxBytes: 4000000 });
+  const items = ((json && json.channel) || {}).items || [];
+  return {
+    torrents: items.map(item => {
+      const a = attrs(item);
+      const lang = languagesOf(a.language);
+      return {
+        hash: String(a.infohash || item.guid || '').toLowerCase(),
+        name: String(item.title || ''),
+        fileName: videoName(String(item.title || '')),
+        size: Number(a.size) || 0,
+        seeders: a.seeders !== undefined && a.seeders !== '' ? Number(a.seeders) : undefined,
+        languages: lang.languages,
+        multiAudio: lang.multiAudio,
+      };
+    }),
+  };
+}
+
+/** The Pirate Bay's JSON API, which accepts an IMDb ID as the query. */
+async function apibay(type, id) {
+  const imdb = id.split(':')[0];
+  const list = await getJson(`https://apibay.org/q.php?q=${imdb}&cat=0`, { timeout: USER_TIMEOUT_MS, maxBytes: 2000000 });
+  return {
+    torrents: (Array.isArray(list) ? list : [])
+      .filter(t => t && /^[a-f0-9]{40}$/i.test(t.info_hash || '') && !/^0+$/.test(t.info_hash))
+      .map(t => ({ hash: t.info_hash.toLowerCase(), name: String(t.name || ''), size: Number(t.size) || 0, seeders: Number(t.seeders) || 0 })),
+  };
+}
+
+/** EZTV's JSON API: one show's torrents, by IMDb number. */
+async function eztv(type, id) {
+  if (type !== 'series') return { torrents: [] };
+  const imdb = id.split(':')[0].replace(/^tt/, '');
+  const json = await getJson(`https://eztvx.to/api/get-torrents?imdb_id=${imdb}&limit=100&page=1`, { timeout: USER_TIMEOUT_MS, maxBytes: 2000000 });
+  return {
+    torrents: ((json && json.torrents) || []).map(t => ({
+      hash: String(t.hash || '').toLowerCase(),
+      name: String(t.title || t.filename || ''),
+      fileName: videoName(String(t.filename || '').replace(/\[eztv[^\]]*\]/i, '')),
+      size: Number(t.size_bytes) || 0,
+      seeders: Number(t.seeds) || 0,
+    })),
+  };
+}
+
+// ---- anime and title searches (3.1)
+
+const pad2 = n => (n < 10 ? `0${n}` : String(n));
+
+/** Text queries for an anime episode: the entry's own title, then the show's, with the number. */
+function animeQueries(type, ctx) {
+  const own = (ctx.titles || [])[0];
+  const show = (ctx.showTitles || []).find(t => anime.norm(t) !== anime.norm(own || ''));
+  if (type === 'movie') return [own || show].filter(Boolean);
+  const out = [];
+  if (own) out.push(`${own} ${pad2(ctx.episode)}`);
+  if (show) out.push(`${show} ${pad2(ctx.episode)}`);
+  if (ctx.absolute > ctx.episode && show) out.push(`${show} ${ctx.absolute}`);
+  if (own) out.push(`${own} batch`);
+  return out.slice(0, 4);
+}
+
+/** Keep the torrents that hold this anime episode (or film), marked episode/batch. */
+function animeTorrents(type, ctx, torrents) {
+  const out = [];
+  const seen = new Set();
+  torrents.forEach(t => {
+    if (!/^[a-f0-9]{40}$/.test(t.hash) || seen.has(t.hash)) return;
+    let fit = 'episode';
+    if (type === 'series') fit = anime.matchEpisode(t.name, ctx);
+    else {
+      const text = ` ${anime.norm(t.name)} `;
+      if (!(ctx.titles || []).concat(ctx.showTitles || []).some(x => anime.norm(x) && text.indexOf(` ${anime.norm(x)} `) >= 0)) fit = '';
+    }
+    if (!fit) return;
+    seen.add(t.hash);
+    out.push(Object.assign({}, t, { fit }));
+  });
+  return out;
+}
+
+function animeEpisodeOf(ctx) {
+  return { season: ctx.season, catalogEpisode: ctx.catalogEpisode, episode: ctx.episode, absolute: ctx.absolute };
+}
+
+/** SeaDex: the best release (and alternatives) for an anime entry; only Nyaa copies have public hashes. */
+async function seadex(type, id) {
+  const ctx = await anime.context(type, id);
+  if (!ctx || !ctx.anilistId) return { torrents: [] };
+  const json = await getJson(`https://releases.moe/api/collections/entries/records?filter=alID%3D${ctx.anilistId}&expand=trs`,
+    { timeout: USER_TIMEOUT_MS, maxBytes: 3000000 });
+  const torrents = [];
+  ((json && json.items) || []).forEach(entry => (((entry.expand || {}).trs) || []).forEach(t => {
+    if (t.tracker !== 'Nyaa' || !/^[a-f0-9]{40}$/i.test(t.infoHash || '')) return;
+    const files = (t.files || []).map(f => ({ name: String(f.name || ''), size: Number(f.length) || 0 })).filter(f => videoName(f.name));
+    const file = type === 'movie' ? files.sort((a, b) => b.size - a.size)[0] : anime.episodeFile(files, ctx);
+    if (!file) return;
+    const group = t.releaseGroup ? `[${t.releaseGroup}] ` : '';
+    torrents.push({
+      hash: t.infoHash.toLowerCase(),
+      name: `${group}${file.name.split('/').pop()}${t.dualAudio && !/dual/i.test(file.name) ? ' [Dual Audio]' : ''}`,
+      fileName: file.name.split('/').pop(),
+      size: file.size,
+      seadex: t.isBest ? 'best' : 'alt',
+      multiAudio: !!t.dualAudio,
+      fit: 'episode',
+    });
+  }));
+  return { torrents, filtered: true, animeEpisode: animeEpisodeOf(ctx) };
+}
+
+/** Torrentio by Kitsu ID: the anime entry's own episode numbers. */
+async function kitsu(type, id) {
+  const ctx = await anime.context(type, id);
+  if (!ctx || !ctx.kitsuId) return { streams: [] };
+  const kid = type === 'movie' ? `kitsu:${ctx.kitsuId}` : `kitsu:${ctx.kitsuId}:${ctx.episode}`;
+  const answer = await stremio('torrentio.strem.fun')(type, kid);
+  return Object.assign(answer, { animeEpisode: animeEpisodeOf(ctx) });
+}
+
+const SIZE_UNITS = { KiB: 1024, MiB: 1048576, GiB: 1073741824, TiB: 1099511627776, KB: 1e3, MB: 1e6, GB: 1e9, TB: 1e12 };
+function decodeXml(s) {
+  return String(s).replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n))).replace(/&quot;/g, '"').replace(/&#39;|&apos;/g, "'")
+    .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
+}
+
+/** Nyaa's RSS (English-translated anime), by the entry's titles. */
+async function nyaa(type, id) {
+  const ctx = await anime.context(type, id);
+  if (!ctx || !(ctx.titles || []).concat(ctx.showTitles || []).length) return { torrents: [] };
+  const all = [];
+  await Promise.all(animeQueries(type, ctx).map(async q => {
+    const result = await require('./net').get(`https://nyaa.si/?page=rss&c=1_2&f=0&q=${encodeURIComponent(q)}`,
+      { timeout: USER_TIMEOUT_MS, maxBytes: 3000000, accept: 'application/rss+xml' }).catch(() => null);
+    if (!result) return;
+    const xml = result.body.toString('utf8');
+    const items = xml.split('<item>').slice(1);
+    items.forEach(item => {
+      const pick = tag => { const m = new RegExp(`<${tag}>([\\s\\S]*?)</${tag}>`).exec(item); return m ? decodeXml(m[1].trim()) : ''; };
+      const size = /^([\d.]+)\s*([KMGT]i?B)$/.exec(pick('nyaa:size'));
+      all.push({
+        hash: pick('nyaa:infoHash').toLowerCase(),
+        name: pick('title'),
+        size: size ? Math.round(Number(size[1]) * (SIZE_UNITS[size[2]] || 1)) : 0,
+        seeders: Number(pick('nyaa:seeders')) || 0,
+      });
+    });
+  }));
+  return { torrents: animeTorrents(type, ctx, all), filtered: true, animeEpisode: animeEpisodeOf(ctx) };
+}
+
+/** Knaben's database: titles searched by text across many trackers (Nyaa, 1337x, TPB, RARBG's archive…). */
+async function knaben(type, id) {
+  const ctx = await anime.context(type, id).catch(() => null);
+  const [imdb, s, e] = id.split(':');
+  let queries;
+  let title = '', year = '';
+  if (ctx && ctx.anime && (ctx.titles || []).concat(ctx.showTitles || []).length) {
+    queries = animeQueries(type, ctx);
+  } else {
+    const meta = await require('./catalog').meta(type, imdb);
+    title = meta.name || '';
+    year = String(meta.year || '').slice(0, 4);
+    if (!title) return { torrents: [] };
+    queries = type === 'movie' ? [`${title} ${year}`.trim()] : [`${title} S${pad2(Number(s))}E${pad2(Number(e))}`, `${title} S${pad2(Number(s))}`];
+  }
+  const hits = [];
+  await Promise.all(queries.map(async query => {
+    const json = await postJson('https://api.knaben.org/v1', {
+      search_type: '100%', search_field: 'title', query, size: 100, order_by: 'seeders', order_direction: 'desc',
+      hide_unsafe: true, hide_xxx: true,
+    }, { timeout: USER_TIMEOUT_MS, maxBytes: 4000000 }).catch(() => null);
+    ((json && json.hits) || []).forEach(h => hits.push({
+      hash: String(h.hash || '').toLowerCase(),
+      name: String(h.title || ''),
+      size: Number(h.bytes) || 0,
+      seeders: Number(h.seeders) || 0,
+    }));
+  }));
+  if (ctx && ctx.anime && queries.length && (ctx.titles || []).concat(ctx.showTitles || []).length)
+    return { torrents: animeTorrents(type, ctx, hits), filtered: true, animeEpisode: animeEpisodeOf(ctx) };
+  // Plain titles: the name must carry the title (and, for a film, its year).
+  const want = anime.norm(title);
+  return {
+    torrents: hits.filter(h => {
+      const text = ` ${anime.norm(h.name)} `;
+      if (text.indexOf(` ${want} `) < 0) return false;
+      return type !== 'movie' || !year || text.indexOf(` ${year} `) >= 0;
+    }),
+  };
+}
+
+/** Zilean: Debrid Media Manager's hash lists, searched by IMDb ID. */
+async function zilean(type, id) {
+  const [imdb, season, episode] = id.split(':');
+  const query = type === 'series' ? `ImdbId=${imdb}&Season=${season}&Episode=${episode}` : `ImdbId=${imdb}`;
+  const list = await getJson(`https://zilean.stremio.ru/dmm/filtered?${query}`, { timeout: USER_TIMEOUT_MS, maxBytes: 5000000 });
+  return {
+    torrents: (Array.isArray(list) ? list : []).map(t => ({
+      hash: String(t.info_hash || '').toLowerCase(),
+      name: String(t.raw_title || ''),
+      size: Number(t.size) || 0,
+    })),
+  };
+}
+
+/** Bitmagnet: a DHT crawler's index, as Torznab XML. */
+async function bitmagnet(type, id) {
+  const [imdb, season, episode] = id.split(':');
+  const query = type === 'series' ? `t=tvsearch&imdbid=${imdb}&season=${season}&ep=${episode}` : `t=movie&imdbid=${imdb}`;
+  const result = await require('./net').get(`https://bitmagnetfortheweebs.midnightignite.me/torznab/api?${query}`,
+    { timeout: USER_TIMEOUT_MS, maxBytes: 4000000, accept: 'application/rss+xml' });
+  const items = result.body.toString('utf8').split('<item>').slice(1);
+  return {
+    torrents: items.map(item => {
+      const attr = name => { const m = new RegExp(`name="${name}" value="([^"]*)"`).exec(item); return m ? m[1] : ''; };
+      const title = /<title>([\s\S]*?)<\/title>/.exec(item);
+      return {
+        hash: attr('infohash').toLowerCase(),
+        name: title ? decodeXml(title[1].trim()) : '',
+        size: Number(attr('size')) || Number((/<size>(\d+)<\/size>/.exec(item) || [])[1]) || 0,
+        seeders: attr('seeders') !== '' ? Number(attr('seeders')) : undefined,
+      };
+    }),
+  };
+}
+
+/** A Stremio addon with a bigger answer than Torrentio's (Comet lists over a thousand). */
+function stremioWide(host) {
+  const search = stremio(host);
+  return async (type, id) => Object.assign(await search(type, id), { limit: PER_PROVIDER_LIMIT });
+}
+
+const PROVIDERS = [
+  { id: 'seadex', label: 'SeaDex', anime: true, search: seadex },
+  { id: 'torrentio', label: 'Torrentio', primary: true, search: stremio('torrentio.strem.fun') },
+  { id: 'kitsu', label: 'Torrentio (anime)', anime: true, search: kitsu },
+  { id: 'nyaa', label: 'Nyaa', anime: true, search: nyaa },
+  { id: 'knaben', label: 'Knaben', search: knaben },
+  // From Magneto/POV's list (3.1.1): community instances that answer without a debrid key.
+  { id: 'comet', label: 'Comet', search: stremioWide('comet.feels.legal') },
+  { id: 'meteor', label: 'Meteor', search: stremioWide('meteorfortheweebs.midnightignite.me') },
+  { id: 'zilean', label: 'Zilean', search: zilean },
+  { id: 'bitmagnet', label: 'Bitmagnet', search: bitmagnet },
+  { id: 'torrentsdb', label: 'TorrentsDB', search: stremio('torrentsdb.com') },
+  { id: 'stremthru', label: 'StremThru', search: stremthru },
+  { id: 'apibay', label: 'The Pirate Bay', search: apibay },
+  { id: 'eztv', label: 'EZTV', series: true, search: eztv },
+];
+
+const EPISODE_TAG = /\bs\d{1,2}[ ._-]?e\d{1,3}\b|\b\d{1,2}x\d{2,3}\b/i;
+
+/**
+ * Whether a torrent named `name` can hold episode `episode` of `season`: the
+ * episode itself, a pack of its season, a range of seasons that includes it,
+ * or a complete series. Indexes keyed by show (not episode) need this filter.
+ */
+function fitsEpisode(name, season, episode) {
+  const text = String(name || '');
+  const exact = new RegExp(`\\bs0*${season}[ ._-]?e0*${episode}(?!\\d)|\\b${season}x0*${episode}(?!\\d)`, 'i');
+  if (exact.test(text)) return true;
+  if (EPISODE_TAG.test(text)) return false;  // another episode
+  const range = /\bs(?:eason)?[ ._-]?0*(\d{1,2})[ ._]*(?:-|to)[ ._]*s?(?:eason)?[ ._-]?0*(\d{1,2})\b/i.exec(text);
+  if (range) return season >= Number(range[1]) && season <= Number(range[2]);
+  const seasons = [];
+  const pattern = /\b(?:s|season[ ._-]?)0*(\d{1,2})(?!\d)/gi;
+  let m;
+  while ((m = pattern.exec(text))) seasons.push(Number(m[1]));
+  if (seasons.length) return seasons.indexOf(season) >= 0;
+  return /\b(complete|collection|all[ ._-]seasons)\b/i.test(text);
+}
+
+/** Candidates from one provider's answer, for the requested title or episode. */
+function candidatesFrom(provider, answer, type, id) {
+  if (answer.streams) {
+    const list = parseStreams(answer.streams, provider.id, answer.limit || 60);
+    if (answer.animeEpisode) list.forEach(c => { c.animeEpisode = answer.animeEpisode; });
+    return list;
+  }
+  const parts = id.split(':');
+  const season = Number(parts[1]);
+  const episode = Number(parts[2]);
+  const seen = new Set();
+  const out = [];
+  for (const t of answer.torrents || []) {
+    if (!/^[a-f0-9]{40}$/.test(t.hash) || seen.has(t.hash) || !t.name) continue;
+    if (type === 'series' && !answer.filtered && !fitsEpisode(t.name, season, episode)) continue;
+    seen.add(t.hash);
+    const candidate = parseStream(torrentStream(t), provider.id);
+    if (!candidate) continue;
+    if (t.languages && t.languages.length && !candidate.languages.length) candidate.languages = t.languages;
+    if (t.multiAudio) candidate.multiAudio = true;
+    if (t.seadex) candidate.seadex = t.seadex;
+    if (answer.animeEpisode) candidate.animeEpisode = answer.animeEpisode;
+    if (t.fit === 'episode') candidate.pack = false;  // "S2 - 05" is one episode, not a season
+    if (t.fit === 'batch') candidate.pack = true;
+    if (candidate.pack && candidate.sizeBytes) {
+      // The pack's size, not the episode's: keep it out of the bitrate estimate.
+      candidate.packBytes = candidate.sizeBytes;
+      delete candidate.sizeBytes;
+    }
+    out.push(candidate);
+    if (out.length >= PER_PROVIDER_LIMIT) break;
+  }
+  return out;
+}
+
+/**
+ * Merge by torrent hash. Providers are listed best-described first, so the
+ * first copy of a hash keeps its file name and index; later copies add their
+ * provider and a higher seeder count.
+ */
+function merge(lists) {
+  const byKey = new Map();
+  const result = [];
+  lists.forEach(list => list.forEach(c => {
+    const key = c.kind === 'magnet' ? c.value : c.id;
+    const have = byKey.get(key);
+    if (!have) {
+      const copy = Object.assign({}, c, { providers: [c.provider] });
+      byKey.set(key, copy);
+      result.push(copy);
+      return;
+    }
+    if (have.providers.indexOf(c.provider) < 0) have.providers.push(c.provider);
+    if (c.seeders !== undefined && (have.seeders === undefined || c.seeders > have.seeders)) have.seeders = c.seeders;
+    if (!have.sizeBytes && c.sizeBytes) have.sizeBytes = c.sizeBytes;
+    if (!have.fileName && c.fileName) have.fileName = c.fileName;
+    if (!have.seadex && c.seadex) have.seadex = c.seadex;
+    if (!have.animeEpisode && c.animeEpisode) have.animeEpisode = c.animeEpisode;
+    if (c.multiAudio) have.multiAudio = true;
+  }));
+  return result;
+}
+
+/**
+ * Search the chosen providers. `onLate(candidates, report)` receives the full
+ * merged list if a provider answers after the reply went back.
+ * Resolves to { candidates, report: [{ id, label, count, ms, error }] }.
+ */
+/**
+ * What the releases must be called (4.1.1): the catalogue's title, TMDB's titles
+ * and aliases, and for anime AniList's names; the film's year. null when the
+ * catalogue can't be read, so nothing is dropped on a bad network.
+ */
+async function expectedTitles(type, id) {
+  const imdb = String(id).split(':')[0];
+  const meta = await require('./catalog').meta(type, imdb).catch(() => null);
+  if (!meta || !meta.name) return null;
+  const titles = [meta.name];
+  const more = await require('./tmdb').aliases(type, imdb).catch(() => []);
+  more.forEach(t => titles.push(t));
+  const ctx = await anime.context(type, id).catch(() => null);
+  if (ctx && ctx.anime) (ctx.titles || []).concat(ctx.showTitles || []).forEach(t => titles.push(t));
+  return { type, titles, year: Number(String(meta.year || '').slice(0, 4)) || 0 };
+}
+
+function discoverAll(type, id, options) {
+  options = options || {};
+  // Every searcher's results are held to the title (strict, 4.1.1). Tests pass
+  // `expect` themselves, or `expect: false` to see everything.
+  const expectP = options.expect !== undefined ? Promise.resolve(options.expect || null) : expectedTitles(type, id).catch(() => null);
+  let expect = null;
+  expectP.then(e => { expect = e; });
+  const strictMerge = l => match.strict(merge(l), expect);
+  const chosen = PROVIDERS.filter(p => (options.only ? options.only.indexOf(p.id) >= 0 : true) && (!p.series || type === 'series'));
+  const providers = options.providers || chosen;
+  const started = Date.now();
+  const lists = providers.map(() => []);
+  const report = providers.map(p => ({ id: p.id, label: p.label, count: 0, ms: 0, error: '' }));
+  let replied = false;
+  return new Promise(resolve => {
+    let pending = providers.length;
+    let graceTimer = null;
+    const finish = () => {
+      if (replied) return;
+      replied = true;
+      if (graceTimer) clearTimeout(graceTimer);
+      // Wait (briefly) for the titles; the catalogue's answer is usually cached.
+      Promise.race([expectP, new Promise(r => setTimeout(r, 3000))]).then(() => {
+        resolve({ candidates: strictMerge(lists), report: report.map(r => Object.assign({}, r)) });
+      });
+    };
+    const hardTimer = setTimeout(finish, USER_TIMEOUT_MS + 500);
+    providers.forEach((p, i) => {
+      Promise.resolve().then(() => p.search(type, id)).then(answer => {
+        lists[i] = candidatesFrom(p, answer || {}, type, id);
+        report[i].count = lists[i].length;
+      }, error => {
+        report[i].error = String((error && error.message) || error).slice(0, 80);
+      }).then(() => {
+        report[i].ms = Date.now() - started;
+        pending--;
+        if (pending === 0) {
+          clearTimeout(hardTimer);
+          if (!replied) finish();
+          else if (options.onLate) options.onLate(strictMerge(lists), report);
+          return;
+        }
+        if (replied) {
+          if (options.onLate) options.onLate(strictMerge(lists), report);
+          return;
+        }
+        if (p.primary && !graceTimer) graceTimer = setTimeout(finish, GRACE_AFTER_FIRST_MS);
+      });
+    });
+    if (!providers.length) finish();
+  });
+}
+
+module.exports = { discoverAll, fitsEpisode, merge, candidatesFrom, torrentStream, PROVIDERS, GRACE_AFTER_FIRST_MS };

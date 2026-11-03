@@ -1,17 +1,241 @@
 # Bloob and Buna: complete project handoff
 
+## Start here (1 November 2026)
+
+- **New to the project? Read [`HANDOVER.md`](HANDOVER.md) first** (3 November 2026): the short version of everything below, with build, install, rules and open work.
+- **Calibration is gone (4.1, 3 November 2026):** the owner asked for all of it to be removed (Calibrate screen, `bloob-cal`, `cal/`, Pal, the Greyscale app and their tests). The history below is kept for reference only; do not bring it back unless asked. The Greyscale IPK lives on in its own repository, `muhibegypt-del/greyscale-report`.
+- **The latest work** is the 4.1.0 entry under "Native track" below.
+- **4.1 Swiss redesign (3 November 2026, in progress).** The owner chose **Swiss full bleed** (the bottom row of the canvas "Bloob, unslopped", https://claude.ai/artifact/3iCgPmqSJMT1TDquSQsXcS) as the foundation for the whole UI and asked for a full redesign. Decisions (owner: "you decide"): Swiss **overrides the Elements of A rule** below; interface text is **TeX Gyre Heros** (GUST Font License, a free font drawn after Helvetica; `third_party/fonts/`); titles are the film's or show's **own logo**, set in type only without one. Method: first every screen as a concept board, approved by the owner; then a spec from the boards; then Swiss building blocks in the renderer; then each screen rebuilt (not restyled) and compared with its board before the owner sees it. A first reskin (`ea292d7`) was rejected because it kept the old layouts. Versions list: **SDR Remux** and **Season packs** are sections of their own (`cinephile.js` tiers `sdr-remux`, `pack`) and tabs of their own beside All · 4K · 1080p (and beside the edition tabs when a film has several cuts); the resolution tabs list single files only, the tab row slides to keep the chosen tab in view (`sources.cpp` `Filter::SdrRemux`, `Filter::Packs`).
+- **"Immediate work order for the next assistant"** further down dates from the web app (October 2026) and is history.
+
+
 Read this file before changing the application. This repository contains an independent LG webOS TV streaming prototype, research notes about a reference app called **Elements of A**, and a plan for **Buna**, our own playback and UI runtime. The user wants a polished television experience with excellent browsing, source choice, reliable playback, accurate seeking, working audio/subtitle controls, and efficient use of the LG media pipeline. The user explicitly wants no protected-content investigation. Do not present static code analysis as a live trace.
+
+## Current review handoff — 15 October 2026
+
+*History; this request is finished (see Done below).* On 15 October the owner asked for a review and a plan, with no application changes: [the independent branch review](docs/Claude-branch-review-2026-10-15.md) and [the review and planning instructions for Claude](docs/Claude-review-and-planning-handoff.md). Read them before choosing the next engine work.
+
+**Done (15 October 2026, docs only):** [`docs/Claude-review-validation.md`](docs/Claude-review-validation.md) confirms all ten findings at `fb4f412`, with corrections and five additional findings (A1–A5). [`native/RELIABILITY-IMPLEMENTATION-PLAN.md`](native/RELIABILITY-IMPLEMENTATION-PLAN.md) sequences the fixes as R1–R7 (all planned, none implemented) and comes before `native/ENGINE-PLAN.md`, whose status marks were corrected. Start implementation with R1.
 
 ## The user's actual goal
 
 Build **Bloob**, a distinct webOS application with:
 
-1. A calm, premium TV interface: clear information hierarchy, spacious artwork, predictable focus, minimal player chrome, and graceful loading/error states. Take organizational and performance lessons from Elements of A; create original visuals, assets, text, and implementation.
+1. A calm, premium TV interface: clear information hierarchy, spacious artwork, predictable focus, minimal player chrome, and graceful loading/error states. Take organizational and performance lessons from Elements of A; create original assets, text, and implementation. **Owner's rule (15 October 2026): copy Elements of A's measured design values (spacing, padding, sizes, radii, type, opacity, colour, timing, geometry) wherever the studies record them, with each one listed in `native/TOKENS.md`. Never copy code, artwork, icons, fonts, written text or branding.**
 2. A direct catalog-to-playback path: browse films and series, pick an episode, discover candidate sources, resolve an authorized source through AllDebrid, select the correct file or quality when needed, and play through the TV media path.
 3. **Buna**, an app-owned runtime layer that coordinates navigation, focus, playback sessions, source adapters, media state, tracks, metrics, and lifecycle. It should be independent, testable, and able to choose a web video backend now and a more capable native or segmented backend later if evidence justifies one.
 4. Measured performance: fast first frame, stable HDR/audio output when the TV and source support it, smooth seeking, low idle overhead, memory release after exit, and no repeated work that harms TV responsiveness.
 
-The current prototype is a vertical slice, not the finished product. The user has seen a high-quality resolved stream play with HDR and Atmos on this TV, but has criticized the player overlay and source chooser. A seek bar had been unsynchronized on a prior build. Some fixes have been implemented but require renewed TV verification. The user also reported having to pair AllDebrid at every app start; persistence code exists now, but a successful pair/restart test has **not** confirmed it.
+The current prototype is a vertical slice, not the finished product. The user has seen a high-quality resolved stream play with HDR and Atmos on this TV, but criticized the old player overlay and source chooser and had to re-pair AllDebrid at every start. Version 0.2.0 (12 October 2026) answers all three: Buna now owns playback (`tv-app/src/buna/`), the source screen is recommendation-first, and pairing storage tries several locations, verifies each write, and reports where the key went. All of it is covered by unit tests and a key-driven end-to-end run in desktop Chromium. **None of it has been verified on the TV yet**; see "TV verification" in `tv-app/README.md`.
+
+## Native track (Buna N2, 13 October 2026; 1.1 UI pass the same day; 1.2.0 and 2.0.0 Glass on 14 October; 2.1.0 continuity on 15 October)
+
+The owner chose native. `native/` is a C++ webOS app (`com.muhib.bloob`, "Bloob Native") built with the community webOS NDK (openlgtv buildroot-nc4, the toolchain Moonlight TV uses).
+
+- **What it contains:** the whole app, not a test host.
+  - Tabs: Search, Home, Films, Series, Settings.
+  - Home: an artwork-led hero, then shelves.
+  - Details: the page continues into seasons and episodes.
+  - *Choose how to watch*: a best-match card, other versions, release details, AllDebrid PIN pairing and resolve progress.
+  - Player: quiet during viewing, with seek preview, real track panels and up next.
+  - Settings.
+- **App map (start here for any change):** `native/APP-MAP.md` splits the app into 24 layers across experience, engine, service and foundation. Each layer has its job, files, state with evidence, gaps, and numbered increments such as **9.3**. Work one layer per change, cite the increment ID in the commit, and update that layer's state when the change lands or is tested on the TV. `native/QUALITY.md` defines quality (ISO/IEC 25010, Nielsen response limits, streaming quality of experience, and TV 10-foot guidance), scores every layer on seven dimensions, and ranks them. Re-score a layer when it changes.
+- **UX implementation map:** `native/IMPLEMENTATION-UX.md` turns the Elements of A UI studies (now in `research/`, from `bloob-v1` commits `32c2ebc` and `59348e3`) into build items U0 to U9, with logic, code, tests and TV checks. Its *Status in 1.2.0* table lists the whole consolidated list the owner asked for in one go (F1–F8 fixes, P1–P6 platform items, U0–U10, G1–G5), where each landed and its evidence.
+- **1.2.0 (14 October 2026, built, not yet on the TV):** tracks restored after reconnects and preferred audio/subtitle languages applied; start position in the load request with seek fallback (unverified option); `policyAction` handled; reduced seek HUD and timeout classes; subtitle position (undocumented call, switches itself off); clock and "Ends at"; next episode prepared in the credits; TV format warnings in the ranker (`tv-app/service/tv-profile.js`: DTS, TrueHD Atmos, disc Dolby Vision, bitrate against 95 Mbps Ethernet); one Play owner (`native/src/play.*`); scrolling season strip; search keyboard that gives way; Settings with subtitles, autoplay, Reduce motion, Disconnect (`POST /api/account/unpair`, which writes an unpaired mark and deletes nothing) and About; effects tiers; 22 px type floor; glyphs beyond Latin-1; `[launch]`, `[perf]` and `[qoe]` log lines; IPK modes fixed to 755/644 by `native/scripts/fix-ipk-modes.py`. `requiredACG` is still unset: run the read-only `native/scripts/acg-lookup.sh` on the TV first. QA work (tour assertions, CI, TV automation) was skipped at the owner's request.
+- **2.0.0 Glass (14 October 2026, built, not yet on the TV):** the owner chose **Glass** from the concept canvas (artifact "Bloob UI concepts: Lantern and Glass") and asked for a full overhaul with a proper plan. `native/GLASS-PLAN.md` is that plan, phases G0–G8 with a status table and commits.
+  - **Visual system.** It follows Apple's public tvOS type scale (floor 23 px), safe area (80/60) and 5-column grid. Text uses label roles, with *Increase contrast*.
+  - **Glass materials.** Frosted glass is baked per panel from the blurred backdrop on image workers, with a soft knee so white text stays readable on bright art. Glass over video is smoked, because the video plane cannot be read. A solid fallback covers Lite, *Reduce transparency* and baking. Scrims adapt to the artwork's brightness.
+  - **Direct Play.** Play from Home, the title page, an episode or Up next goes straight to the best version, showing only a progress sheet; Cancel returns to where Play was pressed. **Owner override (2.7.3): Play opens the versions list with the best version focused; only Up next continues by itself (with the show's version).** Films show a frosted *How to watch* panel on the title page. The old chooser is now *All versions*.
+  - **Player.** A smoked bar with 5/8 s timers, 300 ms fades and a 400 ms seek commit.
+  - **Spoken focus (G7).** With LG Audio Guidance on, focus is spoken as label, role and position, via `native/src/speech.*`. It uses the documented `audioGuidance` setting and `com.webos.service.tts/speak`, unverified on this TV, and the app declares `accessibility.supportsAudioGuidance`.
+  - **Clean-up.** The 1.x type names, components and tokens are gone; `native/DESIGN.md` is rewritten for Glass. `native/TV-TEST.md` §8 is the 2.0 TV pass.
+- **UX plan (next, 15 October 2026):** after a full series on 2.0.0, the owner judged the look right but the behaviour not "dynamic, intuitive or intelligent". On that viewing, each next episode chose its own version (often HD), and there was no way to choose a version for an episode. `native/UX-PLAN.md` is the plan, built from `research/Elements-of-A-UX-learning-frameworks.md` and its companion response, and `research/Swiftfin-tvOS-behaviour-for-Bloob.md`. It labels every claim as observed in Elements of A [O], read in Swiftfin [S], proposed [P] or Bloob today [B], and lists ten located causes in Bloob's code. It defines twelve contracts, X1–X12:
+  - progress and completion;
+  - the next-action resolver;
+  - version preference and edition identity;
+  - track intent;
+  - the navigation and Back map;
+  - place anchors;
+  - bounded asynchronous work;
+  - information budgets;
+  - component states;
+  - the player;
+  - recovery;
+  - accessibility.
+  Work them in its stated order and tick its status table.
+- **2.1.0 continuity (15 October 2026, built, not yet on the TV):** the first three UX-PLAN contracts, built in answer to the episode report.
+  - **Progress v2 (X1).** Reports carry a session and sequence, so late reports are dropped. Completion is a policy in `tv-app/service/completion.js`. Continue has tiers, and a title can be removed from Continue.
+  - **Next action (X2).** `tv-app/service/next.js` gives `target` in `/api/meta`: resume, next, start, or caught up with the air day. An unaired episode is never offered.
+  - **Version continuity (X3).** A show keeps to the version last played or hand-picked. Seeders can no longer outvote resolution. The episode versions list has sections and pack tags, and the starting sheet has *Other versions*.
+  - **Remaining.** Edition-aware resume and track intent are still to do.
+  - **TV pass.** `native/TV-TEST.md` §9; the IPK is `native/artifacts/com.muhib.bloob_2.1.0_arm.ipk`.
+- **2.2.0 Elements of A values (15 October 2026, built, not yet on the TV).** Every value the studies record is now applied and listed in `native/TOKENS.md`, which `theme.h` cites as `[EoA Xn]`:
+  - label opacities (100/50/30/20%) and page grey `#2C2C2E`;
+  - pills for seasons and tabs (66 high, 30 padding, 8 px focus growth, candidate 10%), with 16 px between controls;
+  - focus timing 85/230 ms, a 300 ms focus rest, and screen-reader doubled player delays;
+  - the 0.55/0.2 artwork blend under card titles, and the 10% settings platter.
+
+  Buttons now measure once and centre their label on its capital-letter height, which fixes uneven margins. `native/scripts/eoa-token-export.py` is a read-only script for the owner's PC. It exports the values the studies don't record (button, card, radius, easing) as numbers only, never code.
+- **2.3.0 full Elements of A token pass (15 October 2026, built, not yet on the TV).** It applies the full catalogue `research/Elements-of-A-design-tokens.md` (from `bloob-v1` `a505b7b`), row by row in `native/TOKENS.md`:
+  - type weights;
+  - buttons: 66 high, padding 30, +8 width on focus, White90, Dark/Default/Player variants;
+  - cards: radius 20, +50 width on focus, two-level shadows;
+  - the hero and title page: logo 420×126, Caption1 metadata and description, 742 first shelf, 321 pitch, the reference gradient stops and overlay;
+  - the player: no panel, gradient to 60%, 14 px bar, Title2 Gray92 header, 66-high controls 25 apart, 454-wide track menu, 454×460 Up next;
+  - search: 432-wide keyboard, 200 ms query;
+  - settings rows, notifications;
+  - motion: ease-in/ease-out timed curves, springs 30/150/1, 300 ms linear crossfades.
+
+  Glass stays on the tab bar, How to watch and sheets.
+- **Engine upgrade (next, 15 October 2026).** The target is `docs/Buna-engine-specification.md`, the finished-system spec from `bloob-v1` `73da849`. `native/ENGINE-PLAN.md` holds:
+  - a section-by-section conformance table, marked Have / Partial / Gap;
+  - phases E1–E8, in order:
+    1. session truth;
+    2. inspector;
+    3. watch attempts and leases;
+    4. events and frames;
+    5. layout and focus runtime;
+    6. resources and text;
+    7. sample route, only if a measured gap appears;
+    8. accessibility.
+
+  A retained scene and a separate render thread are deferred until TV measurements show a frame problem.
+- **2.4.0 runtime resources (16 October 2026, built, not yet on the TV).** The owner asked for every mechanism in the Elements of A CPU, memory and GPU study (`research/Elements-of-A-CPU-memory-GPU-map.md`) to be built into Bloob. `native/RUNTIME-RESOURCE-ADOPTION.md` maps all 52 findings to code and records each one's state.
+  - **Frames and events (R5a).** Wakes are coalesced notifications, and only a visible change repaints, so the media clock no longer redraws the screen. Animation time is the median of three intervals. Pumps are bounded, the renderer state is cached, and shelf cards are drawn in batched passes.
+  - **Resources (R5b).** One GPU budget is checked before any texture is created: 96 MB while browsing, 56 MB during playback or low system memory, 24 MB in the background. Eviction goes by relevance, then frame age. Background releases every texture and stops new fetches. The service trims its image cache to the same policy. Worker threads are named.
+  - **Artwork (R5c).** Fetch and decode are separate stages, and each source picture is decoded once for all its variants. Requests are ordered by relevance (visible, near, prefetch). Stale work is cancelled at each stage, and uploads are paced.
+  - **Retained layers (R6r).** Transitions paint the screen underneath once.
+  - **Inspector (R5d).** `/tmp/bloob-state.json`, read with `scripts/tv-inspect.sh`.
+  - **Found and fixed:** the worker pools had never woken the UI thread (a completion was tested after being moved), so replies and art could wait up to 1 s.
+  - **TV pass:** `native/TV-TEST.md` §10.
+- **2.5.0 sources, picture and subtitles (16 October 2026, built, not yet on the TV).** The owner's report on 2.4: subtitles far too large with no size option, Dolby Vision still showing as HDR, a wish for SDR, a versions list that isn't intuitive, and a question about better scrapers than Torrentio. Research is in `research/Source-indexes-for-Bloob.md`, `research/Dolby-Vision-on-webOS.md` and `research/Subtitle-styling-on-webOS.md`.
+  - **Sources.** `tv-app/service/sources.js` asks Torrentio, TorrentsDB, StremThru's public Torznab (which carries Debrid Media Manager hash lists: many 4K remux, DV and Atmos releases), The Pirate Bay's API and EZTV. All are keyed by IMDb ID, and none is sent the AllDebrid key. Results merge by hash. The reply goes back 2.5 s after Torrentio answers at most, and later answers join the cache. Settings > Sources can return to Torrentio only.
+  - **Picture.** Settings > Picture: Best available, HDR10 (skip Dolby Vision) or Prefer SDR (outranks resolution).
+  - **Dolby Vision (2.5.1 correction).** The owner reports Dolby Vision in MKV works on this TV. That overrides the public sources 2.5.0 relied on, so do not reintroduce an "MP4 only" rule. `tv-profile.js` lists MKV among the Dolby Vision containers. The `DolbyHdrInfo` load experiment is removed. The player's badge follows a Dolby Vision version when uMediaServer reports only the HDR10 base layer; `[qoe] picture` logs what the TV reported.
+  - **No unrequested penalties (2.5.2).** The owner's TV is on 5 GHz Wi-Fi with a 2 Gbps line. Bitrate no longer costs a version anything (`tv-profile.js` has no limit; only a profile with `comfortableMbps` set would), and season packs are no longer marked down. Do not add ranking penalties the owner has not asked for.
+  - **Playback info panel (2.5.3).** Info (I on a keyboard), the blue key or the ⓘ control in the player toggles a live panel: video, audio and subtitle tracks, container and length, the file's average bitrate (size over running time), the TV's network throughput now/average/peak (from `/proc/net/dev`, the whole TV, because uMediaServer downloads the stream itself), uMediaServer's buffer report, playback stats, the version and release, and Bloob/TV CPU and memory. It samples twice a second only while open (`native/src/stats.*`). The live video bitrate is not reported by the TV's pipeline.
+  - **Subtitles.** Settings > Subtitle size (TV levels 0–4, default the smallest) and Subtitle background, sent with `setSubtitleFontSize` and friends after every enable.
+  - **Versions list.** Filter pills by resolution with counts, sections by kind of release (Remux, Blu-ray, Web download…), two-line rows with source, size and group, and *Found by* in release details.
+  - **TV pass:** `native/TV-TEST.md` §11; the IPK is `native/artifacts/com.muhib.bloob_2.8.1_arm.ipk`.
+- **2.6.0 home screen (23 October 2026, built, not yet on the TV).** Bloob becomes the TV's launcher, kept small at the owner's request (adopt, don't write).
+  - **YouTube tab** (2.6.2, owner: YouTube belongs in the tab bar, nothing else on Home): Search · Home · Films · Series · YouTube · Settings. The tab has no page; OK opens `youtube.leanback.v4` (the ad-free fork). It shows only when `listLaunchPoints` lists the app (Homebrew Channel `exec` as fallback; `native/src/apps.*`, `main.cpp`). Home is as in 2.5. The service can still serve app icons (`/api/image`), unused.
+  - **Power-on:** the watcher also replaces a resumed HDMI input or Live TV with Bloob for 20 s after boot or wake (the TV resumed HDMI 4).
+  - **OLED black**: `theme::plain` is `#000000` (owner override of EoA C5).
+  - **Takeover** (`native/launcher/`): Lumen's boot hook and watcher (MIT), trimmed to the Home takeover, with a safety net that leaves LG Home alone after three failed launches. The owner installs it once from a computer with `native/launcher/setup-tv.sh <TV>` (as other rooted-LG launchers do; the app never installs it on itself); it adds files only. With the hook present, Back on Home no longer closes Bloob.
+  - **Not yet:** the owner's intro animation, and the canvas "Bloob 2.6 Concepts" layouts for Versions, Title page and Player (planned as 2.7). TV pass: `native/TV-TEST.md` §12.
+- **2.7.0 library (23 October 2026, built, not yet on the TV).** The owner found Home "boring and repetitive". With the owner's TMDB key, Home, Films and Series come from TMDB (`tv-app/service/tmdb.js`): trending today/this week, a collection, a studio (A24, Ghibli, Pixar) and a network (HBO, Apple TV, Netflix) that rotate daily, acclaimed lists (many votes, a different page each day), decades, and genre rows. Items keep IMDb IDs (TMDB → IMDb mapping fetched once, kept in `tmdb-ids.json`); TMDB images for tiles and backdrops, Metahub logos. Cinemeta stays the fallback and the source of title details. The key lives only in `keys.json` in the service's data folder (`/media/internal/com.muhib.bloob/`), written by the owner on the TV; never in Git, logs or the app. **2.7.1:** Films and Series are built in the background after Home (they need hundreds of IMDb lookups the first time), lookups run 16 at a time; title pages show RT, Metacritic, IMDb and Letterboxd scores from MDBList, each with the site's logo since 2.7.2 (MDBList's SVG icons through `/api/image`, which allows only `mdblist.com/static/ratings/*.svg`; rasterised by nanosvg, `third_party/nanosvg`, zlib; RT shows the splat below 60%; logos are fetched on the TV, never committed) (`ratings.js`, `mdblist` in `keys.json`, cached a day; the app shows Cinemeta's IMDb rating without it). Keys are read by `keys.js`. Trakt (Client ID received; needs the Client Secret) and title-page collection/cast/similar rows are next.
+- **2.8.0 cinephile versions list (23 October 2026, built, not yet on the TV).** The owner wanted a tidier, cinephile list, with editions. Service: `tv-app/service/cinephile.js` reads the cut from release names (Extended, Director's Cut, Final Cut, Ultimate, Unrated/Uncut, IMAX, Open Matte, Special Edition, Redux; nothing said = Theatrical), tags (Hybrid, Criterion, Remastered, Restored), a source tier (UHD Blu-ray Remux, Blu-ray Remux, 4K disc encodes, 4K web, Blu-ray encodes, HD web, everything else), lossless audio, respected groups (a mark only, never a penalty), a one-line summary, and a plain comparison with the best version of the same cut. `rank.js` merges one release found twice (same group, resolution, source, cut, size within 2%), folds repetition (after two of the same resolution, picture, audio and cut in a tier; "Everything else" whole) and returns `cuts`. Dolby Vision P7 is named "HDR10 (Dolby Vision P7 disc)" because this TV shows its HDR10 base. **Ready now** (`ready.js`): the owner's own AllDebrid is asked about the top 8 versions for at most 3 s (add, read `ready`, remove only magnets this check added that are not ready; magnets already in the account are never touched); a ready version gets +3, a tie-breaker. App: an edition row replaces the resolution pills when there are several cuts, the best card follows the cut, and the cut chosen is remembered (setting `cut`, default Theatrical; per franchise needs collection data, planned with 2.9). Sections are tiers; rows are one line plus the comparison; "+N more" rows unfold; "Ready now" replaces the availability words; release details show edition, source with bitrate, comparison, AllDebrid state and where it was found. **2.8.1 (DTS):** the owner's remuxes start on DTS and the TV says "audio not supported" (the G2 has no DTS decoder). When playback starts the player switches to the best non-DTS track (the viewer's language first, any main track if the current one is DTS); a DTS-only version pauses with a plain explanation and focuses *Choose another version*. A DTS-to-Dolby bridge (ffmpeg on the TV, video passed through) is an experiment awaiting a CPU measurement; dts_restore is CX-only and stereo-only, so not used. 2.9 plan: file probing (real tracks, commentary, forced/SDH, chapters, runtime confirms the cut), track memory, edition-aware resume, title-page collection/cast/similar, Trakt, more indexes.
+- **3.0.0 Bloob's own engine (25 October 2026, built, not yet on the TV).** The owner reported that every remux said "audio codec not supported" and asked for a far more intuitive player, suspecting LG's player. Deduction (no TV reading; the owner said to act on deductions): remuxes start on TrueHD or DTS, and LG's player decodes neither.
+  - **Engine** (ENGINE-PLAN E7, chosen by deduction rather than a measured gap). Bloob reads the file with its own static LGPL FFmpeg 7.1.1 (`src/demux.*`; `scripts/build-ffmpeg-libs.sh arm|host` into the git-ignored `build-ffmpeg/`). It feeds the TV's decoders through LG's elementary-stream pipeline (`StarfishMediaAPIs` in `libplayerAPIs.so.1`, the route Kodi's webOS build uses; opened at run time by `src/starfish.cpp`, so Bloob still starts without it). `src/es_player.*` runs it behind the new `MediaBackend` interface (`media.h`), which `UmsPlayer` also implements.
+    - **Video:** Annex-B. Dolby Vision profile 7 plays its HDR10 base (its enhancement layer and RPU are removed); profiles 5 and 8 are declared as Dolby Vision.
+    - **Sound:** AC-3 and E-AC-3 (Atmos kept) pass through. Everything else (TrueHD, DTS, AAC, FLAC, PCM…) is converted to E-AC-3, 5.1 at most; Atmos from TrueHD is lost.
+    - **Subtitles:** Bloob draws them, text or PGS pictures.
+    - **Seeking and audio changes:** reload the pipeline at the exact time (`pauseAtDecodeTime`). Kodi's in-place seek uses private pipeline internals.
+  - **Fallback:** an engine error before a picture, or no picture within 20 s, hands over to LG's player at the same place, with the audio bridge (`tv-app/service/bridge.js`, ffmpeg/ffprobe in the service's `bin/`) for a DTS- or TrueHD-only version. On LG's player, the player picks the Dolby/AAC track beside TrueHD as well as DTS. The ranker treats TrueHD/DTS as converted sound (`tv-profile.js` `dts: 'bridge'`), not silence.
+  - **Service:** `POST /api/bridge/source` gives the engine a local plain-HTTP address for the AllDebrid link, which stays in the service's memory.
+  - **Desktop:** the engine runs with a clock-driven stand-in sink (`BLOOB_ENGINE=lg` uses the old stand-in). Demuxer tests run on a generated MKV (HEVC, TrueHD, DTS, AC-3, SubRip, chapters).
+  - **Build:** the glibc guard is now 2.7 (FFmpeg's `__isoc99_sscanf`, `__sched_cpucount`). The tour script presses OK twice since 2.7.3's versions-list change.
+  - **TV pass:** `native/TV-TEST.md` §14; the IPK is `native/artifacts/com.muhib.bloob_3.0.0_arm.ipk`. Still to come in 3.x: Skip intro from chapters, track memory, edition-aware resume, title-page collection/cast/similar, the intro hook.
+- **3.1.0 anime and searchers (25 October 2026, built, not yet on the TV).** The owner found anime searches weak and asked for every top-tier searcher. Research: `research/Searchers-and-anime-for-Bloob.md` (Magneto Module is a wrapper around POV's 19 scrapers. It isn't anime-aware, and its AllDebrid `instant` check uses an endpoint I believe AllDebrid retired).
+  - **Causes:** the ranker marked Japanese audio down; every index was asked by IMDb season/episode; there was no anime index.
+  - **`tv-app/service/anime.js`:**
+    - Fribb's anime-lists index (`anime-list-mini.json`, refreshed weekly into `anime-index.json`);
+    - AniList titles (`anime-titles.json`);
+    - episode mapping: TVDB season and cour offsets, absolute numbers for long runners;
+    - release matching ("S2 - 05", "2nd Season - 05", SxxEyy, absolute numbers, batches) and pack file picking.
+  - **New searchers (`sources.js`):**
+    - **Knaben** for every title (text search; carries Nyaa, TPB, 1337x…);
+    - for anime: **SeaDex** (the curated best release; Nyaa hashes only; exact episode file), **Torrentio by Kitsu ID** and **Nyaa** RSS.
+  - **Not added (probed):**
+    - Comet and MediaFusion need a configuration;
+    - the public Zilean is gone;
+    - Anime Tosho stopped in May 2026;
+    - AIOStreams would duplicate the others.
+  - **3.1.1:** the community instances Magneto/POV use also answer without a key: **Comet**, **Meteor**, **Zilean** (DMM hashes) and **Bitmagnet**. Added; The Matrix went to 656 distinct versions. Not added: MediaFusion (per-user token), DMM direct (account) and POV's HTML scrapers (fragile; Knaben and Meteor carry several of those sites).
+  - **Ranking:** for anime, Japanese audio is not marked down. Dual audio gets +2, SeaDex best +8 (it leads at equal resolution), a SeaDex alternative +2, all shown as tags. `release.js` reads bracketed groups and "BD". The app names the indexes in *Found by*.
+  - **Also fixed:** a same-millisecond dismissal check in `progress.js` that made a Continue test flaky.
+  - **TV pass:** `native/TV-TEST.md` §15; the IPK is `native/artifacts/com.muhib.bloob_3.2.1_arm.ipk`.
+- **3.2.0 Headphones mode (26 October 2026, built, not yet on the TV).** The owner wants films in the Sony WF-1000XM5 earbuds over Bluetooth to sound like full, loud surround. Bloob is private, so the chain is tuned for those earbuds only. Research and tiers: `research/Headphone-surround-for-Bloob.md`.
+  - **When:** automatically when the TV's sound output is Bluetooth (`com.webos.service.settings/getSystemSettings` `soundOutput`, subscribed; the TV reports `bt_soundbar` with the XM5 connected, `tv_speaker` without). Settings > Headphones: Automatic, Always or Off. Only Bloob's engine renders; LG's player (the fallback) does not.
+  - **Engine (`src/demux.cpp`):** in Headphones mode every track is decoded, Dolby included, with the decoder's DRC off (`drc_scale` 0; Night sets 1). FFmpeg's decoder doesn't apply dialnorm. The sound goes through `HeadphoneChain`, then out as E-AC-3 stereo at 448 kb/s. Audio PTS are led by the lip-sync setting; sound before the film's start is dropped. A seek or a change rebuilds the chain.
+  - **Chain (`src/headphones.*`, FFmpeg avfilter, enabled in `build-ffmpeg-libs.sh`):**
+    1. aresample and aformat to 7.1, 5.1(side) or stereo;
+    2. `headphone` (freq, 4096 blocks) with Bloob's 2N-channel responses; gain cancels the filter's −3 dB per channel; LFE is +10 dB relative;
+    3. the AutoEQ WF-1000XM5 correction (oratory1990; preamp −2.6 dB, 10 bands);
+    4. Night: `acompressor`;
+    5. the boost (default +9 dB, 0–15);
+    6. `alimiter` at −1 dBFS with latency compensation.
+  - **Rooms (`src/binaural.*`):** Brown and Duda's spherical head (head-shadow filter, interaural delay), their pinna echoes at half strength, a shoulder echo, image-source reflections up to three bounces through the same head model and darkened per bounce, and a two-band decaying diffuse tail (lows shared by both ears). Lounge (default), Studio and Cinema. **3.2.1:** measured responses become named room choices beside them. The service (`tv-app/service/hrir.js`, `GET /api/headphones`, `/api/headphones/file?id=`) lists WAVs in `/media/internal/com.muhib.bloob/headphones/` (and `headphones.wav` beside it); usable ones are 48 kHz with HeSuVi's 14 channels or Bloob's 16. The app copies the chosen one to `/tmp/bloob-headphones/`; the room setting is `file:<name>.wav`. Measured responses are level-matched to Lounge. The owner's copies of HeSuVi's Dolby Atmos and Dolby Headphone captures live only on the TV; third-party responses never go into Git or the IPK.
+  - **Player:** Audio panel rows *Room* and *Lip-sync* (Left/Right; applied 900 ms after the last change); info-panel row *Headphones*. Settings rows: Headphones, Surround room, Headphone volume boost, Night listening, Earbud correction, Headphone lip-sync (all saved by the service: `headphones`, `headphoneRoom`, `headphoneBoost`, `headphoneNight`, `headphoneEq`, `headphoneLeadMs`).
+  - **Measured on the desktop:** one chain renders 50–85× faster than real time. Previews come out at about −14 LUFS with a −0.9 dBFS peak; the plain downmix is about 13 dB quieter. `tools/hp_preview.cpp` (`build-host/hp_preview <dir> [film]`) writes WAV previews. Tests are in `tests/headphones_test.cpp` and the demux test.
+  - **Not yet:** Atmos heights (Cavern's E-AC-3 JOC; truehdd for TrueHD), lip-sync measured on the TV, and the phone/LDAC route. TV pass: `native/TV-TEST.md` §17; the IPK is `native/artifacts/com.muhib.bloob_3.2.1_arm.ipk`.
+- **3.3.0–3.4.1 Calibrate and Pal (29 October to 2 November 2026): removed in 4.1.** Settings → Calibrate, `bloob-cal`, the calibration library and the Pal session. One finding worth keeping: on this TV, LG's pattern generator only drew while a video played.
+
+- **4.0.0 (2 November 2026, built, not yet on the TV).** The owner compared Bloob with three apps (Stremio Origin, Native Tv, Luma) and asked for every improvement from them. Learnings only from Stremio Origin (GPL); MIT code and data from Native Tv and Luma with their notices.
+  - **Dolby Vision on disc remuxes:** profile 7 plays as single-layer profile 8.1 in Bloob's engine (enhancement layer dropped, each RPU rewritten by dovi_tool's `dolby_vision` crate, MIT, in `native/dovi/`, built by `scripts/build-dovi.sh`; `demux::dv_p7_to_81`). The HDR10/SDR preference keeps the old HDR10 base. The ranker labels it "Dolby Vision (disc, played as 8.1)" (`tv-profile.js` `dolbyVisionProfile7: 'convert'`). Tested against dovi_tool's MEL sample byte for byte.
+  - **Skip intro, recap, credits:** `tv-app/service/skips.js` (TheIntroDB, IntroDB, AniSkip via MyAnimeList IDs now in the anime index) merged behind the file's chapters by `native/src/skips.*`; a Skip button while the controls are hidden; credits bring Up next early. Setting `skipIntros`.
+  - **Styled subtitles:** Bloob's own ASS/SSA reader and layout (`native/src/ass.*`): styles, \pos, \move, alignment, colours, outline, shadow, fades, stacking; no italics, karaoke or drawings. Setting `subtitleStyled`. libass was the first choice; building it from source was blocked in this session.
+  - **Online subtitles that line themselves up:** `subtitles.js` (OpenSubtitles' keyless Stremio add-on, with the file's OpenSubtitles hash from two range reads) and `subsync.js` (Bloob's own speech-overlap alignment over frame-rate ratios and shifts). In the player's Subtitles panel with a Timing row; switched on by itself when the file lacks the viewer's language.
+  - **Smoothness:** frame intervals in `[perf]` and the inspector, a frame log (`/tmp/bloob-frames.on`), `scripts/tv-frames.sh`; the interface thread asks for priority −10.
+  - **LG tracking and adverts:** Settings row running `launcher/privacy.sh` as root (Native Tv's hosts table over `/etc/hosts`, Live Plus and promotion switches off, all reversible, nothing deleted). `tools/privacy-sim/test.sh`.
+  - **Becoming LG Home:** `launcher/takeover.sh` (Luma's manifest method), enabled once with `setup-tv.sh TV --takeover`; the app runs as `com.webos.app.home`, claims the Home key and redirects its tile. Safety: undone if Bloob isn't in front in 15 s; two restarts without a good start bring LG Home back. `tools/takeover-sim/test.sh`.
+  - **Text rendering** setting (Smooth default, Crisp for the TV comparison) and **idle page preparation** (Films, Series, Search built and drawn out of sight after 1.5 s still).
+  - **CI:** `.github/workflows/checks.yml`.
+  - TV pass: `native/TV-TEST.md` §20; the IPK is `native/artifacts/com.muhib.bloob_4.0.0_arm.ipk`.
+
+- **4.0.1 (2 November 2026)**: the Greyscale app and calibration fixes, all removed in 4.1.
+- **4.1.0 Swiss (3 November 2026, built, not yet on the TV).** IPK `native/artifacts/com.muhib.bloob_4.1.0_arm.ipk`.
+  - **Removed:** calibration (Calibrate, `bloob-cal`, `cal/`, Pal, the Greyscale app).
+  - **Picture:** HDR10 by default (Dolby Vision versions play as their HDR10 base); saved settings move once (`pictureDefault41`).
+  - **4K starts:** the stream bridge keeps connections to AllDebrid alive (one TLS handshake, not one per byte range); a version ready on AllDebrid is worth 9 (just under a resolution step), so Play prefers it over one AllDebrid must download first; `[engine] file open and stream info: N ms` in the log. Unmeasured on the TV: the remaining suspects are the 20 s engine timeout before LG's player takes over and the audio bridge for DTS/TrueHD-only remuxes.
+  - **Versions:** SDR Remux and Season packs sections and tabs.
+  - **Swiss full-bleed redesign** from the approved canvas boards (`https://claude.ai/artifact/3iCgPmqSJMT1TDquSQsXcS`, the Swiss rows): TeX Gyre Heros; titles are the logo art; a 12-column grid (`theme::col_x`, `span_w`, 80/24); black ground, one signal red (`theme::signal`, always qualified: the TV's headers define `signal`); square shapes (`Gfx::square`), no shadows, no glass (`draw_glass` is a black block under a white rule); focus a white block or white frame; spinners are a red bar sliding on a rule. Screens rebuilt: Home (logo, rule, fact columns via `draw_facts`, buttons right, frames with titles), title page (facts, logo, summary, ratings as big numbers, How to watch in columns), series (season tabs on a rule, numbered episodes), versions (big facts, one-line table), player (logo, red bar, Watched/Left, track panel, starting, error, Up next), resolve sheet (big percent, numbered steps), pairing, search, settings.
+- **4.1.1 (3 November 2026, built, not yet on the TV).** IPK `native/artifacts/com.muhib.bloob_4.1.1_arm.ipk`.
+  - **No long lines (owner: "disgusting"):** every white rule and row hairline is gone; only progress bars and short red markers stay. Do not bring rules back.
+  - **Strict title matching (owner: Dark (2017) showed Dark Matter and The Terminal List):** `tv-app/service/match.js` does what RTN (Comet, Riven) and parse-torrent-title (Torrentio) do: cut the title out of the release name, normalise it, keep the release only if it is the title or an alias at a Levenshtein similarity of 0.85 or more; films within a year; a show's release no older than the show. Applied to the merged results of every searcher in `discoverAll` (Comet itself returned Home Before Dark, His Dark Materials, Dark Winds for Dark). Titles: Cinemeta's name, TMDB's titles and Latin alternative titles (`tmdb.aliases`), AniList's for anime. Live, Dark S01E05: 430 found, 200 kept, none of another show. Tests: `tests/service/match.test.mjs`.
+- **Design (2.0, Glass):** the visual system, with materials, tokens, type, focus, motion, states, the spoken interface and per-screen layouts, is in `native/DESIGN.md`. The tokens live in `native/src/theme.h`, the type scale, label roles and components in `ui.cpp`, and the frost bake in `images.cpp`.
+- **Rendering and playback:**
+  - The TV's SDL2 provides the window and remote. Bloob draws with its own renderer: Inter via stb_truetype with oversampling and gamma, exact-size anti-aliased shapes, and artwork via stb_image scaled on worker threads, on a 1920×1080 offscreen canvas.
+  - Playback goes through LG uMediaServer over luna (`com.webos.media`), in an exported hardware video window under the UI.
+- **Lifecycle (1.1):**
+  - Focus loss alone, such as the LG quick menu, leaves playback alone.
+  - Hidden or background pauses and saves.
+  - Foreground sends `notifyForeground`.
+  - A released pipeline (`unloadCompleted`, `released` or `suspended`, or a refused command) reopens at the same position, at most three times a minute.
+  - This answers the 0.4 user report that playback died after the brightness menu. It is not yet verified on the TV.
+- **Service:** the app bundles its own copy of the Bloob service (`tv-app/service`, staged as `com.muhib.bloob.service` on port 8790). The app talks to it over plain localhost HTTP. The service also serves:
+  - the catalogue, search and an artwork proxy;
+  - ranked sources and AllDebrid resolve jobs;
+  - watch progress and settings.
+  If the bus will not start the service, the app runs it directly with the TV's Node and stops it on exit.
+- **Build and test scripts:**
+  - `native/scripts/build.sh`: tests, cross-build, ABI guards (no GLIBCXX, and since 2.4 no glibc symbol newer than GLIBC_2.4), service staging, IPK with fixed modes (`native/artifacts/com.muhib.bloob_4.0.0_arm.ipk`).
+  - `native/scripts/tv-inspect.sh`: reads the runtime inspector snapshot `/tmp/bloob-state.json` from the TV, read-only.
+  - `native/scripts/ui-tour.sh`: drives the whole app on the desktop through the acceptance task, plus quick-menu, Home and pipeline-lost events, against the real service with fixture sources.
+  - `native/scripts/ui-snapshots.sh`: covers player states.
+  - `native/TV-TEST.md`: the TV pass, with the acceptance task, viewing distance and lifecycle.
+
+**TV status:**
+
+- **0.3.x verified on the TV:** OLED55G26LA, webOS 9.2.2. Window, remote, luna, uMediaServer load and the exported video window worked, and the test clip played.
+- **0.4.0 ran on the TV (user report):**
+  - The app worked.
+  - Fonts showed jaggies.
+  - Some UI was buggy.
+  - Playback died after the LG quick menu.
+  - The look was not yet the calm, Apple-like feel the user wants.
+- **1.1.0 is the response to that report and has not yet run on the TV.** Neither have 1.2.0 (`native/TV-TEST.md` §7), 2.0.0 Glass (§8) or 2.1.0 continuity (§9).
+- **2.2.0 ran on the TV (user report, 15 October 2026).** It was "a huge improvement, extremely smooth". Four problems were reported:
+  - Subtitles showed *Off* until you scrolled.
+  - DV titles came up as HDR every time.
+  - The UI did nothing while the Magic Remote cursor was on screen.
+  - Audio choices were missing.
+
+- **3.1.x on the TV (owner's reading, 25 October 2026).** `luna://com.webos.service.videooutput/getStatus` during a film from Bloob: MAIN sink from `VDEC` (the hardware decoder), 3840×2024 shown at y 68 on the 3840×2160 panel, 23.976 fps, progressive, `hdrType: DolbyVision`. So video plays in full 4K, and Dolby Vision in MKV engages on this TV. Which of Bloob's players was playing was not recorded. LG's documentation settles 4K UI: UHD models give apps a 1920×1080 graphics plane, which the TV upscales 2×, so a 4K interface isn't possible (`research/webOS-UI-rendering.md`). **3.1.4** fixes the aliasing found in Bloob's renderer: glyphs at exact sub-pixel positions (`SDL_RenderCopyF`, looked up at run time), corners shaded from distance (256 levels instead of 17), and even button growth. FreeType light hinting is the next step if text is still soft.
+
+  2.2.1 fixes the track panel, which showed one row too few. It maps pointer clicks, the wheel and the right button to OK, Up/Down and Back. It names the HDR format the TV reports and logs `[qoe] picture: version claims Dolby Vision, TV reports …`. It stops ranking 4K Blu-ray encodes as disc Dolby Vision. Whether the TV engages Dolby Vision for MKV over uMediaServer is still unknown: read that log line from `/tmp/bloob-native.log` on the TV.
+
+See `native/README.md`. Elements of A is UI inspiration only. Technical references are the open-source Moonlight TV and Kodi webOS code, read but not copied. The web app (`tv-app/`) remains installed and working.
 
 ## Repository and local-only material
 
@@ -23,6 +247,7 @@ The current prototype is a vertical slice, not the finished product. The user ha
 | `tv-app/scripts/` | TV inspection and playback probes for our own app |
 | `tv-app/artifacts/` | Last known installable prototype IPK; rebuild after source changes |
 | `research/Elements-of-A-system-map.md` | Reference app organization, watch path, native adapter map, and evidence limits |
+| `research/Elements-of-A-UI-UX-code-study.md`, `research/Elements-of-A-UI-responsiveness.md` | Reference UI/UX organisation and responsiveness (static evidence), the basis of `native/IMPLEMENTATION-UX.md` |
 | `research/Buna-player-study.md` | Focused player UI/session/seek/track analysis and translation ideas |
 | `research/live-episode-study.md` | Paid-episode process sample and pause/resume comparison |
 | `research/Luna-runtime-architecture.md` | Deep native/JS event, frame, graphics, and media runtime map with evidence limits |
@@ -38,40 +263,45 @@ Publication caveat: `main` was replaced with a clean root commit to remove the p
 
 ## Build and deployment state
 
-- `tv-app` is a Vite 8 + SolidJS 1.9 + TypeScript project. `npm run typecheck` and `npm run build` are its main local checks.
+- `tv-app` is a Vite 8 + SolidJS 1.9 + TypeScript project. Local checks: `npm run typecheck`, `npm test` (Vitest: Buna session, ranker, resolver, release parser, account store), and `npm run test:e2e` (real app + service + Buna in Chromium, driven by remote keys; needs ffmpeg). `npm run check` runs all of them.
 - From `tv-app`, run `npm install` when dependencies are absent. For a local UI/service check, start `node service/server.js`, then `npm run dev`. Vite forwards `/api` to the local service on port 8787.
-- For a TV package, build the UI, copy the generated `dist/` contents into `service/www/`, and run `ares-package app service -o .` from `tv-app`. `tv-app/README.md` has the package outline. The app ID is `com.muhib.tvprototype`; its service ID is `com.muhib.tvprototype.service`.
-- The current committed IPK is `tv-app/artifacts/com.muhib.tvprototype_0.1.0_all.ipk`. It is a snapshot of the prototype, not proof that later source changes are installed. Rebuild and inspect package contents before a TV test.
-- The rooted TV has an existing webOS CLI device alias `rootedTV`. Keep connection secrets out of scripts, docs, shell output, and Git. The user said **do not delete anything on the TV**. Use read-only inspection for reference-app study. For our app, use deliberate install/launch operations only when needed. Never remove TV files, packages, accounts, or caches merely to tidy up.
+- For a TV package, run `npm run package` from `tv-app`: it builds, stages `dist/` into `service/www/` (removing old bundles first), and writes `artifacts/com.muhib.tvprototype_<version>_all.ipk`. The app ID is `com.muhib.tvprototype` (title Bloob); its service ID is `com.muhib.tvprototype.service`.
+- The current committed IPK is `tv-app/artifacts/com.muhib.tvprototype_0.2.0_all.ipk`. It is a snapshot, not proof that later source changes are installed. Rebuild and inspect package contents before a TV test. Tests live in `tv-app/tests/` and `src/**/*.test.ts` so they never ship in the service folder.
+- The TV's JS service runs an older Node than the dev machine. Keep `service/*.js` free of `?.` and `??`. The UI targets Chrome 87 (webOS 22); `tsconfig` uses the ES2020 library so newer APIs fail the typecheck.
+- The rooted TV has an existing webOS CLI device alias `rootedTV`. Keep connection secrets out of scripts, docs, shell output, and Git. The owner allows the TV's root password to be used (1 November 2026), once, to add an SSH key; it still never goes into Git. Every root command must never risk bricking the TV. The user said **do not delete anything on the TV**. Use read-only inspection for reference-app study. For our app, use deliberate install/launch operations only when needed. Never remove TV files, packages, accounts, or caches merely to tidy up.
 - The workspace directory name reflects the origin of the local research material. It is not the Bloob app ID and must not be used as a product identifier.
 
 ## Current Bloob architecture: exact flow
 
 ### Browsing and navigation
 
-- `tv-app/src/App.tsx` owns the top-level flow: `Home` -> `Details` -> `Sources` -> `Player`. It keeps `Home` mounted under detail screens, retaining row focus and scroll position. `open`, `selectedVideo`, `showSources`, and `playback` signals are the current state machine. This is simple but should evolve into a typed navigation coordinator as flows grow.
-- `tv-app/src/keys.ts` translates LG D-pad and Back key codes. It maintains a handler stack so only the top screen handles one key event. This fixed an earlier Back bug where a single press could traverse multiple screens. Preserve this principle in Buna's input router.
-- `tv-app/src/screens/Home.tsx`, `Details.tsx`, `Sources.tsx`, and `Player.tsx` own their screen composition. `Details` loads full metadata, groups episodes by season, puts specials last, and can initiate the currently selected episode. The first-play label is still hard-coded to “Play S1 E1” and should be fixed.
+- `tv-app/src/App.tsx` owns the top-level flow: `Home` -> `Details` -> `Sources` -> `Player`. Every layer stays mounted (hidden) under the next, so Back restores focus and scroll without refetching. Hidden layers use `visibility: hidden` after their fade so they stop painting during playback. The state is `title`, `sourcesFor`, and a typed `playback: { intent: PlayIntent; source: ResolvedSource }`.
+- `tv-app/src/keys.ts` translates LG D-pad, Back, and transport keys (415 Play, 19 Pause, 413 Stop, 417 FF, 412 RW; desktop 179/178). It maintains a handler stack so only the top screen handles one key event. Inside a text field, Backspace and left/right keep their editing meaning. Preserve the single-owner principle.
+- `tv-app/src/screens/Home.tsx`, `Details.tsx`, `Sources.tsx`, and `Player.tsx` own their screen composition. `Details` loads full metadata, groups episodes by season, puts specials last, and labels the main button with the episode it actually plays (first episode of the selected season).
 - `tv-app/src/data/cinemeta.ts` supplies movie/series metadata from Cinemeta, and art URLs from Metahub. It builds six catalog rows in parallel and keeps the bundled test row. Tile art uses small image variants and backdrop art uses medium variants to avoid needlessly decoding very large textures on the TV. External catalog and art availability are dependencies; add caching, error states, and licensing review before product release.
 - The UI remains a provisional design. The user considers the existing source chooser and player controls inadequate. Do a deliberate remote-first design pass, with visual review on the actual TV, instead of polishing the existing implementation by small cosmetic changes.
 
 ### Source discovery and resolution
 
 - `tv-app/service/server.js` is a local HTTP service listening on `127.0.0.1:8787` on the TV. The app shell launches the service; it serves the UI and `/api/*` routes. It is also runnable locally with plain Node.
-- `POST /api/sources/search` accepts a `movie` or `series` type plus an IMDb-style title or episode ID. The current provider is hosted Torrentio. The service calls its stream endpoint, keeps valid magnet hashes or HTTP links, deduplicates values, extracts release title, quality, size, peers, and codec heuristically, sorts quality/peers, and caps the list at four per quality and twelve overall. These are presentation heuristics, not a trusted quality/availability score. Source discovery is external; this app does not run a scraper, torrent engine, or Stremio service.
-- `tv-app/src/screens/Sources.tsx` requests account status and sources on mount. It offers a bundled Big Buck Bunny playback test, pairing, discovered releases, manual link/magnet input, file selection, and quality selection. The current release-card list forces users to interpret noisy names. Redesign it around a recommended playable option with clear resolution, codec/HDR/audio, size, language, availability confidence, and an expandable full list. Do not falsely claim metadata the provider did not supply.
-- Pairing routes: `POST /api/pin/start` requests a device PIN; the UI polls `POST /api/pin/check` every five seconds. The AllDebrid API key remains in the local service, not in frontend state or the IPK. `GET /api/account` returns only `paired` and `persistent` booleans.
-- `tv-app/service/account-store.js` saves the key to an app-specific file under `/media/internal/com.muhib.tvprototype/` on TV, using a temporary file then rename and restricted mode. It loads on service startup. Confirm its behavior with one actual PIN pair, app/service restart, and `GET /api/account` before marking persistence solved. Do not read or print the key when verifying.
-- Link routes: `POST /api/link/unlock` can yield a direct URL, delayed state, or quality options. `POST /api/link/quality` selects a quality. `POST /api/link/delayed` polls a delayed result. Magnet routes upload an info hash or magnet, poll readiness, then list video files. `Sources.tsx` tries to choose one likely episode file: rejects sample/trailer/extras, matches season/episode naming, or picks a clearly dominant largest file; otherwise it asks the user. The UI passes one resolved URL to `Player`.
+- `POST /api/sources/search` accepts a `movie` or `series` type plus an IMDb-style title or episode ID (series require an episode). The current provider is hosted Torrentio. `service/release.js` turns each stream into a typed `SourceCandidate`: resolution, HDR (DV/HDR10+/HDR10/HDR/HLG), codec, audio (Atmos/TrueHD/DTS variants/DD+/…), channels, source type (REMUX/BluRay/WEB-DL/WEBRip/HDTV/DVD/CAM/TS/SCR), size, seeders, flag languages, multi-audio, pack and file-name hints. It accepts both `title` and `description` formats, de-duplicates by hash and file index, and returns up to 60. Every field is a claim parsed from names (`claimsFrom: 'release-name'`), not a probe. Torrentio blocks some datacenter IPs with Cloudflare; the TV's home connection was fine before.
+- `src/sources/ranker.ts` scores candidates with explainable weights. Resolution leads. DV/HDR, Atmos/lossless and seeder health add. REMUX bitrate, packs, few seeders, and a foreign-only language tag subtract. Cinema recordings and zero-seeder torrents are never recommended. It returns one recommendation with a one-line reason, plus groups by resolution. Tune weights after real use; they are preferences, not facts.
+- `src/screens/Sources.tsx` is recommendation-first. It has a large Recommended card (plain-language headline like "4K · Dolby Vision · Atmos", facts, reason, warnings, raw release name in small type), grouped alternatives (three per group, expandable), manual link/magnet entry, and an account row. Pressing Play while unpaired runs pairing and then continues straight to that source. Resolving shows a cancellable step list with AllDebrid download progress. Failures keep the list on screen and say what happened. Search results are cached for ten minutes per title or episode.
+- Pairing routes: `POST /api/pin/start` requests a device PIN; the UI polls `POST /api/pin/check` every five seconds and shows a countdown and renewal. The AllDebrid API key remains in the local service, not in frontend state or the IPK. `GET /api/account` returns `paired`, `persistent`, `storage`, `durable`, and per-location `attempts` (location and error code, never the key).
+- `tv-app/service/account-store.js` (likely cause of the re-pair complaint: only one directory was ever tried, and nobody checked it was writable). It now tries `/media/internal/com.muhib.tvprototype` (unchanged, so existing saves load), `~/.bloob`, the service folder (lost on reinstall), then the temp dir (lost on reboot). It writes via temp file + rename, reads back to verify, and reports the result. Revoked keys (`AUTH_*` from AllDebrid) are overwritten, not deleted, and the UI asks to pair again. Confirm with one real pair, an app restart, and `node scripts/inspect-tv.cjs <port> account` before calling it solved. Do not read or print the key when verifying.
+- The service API accepts only `Host: 127.0.0.1|localhost` and `Content-Type: application/json` POSTs. This blocks cross-site form posts and DNS rebinding from other web content on the TV, which could otherwise use the paired account.
+- Link routes: `POST /api/link/unlock` can yield a direct URL, delayed state, or quality options. `POST /api/link/quality` selects a quality. `POST /api/link/delayed` polls a delayed result. Magnet routes upload an info hash or magnet, poll readiness (with download progress and failure status), then list video files. `src/sources/resolver.ts` owns this flow and is cancellable at every wait. It picks the file in this order: the exact file the indexer named, then the only non-extra video, then the season/episode match (largest if several), then a clearly dominant largest file. Otherwise it asks. It hands Buna a `ResolvedSource` (URL in memory only, transport, file name, size, claims, candidate).
 - A resolved URL is a sensitive bearer-like value. Keep it out of logs, screenshots of developer tools, telemetry, and Git. Validate URLs and avoid sending credentials to arbitrary hosts. Use only media the user is authorized to access.
 
-### Current playback behavior and gaps
+### Current playback behavior (Buna, v0.2) and gaps
 
-- `tv-app/src/screens/Player.tsx` creates one HTML `<video playsinline>` element. On mount it sets the resolved URL, calls `load()` and `play()`. On cleanup it pauses, removes `src`, and calls `load()` to release the decoder path.
-- It samples `video.currentTime` every 500 ms because this TV provided sparse `timeupdate` events. It falls back from invalid `duration` to the last `seekable` endpoint, and tracks the last buffered endpoint. The HUD displays state, title, timeline, transport controls, and audio/subtitle menus.
-- Direction keys preview ±10 seconds; after 550 ms without another direction press, `currentTime` commits to a clamped target in the seekable range. This is not a complete trick-play model. Validate the displayed position, real media clock, seekable range, and post-seek frame on representative direct files and segmented streams. A prior version displayed 0:00 against a full duration while actual playback continued; this is why clock provenance matters.
-- HUD auto-hide is nine seconds during playback, remains visible when paused, and Back first closes a menu or pending seek, then can hide controls, then exit. The exact interaction should be redesigned and tested against remote actions.
-- Audio selection currently uses optional `video.audioTracks`; subtitles use `video.textTracks`. Some TV/container combinations expose neither even when the file has multiple tracks. The menus show truthful empty states. External subtitle acquisition and WebVTT loading are not implemented. Do not fabricate selectable tracks or assume the web video backend can switch them.
+- `src/screens/Player.tsx` is a pure view. It renders a `<video>` element, calls `buna.open({ intent, source, video })`, mirrors `PlaybackState` through `useBunaState`, and sends commands (`play`, `pause`, `toggle`, `nudge`, `seekTo`, `commitPreview`, `cancelPreview`, `restart`, `selectAudio`, `selectSubtitle`, `retry`). It never reads media fields. `tv-app/README.md` lists Buna's files and guarantees.
+- Clock: 250 ms sampling only while time can move (none while paused). `positionSource` and `durationSource` record provenance. A transient NaN duration keeps the last known value. The stall watchdog marks `buffering` when the clock stops for 3 s, even without a `waiting` event.
+- Seek: direction keys move a preview, accelerating 10/30/60/120 s while held. One seek is committed 600 ms after the last press. The displayed position holds the target until the backend's `seeked` (or a settled clock reading, for TVs that drop `seeked`) confirms where it landed. A 15 s timeout returns to the media clock. Metrics record target, landing point, and settle time.
+- HUD: full HUD on any key (6 s auto-hide while playing). A reduced timeline-only HUD appears when seeking starts from hidden. It is pinned while paused, ended, loading, in a menu, or on error. Back order: menu → seek preview → hide HUD → exit. OK while hidden toggles pause. A startup screen shows the title until the first presented frame (`requestVideoFrameCallback` where available). The buffering spinner is delayed 500 ms. Wall clock and end time are shown. Resume is automatic from a saved position (30 s minimum, below 95%) with a Start over control. The error screen offers Try again / Choose another source / Exit.
+- Lifecycle: one live session (`BunaRuntime`). The session pauses and saves when webOS hides the app, and disposes on page hide. `dispose()` is idempotent and releases the decoder (`pause`, remove `src`, `load()`).
+- Tracks: the web backend lists `audioTracks` and subtitle/caption `textTracks` when the engine exposes them. Capabilities say why not otherwise, marked `tv: 'unverified'`. External subtitles, thumbnails, frame-rate matching, and output info are reported unsupported. Do not fabricate selectable tracks or assume the web video backend can switch them.
+- Measurement: `window.__buna.state()` and `window.__buna.metrics()` (resolve, metadata, first-frame, seek, stall, error, dispose; no URLs). `scripts/inspect-tv.cjs <port> buna` reads them over the web inspector.
 - One resolved source reportedly played with HDR and Atmos on the user's TV. This is a user observation, not a measured codec/output-mode trace. Do not generalize to all containers, formats, or backend choices.
 - The bundled Big Buck Bunny clip is 30 seconds, H.264/AAC at 480p, served with byte-range support. See `tv-app/service/www/media/CREDITS.txt` for its CC BY 3.0 attribution. It validates basic startup, pause, seek, and cleanup; it does not validate high-quality output.
 
@@ -104,7 +334,7 @@ On 12 October 2026 an episode was visibly playing while SSH sampled the app. Its
 
 ## Why Buna is required
 
-The existing `Player.tsx` bundles media commands, clock polling, remote input, focus, menus, state labels, and cleanup in one component. This is workable for a test clip but insufficient for multiple media backends and high-quality TV behavior. Buna should be an **app-owned layer** that preserves one consistent session contract while backends differ in seek, track, buffering, and output capabilities. The UI should consume Buna state instead of reading arbitrary media fields directly. The source chooser should hand Buna a typed, resolved source with metadata and expiry, not a bare URL.
+**Status (v0.2): the session controller, web backend, capability model, clock and seek controller, metrics, and runtime below are implemented in `tv-app/src/buna/`. The rationale is kept for context.** The original `Player.tsx` bundled media commands, clock polling, remote input, focus, menus, state labels, and cleanup in one component. This is workable for a test clip but insufficient for multiple media backends and high-quality TV behavior. Buna should be an **app-owned layer** that preserves one consistent session contract while backends differ in seek, track, buffering, and output capabilities. The UI should consume Buna state instead of reading arbitrary media fields directly. The source chooser should hand Buna a typed, resolved source with metadata and expiry, not a bare URL.
 
 Proposed module boundaries; implement incrementally and adapt after TV measurements:
 
@@ -137,13 +367,13 @@ Keep data flow one way: backend events update the session; session state updates
 
 Start with the current public HTML video path because it has already played a resolved file and reportedly delivered HDR/Atmos. Do not assume that means it meets track, subtitle, seek, trick-play, output matching, or telemetry requirements. Measure those properties on representative content. A segmented/HLS adapter or native LG ES integration is justified only for a concrete, measured gap that supported public APIs cannot close. Keep native investigation focused on ordinary media behavior and do not copy extracted implementation text into the app.
 
-## Immediate work order for the next assistant
+## Immediate work order for the next assistant (October 2026, web app; history)
 
 1. Read `research/Elements-of-A-system-map.md`, `research/Buna-player-study.md`, and `research/live-episode-study.md`. Inspect current `tv-app/src/screens/Player.tsx`, `Sources.tsx`, `keys.ts`, and the local service. Preserve the distinction between implemented features, user reports, static findings, and TV observations.
 2. Finish the controlled runtime study. SSH `/proc` sampling works. A network-input service and capture service exist, and the TV's second-screen WebSocket port is reachable, but no paired input or screenshot client has been verified. Establish a least-privilege paired client if needed, keeping its bearer key out of Git. A TV prompt may require the user to accept it. Then capture visible control behavior and timestamps for play, pause, repeated seeking, audio/subtitle menus, Back, and exit. Do not claim autonomous control before it works.
-3. Verify the current prototype: fresh package, direct test clip, AllDebrid pair and restart persistence, one authorized resolved source, clock/seek alignment, track exposure, HDR/audio user observation, Back behavior, and decoder cleanup. Record only non-sensitive metrics and screenshots that do not disclose account data.
-4. Define Buna interfaces and extract a session controller from `Player.tsx` while retaining current working playback. Build a clock model with duration and seekable-range provenance, debounced seek preview/commit, backend capability checks, event-driven buffering, and deterministic cleanup. Make the player view a consumer of session state.
-5. Redesign Sources as a short recommendation-first decision: best supported candidate, why it was chosen, expected quality, clear fallback options, and honest progress/error states. Improve release parsing and file/episode matching; do not hide uncertainty or unverified media properties. Keep the hosted indexer behind a provider interface so another indexer can replace it without UI rewrites.
+3. **Install 0.2.0 and verify on the TV** (highest priority): pair once and restart (persistence), test clip, one authorized resolved source, `buna` metrics for first frame and seek landing, track exposure, HDR/audio observation, Back behavior, and decoder cleanup. If the account row says the TV refused to save, record the per-location error codes. Record only non-sensitive metrics and screenshots that do not disclose account data.
+4. Buna follow-ups after TV data: set `tv` evidence on capabilities that were measured; tune the clock interval and stall threshold to observed event density; decide whether track switching needs an HLS/MSE or native backend (the `BunaRuntime` backend factory is the plug-in point); add external WebVTT subtitles if required.
+5. Sources follow-ups: tune ranker weights with real results; move the indexer behind a provider interface in the service (the parser already isolates Torrentio's format); consider an availability check that does not send the AllDebrid key to third parties.
 6. Create an original design system for browsing and playback: focus ring, spacing, typography, motion, image loading, HUD states, menus, and remote interaction rules. Test on the actual TV at viewing distance. Accessibility and response to every remote key matter more than a desktop screenshot.
 7. Measure first frame, seek settle time, pause CPU, sustained memory, network/buffer behavior, and post-exit release for the same test material. Compare backend choices on equal content. Update the research ledger with observation timestamps and limitations.
 
@@ -151,11 +381,11 @@ Start with the current public HTML video path because it has already played a re
 
 | Area | Current state | Completion evidence |
 | --- | --- | --- |
-| AllDebrid persistence | Save/load code exists; TV restart test pending | Pair once, restart app/service, `GET /api/account` reports `paired: true`, `persistent: true` without re-entering PIN |
-| Source chooser | Indexed cards exist but are noisy and user-disliked | User can identify and start a recommended source without reading raw release jargon; alternate/file/quality decisions remain clear |
-| Seek clock | 500 ms polling and seekable clamping implemented | On real direct and segmented media, displayed time follows playback, preview vs actual target is clear, post-seek video catches up, and end behavior is correct |
-| Audio/subtitles | Public video-element track menus; often no exposed tracks | Menu shows actual available tracks, switching demonstrably changes output, external subtitles work if included as a requirement |
-| Player aesthetic | Provisional overlay | Remote-first design review and observed TV interaction pass |
+| AllDebrid persistence | Multi-location verified storage with diagnostics (v0.2); TV restart test pending | Pair once, restart app/service, `GET /api/account` reports `paired: true`, `persistent: true`, `durable: true` without re-entering PIN |
+| Source chooser | Recommendation-first redesign with ranker reasons, grouped alternatives, cancellable progress (v0.2); desktop-reviewed only | User can identify and start a recommended source without reading raw release jargon; alternate/file/quality decisions remain clear on the TV |
+| Seek clock | Buna clock with provenance, preview/commit, ack-based landing, stall watchdog; verified in desktop Chromium | On real direct and segmented media on the TV, displayed time follows playback, `seek` metrics show `landed` close to `to`, post-seek video catches up, and end behavior is correct |
+| Audio/subtitles | Capability-reported menus; often no exposed tracks | Menu shows actual available tracks, switching demonstrably changes output, external subtitles work if included as a requirement |
+| Player aesthetic | Redesigned remote-first HUD (v0.2); desktop screenshots only | Remote-first design review and observed TV interaction pass |
 | Backend efficiency | User observed smooth high-quality output; limited process snapshots | Measured first-frame, CPU, memory, seek, output mode, and cleanup on repeatable content |
 | Reference runtime study | Strong static call map plus two limited TV observations | Timestamped key/UI/player/media trace without account or stream identifiers |
 

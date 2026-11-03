@@ -1,0 +1,234 @@
+#include "common.h"
+
+#include <algorithm>
+#include <cstdio>
+#include <cstdlib>
+
+namespace {
+constexpr int kBlur = 48;  // px at 1080p for the soft backdrop
+}
+
+void Backdrop::set(const std::string &url, bool immediate) {
+  if (url == current_) return;
+  // Whatever is on screen now stays underneath while the new picture fades in.
+  if (!current_.empty() && ctx().images.get(current_, W, H).texture) previous_ = current_;
+  current_ = url;
+  if (immediate || ctx().reduce_motion) {  // Reduce motion cuts instead of crossfading
+    fade_.snap(1);
+    previous_.clear();
+  } else {
+    fade_.snap(0);
+    fade_.to(1);
+  }
+}
+
+void Backdrop::update(double dt) {
+  if (current_.empty()) return;
+  Images &images = ctx().images;
+  // A picture that never arrives leaves the previous one in place.
+  ImageRef ref = images.get(current_, W, H);
+  if (ref.failed) {
+    if (!previous_.empty()) current_ = previous_;
+    previous_.clear();
+    fade_.snap(1);
+    return;
+  }
+  // Hold the fade until the picture is decoded, and the frost of every glass
+  // panel over it is baked, so neither pops in half-drawn.
+  // 4.1 Swiss: panels are solid, so there is no frost to wait for.
+  bool ready = images.settled(current_, W, H);
+  if (ready) {
+    if (fade_.step(dt)) ctx().animating = true;
+    if (fade_.value >= 1.0f) previous_.clear();
+  }
+}
+
+void Backdrop::draw(float dim, float blur) {
+  Ctx &c = ctx();
+  // Lite effects: no blurred copy; a darker dim reads the same behind text.
+  if (c.lite() && blur > 0) {
+    dim = std::max(dim, 0.45f * blur);
+    blur = 0;
+  }
+  c.gfx.fill_rect(0, 0, W, H, theme::black);
+  auto layer = [&](const std::string &url, float alpha) {
+    if (url.empty() || alpha <= 0.01f) return;
+    if (blur < 0.99f) {
+      ImageRef sharp = c.images.get(url, W, H);
+      if (sharp.texture) c.gfx.texture(sharp.texture, 0, 0, W, H, static_cast<Uint8>(alpha * sharp.alpha));
+    }
+    if (blur > 0.01f) {
+      ImageRef soft = c.images.get(url, W, H, 0, Fit::Cover, false, kBlur);
+      if (soft.texture) c.gfx.texture(soft.texture, 0, 0, W, H, static_cast<Uint8>(alpha * blur * soft.alpha));
+    }
+  };
+  layer(previous_, 1.0f);
+  if (!current_.empty() && c.images.settled(current_, W, H)) layer(current_, fade_.value);
+  if (dim > 0) c.gfx.fill_rect(0, 0, W, H, with_alpha(theme::black, static_cast<int>(dim * 200)));
+}
+
+void Backdrop::glass(GlassSpec g) const {
+  Ctx &c = ctx();
+  GlassRect r{g.x, g.y, g.w, g.h};
+  bool known = false;
+  for (auto &k : glass_)
+    if (k.rect.x == r.x && k.rect.y == r.y && k.rect.w == r.w && k.rect.h == r.h && k.radius == g.radius) {
+      k.used_at = c.now;
+      known = true;
+    }
+  if (!known) {
+    if (glass_.size() >= 8) glass_.erase(glass_.begin());
+    glass_.push_back({r, g.radius, c.now});
+  }
+  bool fading = !previous_.empty() && fade_.value < 0.999f;
+  g.art = fading ? previous_ : current_;
+  draw_glass(g);  // 4.1 Swiss: a solid panel; nothing to fade in
+}
+
+float Backdrop::luma() const {
+  if (current_.empty()) return -1;
+  return ctx().images.get(current_, W, H).luma;
+}
+
+void draw_scrims(float left, int bottom_from, float bottom) {
+  Gfx &g = ctx().gfx;
+  auto a = [](float v) { return static_cast<Uint8>(std::max(0.0f, std::min(255.0f, v))); };
+  if (left > 0) {
+    // Dense where the text sits, gone by two-thirds across (Bloob's; the
+    // reference's principal radial is not reproduced).
+    g.gradient_h(0, 0, 420, H, theme::black, a(240 * left), a(200 * left));
+    g.gradient_h(420, 0, 520, H, theme::black, a(200 * left), a(70 * left));
+    g.gradient_h(940, 0, 360, H, theme::black, a(70 * left), 0);
+  }
+  if (bottom > 0 && bottom_from < H) {
+    // The hero's bottom gradient, stop for stop [EoA H15]: clear to 64%, then
+    // 0.03, 0.14, 0.27, 0.41, 0.54 and 0.68 at the bottom edge; `bottom` scales it.
+    static const float pos[] = {0.64f, 0.71f, 0.78f, 0.84f, 0.91f, 0.95f, 1.0f};
+    static const float alpha[] = {0.0f, 0.03f, 0.14f, 0.27f, 0.41f, 0.54f, 0.68f};
+    int span = H - bottom_from;
+    // The stops describe the whole stage; map 64%..100% onto bottom_from..H.
+    for (int i = 0; i + 1 < 7; i++) {
+      float t0 = (pos[i] - 0.64f) / 0.36f, t1 = (pos[i + 1] - 0.64f) / 0.36f;
+      int y0 = bottom_from + static_cast<int>(span * t0), y1 = bottom_from + static_cast<int>(span * t1);
+      // The reference's stage ends at 716 and its shelves sit on the solid page;
+      // Bloob's art is full-bleed, so at full strength the curve reaches solid
+      // black at the bottom edge instead of 0.68.
+      float k = std::min(1.0f, bottom) / 0.68f;
+      g.gradient_v(0, y0, W, std::max(1, y1 - y0), theme::black, a(255 * alpha[i] * k), a(255 * alpha[i + 1] * k));
+    }
+  }
+}
+
+// The hero overlay [EoA H16]: black at 55% over very bright artwork (luminosity
+// at least 0.9), else 20%.
+void draw_hero_overlay(float luma, float alpha) {
+  if (luma < 0) return;
+  Uint8 a = static_cast<Uint8>((luma >= 0.9f ? 0.55f : 0.2f) * 255 * std::max(0.0f, std::min(1.0f, alpha)));
+  ctx().gfx.fill_rect(0, 0, W, H, with_alpha(theme::black, a));
+}
+
+int draw_title(const Item &item, int x, int top, int box_w, int box_h, float alpha, bool centred) {
+  Ctx &c = ctx();
+  // 4.1 (owner): the film's or show's own logo is the title.
+  if (!item.logo.empty()) {
+    // Decoded once at the largest size used, then scaled: boxes animate, and a
+    // new size per frame would mean a new decode per frame.
+    ImageRef logo = c.images.get(item.logo, 760, 240, 0, Fit::Contain);
+    if (logo.texture) {
+      float scale = std::min(1.0f, std::min(static_cast<float>(box_w) / logo.w, static_cast<float>(box_h) / logo.h));
+      int lw = static_cast<int>(logo.w * scale), lh = static_cast<int>(logo.h * scale);
+      int lx = centred ? x + (box_w - lw) / 2 : x;
+      c.gfx.texture(logo.texture, lx, top + box_h - lh, lw, lh, static_cast<Uint8>(std::min<float>(255 * alpha, logo.alpha)));
+      return top + box_h;
+    }
+    if (!logo.failed) return top + box_h;  // still loading: hold the space rather than flash type
+  }
+  // Without a logo, the title in type (4.1 Swiss), in Bold as large as the box allows: one line at the
+  // box's height if it fits the width, else two lines, else smaller.
+  Font &f = c.fonts.bold;
+  int size = std::min(232, box_h);
+  std::vector<std::string> lines;
+  for (;;) {
+    if (f.measure(item.name, size) <= box_w) {
+      lines = {item.name};
+      break;
+    }
+    int two = std::min(size, box_h * 10 / 19);
+    lines = wrap(f, item.name, two, box_w, 2);
+    bool fits = lines.size() <= 2 && f.measure(lines[0], two) <= box_w && (lines.size() < 2 || f.measure(lines[1], two) <= box_w) &&
+                lines.back().find("\xE2\x80\xA6") == std::string::npos;
+    if (fits || two <= 40) {
+      size = two;
+      break;
+    }
+    size -= 8;
+  }
+  int line = size * 92 / 100;
+  int y = top + box_h - static_cast<int>(lines.size()) * line;
+  for (auto &l : lines) {
+    int lx = centred ? x + (box_w - f.measure(l, size)) / 2 : x;
+    f.draw(l, lx, y, size, fade(rgba(0xffffff), alpha));
+    y += line;
+  }
+  return top + box_h;
+}
+
+int runtime_minutes(const std::string &runtime) {
+  // Cinemeta gives "145 min" (films) or "45" (series); "2h 25m" is handled too.
+  int h = 0, m = 0;
+  if (std::sscanf(runtime.c_str(), "%dh %dm", &h, &m) == 2) return h * 60 + m;
+  return std::max(0, std::atoi(runtime.c_str()));
+}
+
+std::string runtime_text(const std::string &runtime) {
+  int minutes = std::atoi(runtime.c_str());
+  if (minutes <= 0) return runtime;
+  if (minutes < 60) return std::to_string(minutes) + " min";
+  return std::to_string(minutes / 60) + "h " + std::to_string(minutes % 60) + "m";
+}
+
+std::string meta_line(const Item &item) {
+  std::vector<std::string> parts;
+  if (!item.year.empty()) parts.push_back(item.year);
+  if (!item.genres.empty()) {
+    std::string g = item.genres[0];
+    if (item.genres.size() > 1) g += ", " + item.genres[1];
+    parts.push_back(g);
+  }
+  if (item.series()) parts.push_back("Series");
+  else if (!item.runtime.empty()) parts.push_back(runtime_text(item.runtime));
+  return join(parts);
+}
+
+std::string meta_key(const Item &item) { return item.type + ":" + item.id; }
+
+int draw_facts(int col, int y, const std::vector<Fact> &facts, float alpha) {
+  int c = col, bottom = y;
+  for (const Fact &f : facts) {
+    if (c >= theme::grid_cols) break;
+    int span = std::min(f.span, theme::grid_cols - c);
+    int x = theme::col_x(c), w = theme::span_w(span);
+    text(Text::Caption2, f.label, x, y, label(Label::Secondary, alpha), w);
+    text(f.bold ? Text::Caption1Semi : Text::Body, f.value, x, y + 30, label(Label::Primary, alpha), w);
+    bottom = std::max(bottom, y + 30 + line_for(Text::Body));
+    c += span;
+  }
+  return bottom;
+}
+
+void draw_rule(int col, int span, int y, float alpha, Color color) {
+  int x = theme::col_x(col), w = theme::span_w(span);
+  ctx().gfx.fill_rect(x, y, w, theme::rule, fade(color, alpha));
+}
+
+void prefetch_meta(const Item &item) {
+  Ctx &c = ctx();
+  std::string key = meta_key(item);
+  if (item.id.empty() || item.type.empty() || !c.api.ready() || c.meta_cache.get(key, c.now) || c.meta_cache.in_flight.count(key)) return;
+  c.meta_cache.in_flight.insert(key);
+  c.api.get("/api/meta?type=" + item.type + "&id=" + item.id, [key](const ApiResult &r) {
+    Ctx &x = ctx();
+    x.meta_cache.in_flight.erase(key);
+    if (r.ok()) x.meta_cache.put(key, r.json, x.now);
+  }, nullptr);
+}

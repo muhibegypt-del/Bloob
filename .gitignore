@@ -33,3 +33,12 @@
 **/*credentials*
 **/*.pem
 **/*.key
+
+# Local AllDebrid pairing written by a locally run service.
+/tv-app/service/.data/
+
+# Native build output
+/native/build-*/
+
+# Python bytecode (tools/pal-sim and other scripts)
+__pycache__/

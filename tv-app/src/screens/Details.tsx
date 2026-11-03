@@ -35,6 +35,12 @@ export function Details(props: {
       .sort((a, b) => (a.episode ?? 0) - (b.episode ?? 0)),
   );
   const isSeries = () => props.item.type === 'series' && seasons().length > 0;
+  // The main Play button starts the first episode of the selected season.
+  const playLabel = () => {
+    const first = episodes()[0];
+    if (!isSeries() || !first) return 'Play';
+    return first.season ? `Play S${first.season} E${first.episode ?? 1}` : `Play special ${first.episode ?? ''}`.trim();
+  };
 
   useKeys((key) => {
     if (!props.active) return;
@@ -80,7 +86,7 @@ export function Details(props: {
           <MetaInfo item={meta() ?? props.item} lines={isSeries() ? 2 : 4} />
           <div class="details-buttons">
             <div class="btn" classList={{ focused: zone() === 'buttons' && button() === 0 }} onClick={() => props.onPlay(isSeries() ? episodes()[0] : undefined)}>
-              <PlayIcon /> {isSeries() ? 'Play S1 E1' : 'Play'}
+              <PlayIcon /> {playLabel()}
             </div>
             <div class="btn" classList={{ focused: zone() === 'buttons' && button() === 1 }}>
               <FilmIcon /> Trailer

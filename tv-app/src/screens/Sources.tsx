@@ -1,234 +1,547 @@
-import { createEffect, createSignal, For, onCleanup, onMount, Show } from 'solid-js';
-import { api, type ResolveResult } from '../data/api';
-import { art } from '../data/cinemeta';
+import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show } from 'solid-js';
+import { metrics, type PlayIntent, type ResolvedSource, type SourceCandidate } from '../buna';
+import { api, ApiError, type AccountStatus } from '../data/api';
+import { art, demo } from '../data/cinemeta';
 import type { MetaPreview, Video } from '../data/types';
+import { bytes } from '../format';
 import { useKeys } from '../keys';
+import { details, headline, rankCandidates, type RankedCandidate } from '../sources/ranker';
+import {
+  isAbort, resolveFile, resolveQuality, resolveSource,
+  type FileOption, type QualityOption, type ResolvableSource, type ResolveOutcome, type ResolveProgress,
+} from '../sources/resolver';
 
-const DEMO_ID = 'tt1254207';
-const DEMO_VIDEO = '/media/big-buck-bunny-480p-30sec.mp4';
-type FileOption = { name: string; size: number; link: string };
-type DiscoveredSource = {
-  kind: 'magnet' | 'link'; value: string; release: string;
-  quality: string; size: string; peers: number | null; codec: string; provider: string;
+const TEST_SOURCE: ResolvedSource = {
+  url: '/media/big-buck-bunny-480p-30sec.mp4', transport: 'progressive', fileName: 'big-buck-bunny-480p-30sec.mp4',
+  claims: { resolution: '480p', videoCodec: 'H.264', audio: ['AAC'], container: 'MP4' }, resolvedAt: 0,
 };
-type View = 'sources' | 'files' | 'qualities';
+const GROUP_PREVIEW = 3;
+const SEARCH_TTL_MS = 10 * 60 * 1000;
+const searchCache = new Map<string, { at: number; candidates: SourceCandidate[] }>();
 
-export function Sources(props: { item: MetaPreview; video?: Video; onBack: () => void; onPlay: (url: string, title: string) => void }) {
-  const [paired, setPaired] = createSignal(false);
-  const [persistent, setPersistent] = createSignal(false);
-  const [pin, setPin] = createSignal<{ pin: string; url: string } | null>(null);
-  const [value, setValue] = createSignal('');
-  const [busy, setBusy] = createSignal(false);
-  const [message, setMessage] = createSignal('');
-  const [qualities, setQualities] = createSignal<{ id: string; quality?: string | number; ext?: string }[]>([]);
-  const [qualityId, setQualityId] = createSignal('');
-  const [files, setFiles] = createSignal<FileOption[]>([]);
-  const [sources, setSources] = createSignal<DiscoveredSource[]>([]);
+type Mode = 'list' | 'pairing' | 'resolving' | 'files' | 'qualities' | 'manual';
+type Item = { key: string; run: () => void };
+
+export function Sources(props: {
+  item: MetaPreview;
+  video?: Video;
+  active: boolean;
+  onBack: () => void;
+  onPlay: (intent: PlayIntent, source: ResolvedSource) => void;
+}) {
+  const [account, setAccount] = createSignal<AccountStatus | null>(null);
   const [searching, setSearching] = createSignal(true);
-  const [view, setView] = createSignal<View>('sources');
-  const [focus, setFocus] = createSignal(0);
-  let pairingTimer: number | undefined;
-  let active = true;
+  const [candidates, setCandidates] = createSignal<SourceCandidate[]>([]);
+  const [searchError, setSearchError] = createSignal('');
+  const [mode, setMode] = createSignal<Mode>('list');
+  const [focusKey, setFocusKey] = createSignal('');
+  const [expanded, setExpanded] = createSignal<Set<string>>(new Set());
+  const [banner, setBanner] = createSignal<{ tone: 'info' | 'error'; text: string } | null>(null);
+  const [pin, setPin] = createSignal<{ code: string; url: string; expiresAt: number } | null>(null);
+  const [pinExpired, setPinExpired] = createSignal(false);
+  const [now, setNow] = createSignal(Date.now());
+  const [progress, setProgress] = createSignal<ResolveProgress | null>(null);
+  const [resolving, setResolving] = createSignal<ResolvableSource | null>(null);
+  const [files, setFiles] = createSignal<FileOption[]>([]);
+  const [qualities, setQualities] = createSignal<{ linkId: string; options: QualityOption[] }>({ linkId: '', options: [] });
+  const [manualValue, setManualValue] = createSignal('');
+  let operation: AbortController | null = null;
+  let pairTimer: number | undefined;
+  let tickTimer: number | undefined;
+  let afterPairing: ResolvableSource | null = null;
+  let operationStarted = 0;
+  let manualInput: HTMLInputElement | undefined;
 
-  const demoOffset = () => props.item.id === DEMO_ID ? 1 : 0;
-  const pairIndex = () => demoOffset();
-  const sourceIndex = () => pairIndex() + 1;
-  const inputIndex = () => sourceIndex() + sources().length;
-  const submitIndex = () => inputIndex() + 1;
-  createEffect(() => {
-    focus();
-    window.requestAnimationFrame(() => document.querySelector('.sources-screen .focused')?.scrollIntoView({ block: 'nearest' }));
-  });
-
-  onMount(() => {
-    api<{ paired: boolean; persistent: boolean }>('account').then(x => { setPaired(x.paired); setPersistent(x.persistent); }).catch(() => setMessage('Local service is unavailable'));
-    api<{ sources: DiscoveredSource[] }>('sources/search', { type: props.item.type, id: props.item.id, videoId: props.video?.id })
-      .then(result => { if (active) setSources(result.sources); })
-      .catch(error => { if (active) setMessage(`Source search: ${(error as Error).message}`); })
-      .finally(() => { if (active) setSearching(false); });
-  });
-  onCleanup(() => { active = false; window.clearInterval(pairingTimer); });
-
-  async function pair() {
+  const isDemo = () => props.item.id === demo.id;
+  const searchKey = () => `${props.item.type}:${props.video?.id || props.item.id}`;
+  const preferredLanguage = (() => {
     try {
-      setBusy(true);
-      const next = await api<{ pin: string; url: string }>('pin/start', {});
-      setPin(next);
-      setMessage('Open the address on your phone and enter this code.');
-      pairingTimer = window.setInterval(async () => {
-        try {
-          const status = await api<{ paired: boolean; persistent: boolean }>('pin/check', {});
-          if (status.paired && active) {
-            setPaired(true); setPersistent(status.persistent); setPin(null);
-            setMessage(status.persistent ? 'AllDebrid connected and saved on this TV' : 'Connected for this session; TV storage was unavailable');
-            window.clearInterval(pairingTimer);
-          }
-        } catch (error) { if (active) setMessage((error as Error).message); window.clearInterval(pairingTimer); }
-      }, 5000);
-    } catch (error) { setMessage((error as Error).message); }
-    finally { setBusy(false); }
+      const code = (navigator.language || 'en').split('-')[0];
+      const names = new (Intl as unknown as { DisplayNames: new (l: string[], o: object) => { of(c: string): string } }).DisplayNames(['en'], { type: 'language' });
+      return names.of(code) || 'English';
+    } catch { return 'English'; }
+  })();
+  const ranking = createMemo(() => rankCandidates(candidates(), { language: preferredLanguage }));
+  const subtitle = () => {
+    const v = props.video;
+    if (!v) return [props.item.releaseInfo, props.item.runtime].filter(Boolean).join(' · ');
+    return [v.season !== undefined ? `Season ${v.season}` : '', v.episode !== undefined ? `Episode ${v.episode}` : '', v.title].filter(Boolean).join(' · ');
+  };
+
+  // ---------------------------------------------------------------- data
+
+  async function refreshAccount() {
+    try { setAccount(await api<AccountStatus>('account')); }
+    catch { setBanner({ tone: 'error', text: "Bloob's local service isn't responding. Restart the app." }); }
   }
 
-  async function finish(result: ResolveResult) {
-    if (result.state === 'ready' && result.url) return props.onPlay(result.url, props.video?.title || props.item.name);
-    if (result.state === 'qualities' && result.streams?.length) {
-      setQualityId(String(result.id)); setQualities(result.streams);
-      setView('qualities'); setFocus(0);
-      setMessage('Choose a playback quality'); return;
-    }
-    if (result.state === 'waiting' && result.delayed) {
-      setMessage('Preparing the link…');
-      for (let attempt = 0; active && attempt < 60; attempt++) {
-        await new Promise(resolve => window.setTimeout(resolve, 5000));
-        if (!active) return;
-        const next = await api<ResolveResult>('link/delayed', { id: result.delayed });
-        if (next.state === 'ready') return finish(next);
-        if (next.state === 'error') throw new Error('AllDebrid could not prepare this link');
-      }
-      throw new Error('Link preparation timed out');
-    }
-    throw new Error('No playable link was returned');
-  }
-
-  async function unlock(link: string) {
-    setBusy(true); setMessage('Resolving source…');
-    try { await finish(await api<ResolveResult>('link/unlock', { link })); }
-    catch (error) { if (active) setMessage((error as Error).message); }
-    finally { if (active) setBusy(false); }
-  }
-
-  function likelyFile(all: FileOption[]): FileOption | null {
-    const clean = all.filter(file => !/(^|[.\s_-])(sample|trailer|extras?)([.\s_-]|$)/i.test(file.name));
-    const candidates = clean.length ? clean : all;
-    if (candidates.length === 1) return candidates[0];
-    const season = props.video?.season;
-    const episode = props.video?.episode;
-    if (season !== undefined && episode !== undefined) {
-      const matches = candidates.filter(file =>
-        new RegExp(`s0?${season}e0?${episode}(?!\\d)|(?:^|\\D)${season}x0?${episode}(?!\\d)`, 'i').test(file.name));
-      return matches.length === 1 ? matches[0] : null;
-    }
-    const ranked = [...candidates].sort((a, b) => b.size - a.size);
-    return ranked[0].size > 0 && ranked[0].size >= ranked[1].size * 1.5 ? ranked[0] : null;
-  }
-
-  async function resolveSource(source: string) {
-    source = source.trim();
-    if (!source) return setMessage('Enter a link or magnet');
-    if (!paired()) return setMessage('Connect AllDebrid first');
-    if (!source.startsWith('magnet:') && !/^[a-f0-9]{40}$/i.test(source)) return unlock(source);
-    setBusy(true); setMessage('Checking torrent availability…');
-    try {
-      const magnet = await api<{ id: number; ready: boolean }>('magnet/add', { magnet: source });
-      if (!magnet.ready) {
-        for (let attempt = 0; active && attempt < 120; attempt++) {
-          await new Promise(resolve => window.setTimeout(resolve, 5000));
-          if (!active) return;
-          const status = await api<{ ready: boolean; status: string }>('magnet/status', { id: magnet.id });
-          setMessage(status.status || 'Preparing torrent…');
-          if (status.ready) break;
-          if (attempt === 119) throw new Error('Torrent is not ready yet. Try again later.');
-        }
-      }
-      const result = await api<{ files: FileOption[] }>('magnet/files', { id: magnet.id });
-      if (!result.files.length) throw new Error('No video file found in this torrent');
-      const likely = likelyFile(result.files);
-      if (likely) { await unlock(likely.link); return; }
-      setFiles(result.files);
-      setView('files'); setFocus(0);
-      setMessage('Choose a video file');
-    } catch (error) { if (active) setMessage((error as Error).message); }
-    finally { if (active) setBusy(false); }
-  }
-
-  function submit() { return resolveSource(value()); }
-  function chooseSource(source: DiscoveredSource) { return resolveSource(source.value); }
-
-  async function chooseQuality(stream: { id: string }) {
-    try {
-      setBusy(true);
-      await finish(await api<ResolveResult>('link/quality', { id: qualityId(), stream: stream.id }));
-    } catch (error) { setMessage((error as Error).message); }
-    finally { setBusy(false); }
-  }
-
-  useKeys(key => {
-    if (key === 'back') {
-      if (view() !== 'sources') { setView('sources'); setFocus(0); return; }
-      return props.onBack();
-    }
-    if (view() === 'files' || view() === 'qualities') {
-      const count = view() === 'files' ? files().length : qualities().length;
-      if (key === 'up') setFocus(Math.max(0, focus() - 1));
-      if (key === 'down') setFocus(Math.min(count - 1, focus() + 1));
-      if (key === 'enter') {
-        if (view() === 'files' && files()[focus()]) unlock(files()[focus()].link);
-        if (view() === 'qualities' && qualities()[focus()]) chooseQuality(qualities()[focus()]);
-      }
+  async function search() {
+    const key = searchKey();
+    const cached = searchCache.get(key);
+    if (cached && Date.now() - cached.at < SEARCH_TTL_MS) {
+      setCandidates(cached.candidates);
+      setSearching(false);
       return;
     }
-    if (key === 'up') setFocus(Math.max(0, focus() - 1));
-    if (key === 'down') setFocus(Math.min(submitIndex(), focus() + 1));
+    setSearching(true);
+    setSearchError('');
+    try {
+      const result = await api<{ sources: SourceCandidate[] }>('sources/search', { type: props.item.type, id: props.item.id, videoId: props.video?.id });
+      searchCache.set(key, { at: Date.now(), candidates: result.sources });
+      setCandidates(result.sources);
+    } catch (error) {
+      setSearchError((error as Error).message);
+    } finally {
+      setSearching(false);
+    }
+  }
+
+  onMount(() => { void refreshAccount(); void search(); });
+  onCleanup(() => {
+    operation?.abort();
+    window.clearInterval(pairTimer);
+    window.clearInterval(tickTimer);
+  });
+
+  // ---------------------------------------------------------------- focus model
+
+  const visibleItems = (group: { label: string; items: RankedCandidate[] }) =>
+    expanded().has(group.label) ? group.items : group.items.slice(0, GROUP_PREVIEW);
+
+  const items = createMemo<Item[]>(() => {
+    switch (mode()) {
+      case 'files': return files().map((file, i) => ({ key: `file:${i}`, run: () => continueWith(ctx => resolveFile(file, ctx, resolving() ?? undefined)) }));
+      case 'qualities': return qualities().options.map((option, i) => ({ key: `quality:${i}`, run: () => continueWith(ctx => resolveQuality(qualities().linkId, option, ctx, resolving() ?? undefined)) }));
+      case 'pairing': return pinExpired() ? [{ key: 'pin-renew', run: () => void startPairing() }] : [];
+      case 'resolving': return [];
+      case 'manual': return [
+        { key: 'manual-input', run: () => manualInput?.focus() },
+        { key: 'manual-go', run: submitManual },
+      ];
+    }
+    const list: Item[] = [];
+    const recommended = ranking().recommended;
+    if (isDemo()) list.push({ key: 'test', run: playTest });
+    if (recommended) list.push({ key: 'rec', run: () => choose(recommended.candidate) });
+    for (const group of ranking().groups) {
+      for (const ranked of visibleItems(group)) list.push({ key: `cand:${ranked.candidate.id}`, run: () => choose(ranked.candidate) });
+      if (group.items.length > GROUP_PREVIEW) list.push({ key: `more:${group.label}`, run: () => toggleGroup(group.label) });
+    }
+    list.push({ key: 'manual', run: () => { setMode('manual'); setFocusKey('manual-input'); queueMicrotask(() => manualInput?.focus()); } });
+    list.push({ key: 'account', run: () => { if (!account()?.paired) void startPairing(); } });
+    return list;
+  });
+
+  // Keep focus on a real item; default to the first one.
+  createEffect(() => {
+    const list = items();
+    if (!list.length) return;
+    if (!list.some(item => item.key === focusKey())) setFocusKey(list[0].key);
+  });
+  createEffect(() => {
+    const key = focusKey();
+    if (!props.active) return;
+    window.requestAnimationFrame(() => document.querySelector(`.sources-screen [data-key="${CSS.escape(key)}"]`)?.scrollIntoView({ block: 'nearest' }));
+  });
+
+  function moveFocus(step: number) {
+    const list = items();
+    const index = list.findIndex(item => item.key === focusKey());
+    const next = list[Math.min(list.length - 1, Math.max(0, index + step))];
+    if (next) setFocusKey(next.key);
+  }
+
+  function toggleGroup(label: string) {
+    const next = new Set(expanded());
+    if (next.has(label)) next.delete(label); else next.add(label);
+    setExpanded(next);
+  }
+
+  const focused = (key: string) => focusKey() === key;
+
+  // ---------------------------------------------------------------- pairing
+
+  async function startPairing(then?: ResolvableSource) {
+    if (then) afterPairing = then;
+    window.clearInterval(pairTimer);
+    setPinExpired(false);
+    setBanner(null);
+    setMode('pairing');
+    try {
+      const started = await api<{ pin: string; url: string; expiresIn: number }>('pin/start', {});
+      setPin({ code: started.pin, url: started.url, expiresAt: Date.now() + (started.expiresIn || 600) * 1000 });
+    } catch (error) {
+      setMode('list');
+      setBanner({ tone: 'error', text: `Couldn't start pairing: ${(error as Error).message}` });
+      return;
+    }
+    window.clearInterval(tickTimer);
+    tickTimer = window.setInterval(() => {
+      setNow(Date.now());
+      if ((pin()?.expiresAt ?? 0) <= Date.now()) { setPinExpired(true); window.clearInterval(pairTimer); window.clearInterval(tickTimer); }
+    }, 1000);
+    pairTimer = window.setInterval(async () => {
+      try {
+        const status = await api<AccountStatus>('pin/check', {});
+        if (!status.paired) return;
+        window.clearInterval(pairTimer);
+        window.clearInterval(tickTimer);
+        setAccount(status);
+        setPin(null);
+        setMode('list');
+        setBanner({ tone: 'info', text: pairedMessage(status) });
+        const next = afterPairing;
+        afterPairing = null;
+        if (next) void choose(next as SourceCandidate);
+      } catch (error) {
+        if (error instanceof ApiError && error.status === 400) return; // not started yet
+        setBanner({ tone: 'error', text: (error as Error).message });
+      }
+    }, 5000);
+  }
+
+  function cancelPairing() {
+    window.clearInterval(pairTimer);
+    window.clearInterval(tickTimer);
+    afterPairing = null;
+    setPin(null);
+    setMode('list');
+  }
+
+  // ---------------------------------------------------------------- resolving
+
+  function intent(): PlayIntent {
+    return {
+      contentId: props.item.id,
+      contentType: props.item.type,
+      videoId: props.video?.id,
+      title: props.item.name,
+      subtitle: props.video ? subtitle() : undefined,
+      origin: isDemo() && !props.video ? 'test' : 'sources',
+      requestedAt: operationStarted || performance.now(),
+    };
+  }
+
+  function playTest() {
+    operationStarted = performance.now();
+    metrics.record({ name: 'resolve', at: Date.now(), ms: 0, kind: 'test', outcome: 'ready' });
+    props.onPlay({ ...intent(), origin: 'test' }, { ...TEST_SOURCE, resolvedAt: Date.now() });
+  }
+
+  async function choose(source: ResolvableSource) {
+    if (mode() === 'resolving') return;
+    if (!account()) await refreshAccount();
+    if (!account()?.paired) return void startPairing(source);
+    operationStarted = performance.now();
+    setResolving(source);
+    await run(ctx => resolveSource(source, ctx));
+  }
+
+  function continueWith(step: (ctx: Parameters<typeof resolveSource>[1]) => Promise<ResolveOutcome>) {
+    void run(step);
+  }
+
+  /** Run one cancellable resolve step and route its outcome. */
+  async function run(step: (ctx: Parameters<typeof resolveSource>[1]) => Promise<ResolveOutcome>) {
+    operation?.abort();
+    const controller = new AbortController();
+    operation = controller;
+    const kind = resolving()?.kind ?? 'link';
+    setBanner(null);
+    setProgress({ step: 'adding', label: 'Starting…' });
+    setMode('resolving');
+    try {
+      const outcome = await step({ season: props.video?.season, episode: props.video?.episode, signal: controller.signal, onProgress: setProgress });
+      if (controller.signal.aborted) return;
+      const ms = Math.round(performance.now() - operationStarted);
+      if (outcome.kind === 'ready') {
+        metrics.record({ name: 'resolve', at: Date.now(), ms, kind, outcome: 'ready' });
+        setMode('list');
+        props.onPlay(intent(), outcome.source);
+      } else if (outcome.kind === 'choose-file') {
+        metrics.record({ name: 'resolve', at: Date.now(), ms, kind, outcome: 'choice' });
+        setFiles(outcome.files);
+        setMode('files');
+        setFocusKey('file:0');
+      } else {
+        metrics.record({ name: 'resolve', at: Date.now(), ms, kind, outcome: 'choice' });
+        setQualities({ linkId: outcome.linkId, options: outcome.qualities });
+        setMode('qualities');
+        setFocusKey('quality:0');
+      }
+    } catch (error) {
+      if (isAbort(error)) {
+        metrics.record({ name: 'resolve', at: Date.now(), ms: Math.round(performance.now() - operationStarted), kind, outcome: 'cancelled' });
+        return;
+      }
+      metrics.record({ name: 'resolve', at: Date.now(), ms: Math.round(performance.now() - operationStarted), kind, outcome: 'failed' });
+      setMode('list');
+      if (error instanceof ApiError && error.status === 401) {
+        await refreshAccount();
+        setBanner({ tone: 'error', text: (error as Error).message });
+        return;
+      }
+      setBanner({ tone: 'error', text: `${(error as Error).message} Pick another source below.` });
+    } finally {
+      if (operation === controller) operation = null;
+      setProgress(null);
+    }
+  }
+
+  function cancelResolve() {
+    operation?.abort();
+    operation = null;
+    setMode('list');
+    setBanner({ tone: 'info', text: 'Cancelled.' });
+  }
+
+  function submitManual() {
+    const value = manualValue().trim();
+    if (!value) return manualInput?.focus();
+    const kind = value.startsWith('magnet:') || /^[a-f0-9]{40}$/i.test(value) ? 'magnet' : 'link';
+    if (kind === 'link' && !/^https?:\/\//i.test(value)) return setBanner({ tone: 'error', text: 'Enter an http(s) link, a magnet link, or a 40-character info hash.' });
+    manualInput?.blur();
+    setMode('list');
+    void choose({ kind, value });
+  }
+
+  // ---------------------------------------------------------------- input
+
+  useKeys(key => {
+    if (!props.active) return;
+    if (key === 'back') {
+      switch (mode()) {
+        case 'resolving': return cancelResolve();
+        case 'pairing': return cancelPairing();
+        case 'files': case 'qualities': case 'manual':
+          manualInput?.blur();
+          setMode('list');
+          return;
+        default: return props.onBack();
+      }
+    }
+    if (mode() === 'resolving') return;
+    if (key === 'up') return moveFocus(-1);
+    if (key === 'down') return moveFocus(1);
     if (key === 'enter') {
-      if (focus() === 0 && props.item.id === DEMO_ID) props.onPlay(DEMO_VIDEO, props.item.name);
-      if (focus() === pairIndex() && !paired()) pair();
-      if (focus() >= sourceIndex() && focus() < inputIndex()) chooseSource(sources()[focus() - sourceIndex()]);
-      if (focus() === inputIndex()) document.getElementById('source-input')?.focus();
-      if (focus() === submitIndex()) submit();
+      if (mode() === 'manual' && focusKey() === 'manual-input' && document.activeElement === manualInput) return submitManual();
+      items().find(item => item.key === focusKey())?.run();
     }
   });
+
+  // ---------------------------------------------------------------- view
 
   return <div class="sources-screen">
     <div class="sources-backdrop" style={{ 'background-image': `url("${art.backdrop(props.item.id)}")` }} />
-    <div class="sources-content">
-      <div class="sources-kicker">{view() === 'sources' ? 'PLAYBACK SOURCES' : view() === 'files' ? 'CHOOSE A FILE' : 'CHOOSE QUALITY'}</div>
-      <h1>{props.video?.title || props.item.name}</h1>
-      <p class="sources-subtitle">{view() === 'sources' ? 'Choose a release. The TV will play one resolved file.' : 'Back returns to the source list.'}</p>
-      <Show when={message()}><p class="sources-alert" role="status">{message()}</p></Show>
+    <div class="sources-layout">
+      <header class="sources-header">
+        <div>
+          <div class="sources-kicker">Choose how to watch</div>
+          <h1>{props.item.name}</h1>
+          <Show when={subtitle()}><p class="sources-subtitle">{subtitle()}</p></Show>
+        </div>
+        <AccountChip account={account()} />
+      </header>
 
-      <Show when={view() === 'sources'} fallback={<div class="source-choice-panel">
-        <h2>{view() === 'files' ? 'Select the video file' : 'Select playback quality'}</h2>
-        <p>{view() === 'files' ? 'The release contains several videos, so choose the one you want.' : 'This link offers several versions.'}</p>
-        <Show when={view() === 'files'} fallback={<For each={qualities()}>{(quality, index) =>
-          <button class="source-card" classList={{ focused: focus() === index() }} onClick={() => chooseQuality(quality)}>
-            <strong class="source-badge">{quality.quality || quality.id}</strong><span>{quality.ext || 'Video stream'}</span><b>›</b>
-          </button>
-        }</For>}>
-          <For each={files()}>{(file, index) =>
-            <button class="source-card" classList={{ focused: focus() === index() }} onClick={() => unlock(file.link)}>
-              <strong class="source-badge">FILE</strong>
-              <span class="source-copy"><b>{file.name}</b><small>{(file.size / 1e9).toFixed(2)} GB</small></span><b>›</b>
+      <Show when={banner()}>{b => <div class="sources-banner" classList={{ error: b().tone === 'error' }} role="status">{b().text}</div>}</Show>
+
+      <Show when={mode() === 'list' || mode() === 'manual'}>
+        <main class="sources-main">
+          <Show when={isDemo()}>
+            <button class="source-row test" data-key="test" classList={{ focused: focused('test') }} onClick={playTest}>
+              <div class="source-badges"><span class="badge">TEST</span></div>
+              <div class="source-text"><b>Big Buck Bunny · bundled clip</b><small>480p · H.264 · AAC · 30 seconds · plays without AllDebrid</small></div>
+              <span class="source-chevron">›</span>
             </button>
-          }</For>
-        </Show>
-      </div>}>
-        <Show when={props.item.id === DEMO_ID}>
-          <button class="source-card" classList={{ focused: focus() === 0 }} onClick={() => props.onPlay(DEMO_VIDEO, props.item.name)}>
-            <strong class="source-badge">TEST</strong><span class="source-copy"><b>Big Buck Bunny</b><small>Bundled 480p · 30 seconds</small></span><b>›</b>
-          </button>
-        </Show>
-        <button class="source-account" classList={{ focused: focus() === pairIndex() }} onClick={pair} disabled={paired() || busy()}>
-          <span>{paired() ? 'AllDebrid connected' : 'Connect AllDebrid with PIN'}</span>
-          <small>{paired() ? (persistent() ? 'Saved on this TV' : 'This session only') : 'Needed to resolve indexed releases'}</small>
-        </button>
-        <Show when={pin()}>{p => <div class="pair-code"><b>{p().pin}</b><span>Open {p().url} on another device</span></div>}</Show>
+          </Show>
 
-        <div class="source-section-heading"><h2>Releases</h2><span>{searching() ? 'Searching…' : `${sources().length} shown · external indexer`}</span></div>
-        <Show when={!searching() && !sources().length}><p class="source-message">No indexed release was found. You can still enter a link below.</p></Show>
-        <div class="discovered-list"><For each={sources()}>{(source, index) =>
-          <button class="source-card" classList={{ focused: focus() === sourceIndex() + index() }} disabled={busy()} onClick={() => chooseSource(source)}>
-            <strong class="source-badge">{source.quality || 'VIDEO'}</strong>
-            <span class="source-copy"><b>{source.release}</b><small>{[source.size, source.codec, source.peers !== null ? `${source.peers} peers` : '', source.provider].filter(Boolean).join(' · ')}</small></span>
-            <b class="source-chevron">›</b>
-          </button>
-        }</For></div>
-        <div class="source-manual-label">Have a direct link or magnet?</div>
-        <div class="source-entry">
-          <input id="source-input" classList={{ focused: focus() === inputIndex() }} value={value()} onInput={e => setValue(e.currentTarget.value)} placeholder="Paste a link or magnet" />
-          <button class="source-submit" classList={{ focused: focus() === submitIndex() }} disabled={busy()} onClick={submit}>Resolve</button>
+          <Show when={searching()}>
+            <div class="source-skeleton"><div class="loading-mark small" /><span>Finding sources…</span></div>
+          </Show>
+
+          <Show when={!searching() && ranking().recommended}>{best =>
+            <button class="source-hero" data-key="rec" classList={{ focused: focused('rec') }} onClick={() => choose(best().candidate)}>
+              <div class="source-hero-label">Recommended</div>
+              <div class="source-hero-main">
+                <div>
+                  <div class="source-hero-title">{headline(best().candidate)}</div>
+                  <div class="source-hero-details">{details(best().candidate, bytes)}</div>
+                </div>
+                <span class="source-hero-action">{account()?.paired === false ? 'Connect & play' : 'Play'}</span>
+              </div>
+              <div class="source-hero-why">{ranking().why}</div>
+              <Show when={best().warnings.length}><div class="source-warning">{best().warnings.join(' · ')}</div></Show>
+              <div class="source-release">{best().candidate.release}</div>
+            </button>
+          }</Show>
+
+          <Show when={!searching() && !ranking().recommended}>
+            <div class="source-empty">
+              <b>{searchError() ? "Couldn't search for sources" : candidates().length ? 'No recommended source' : 'No sources found'}</b>
+              <span>{searchError() || (candidates().length ? 'The releases found are cinema recordings or unavailable. They are listed below if you want to try one.' : 'You can still paste a link or magnet below.')}</span>
+            </div>
+          </Show>
+
+          <For each={searching() ? [] : ranking().groups}>{group =>
+            <section class="source-group">
+              <h2>{group.label === 'Other' ? 'Other quality' : group.label}<span>{group.items.length}</span></h2>
+              <For each={visibleItems(group)}>{ranked => <CandidateRow ranked={ranked} focused={focused(`cand:${ranked.candidate.id}`)} onChoose={() => choose(ranked.candidate)} />}</For>
+              <Show when={group.items.length > GROUP_PREVIEW}>
+                <button class="source-more" data-key={`more:${group.label}`} classList={{ focused: focused(`more:${group.label}`) }} onClick={() => toggleGroup(group.label)}>
+                  {expanded().has(group.label) ? 'Show fewer' : `Show all ${group.items.length}`}
+                </button>
+              </Show>
+            </section>
+          }</For>
+
+          <section class="source-group">
+            <Show when={mode() === 'manual'} fallback={
+              <button class="source-row quiet" data-key="manual" classList={{ focused: focused('manual') }} onClick={() => setMode('manual')}>
+                <div class="source-text"><b>Paste a link or magnet</b><small>For a source you already have</small></div>
+                <span class="source-chevron">›</span>
+              </button>
+            }>
+              <div class="source-manual">
+                <input ref={manualInput} data-key="manual-input" classList={{ focused: focused('manual-input') }} value={manualValue()}
+                  onInput={event => setManualValue(event.currentTarget.value)} placeholder="https://… or magnet:?xt=…" />
+                <button data-key="manual-go" classList={{ focused: focused('manual-go') }} onClick={submitManual}>Resolve</button>
+              </div>
+            </Show>
+            <button class="source-row quiet" data-key="account" classList={{ focused: focused('account') }} onClick={() => { if (!account()?.paired) void startPairing(); }}>
+              <div class="source-text">
+                <b>{account()?.paired ? 'AllDebrid connected' : 'Connect AllDebrid'}</b>
+                <small>{account() ? (account()!.paired ? pairedMessage(account()!) : 'Needed to play indexed releases. Takes a minute, once.') : 'Checking…'}</small>
+              </div>
+            </button>
+          </section>
+          <p class="sources-footnote">Quality details come from release names and are confirmed only when playback starts.</p>
+        </main>
+      </Show>
+
+      <Show when={mode() === 'pairing'}>
+        <div class="sources-panel pairing">
+          <h2>Connect AllDebrid</h2>
+          <Show when={pin()} fallback={<div class="loading-mark small" />}>{p => <>
+            <ol>
+              <li>On your phone or computer, open <b>{p().url.replace(/^https?:\/\//, '')}</b></li>
+              <li>Enter this code</li>
+            </ol>
+            <div class="pin-code" aria-label="Pairing code">{p().code}</div>
+            <Show when={!pinExpired()} fallback={
+              <button class="source-more" data-key="pin-renew" classList={{ focused: focused('pin-renew') }} onClick={() => startPairing()}>The code expired · get a new one</button>
+            }>
+              <p class="pin-wait"><span class="pulse" /> Waiting for you to confirm… code expires in {countdown(p().expiresAt - now())}</p>
+            </Show>
+            <p class="pin-note">This TV remembers the connection, so you only do this once.</p>
+          </>}</Show>
+          <p class="panel-hint">Back to cancel</p>
         </div>
       </Show>
-      <Show when={busy()}><div class="sources-busy"><div class="loading-mark" /><span>{message() || 'Preparing source…'}</span></div></Show>
+
+      <Show when={mode() === 'resolving'}>
+        <div class="sources-panel resolving" role="status">
+          <h2>{resolving()?.claims ? headline(resolving() as SourceCandidate) : 'Preparing your source'}</h2>
+          <Steps progress={progress()} magnet={resolving()?.kind === 'magnet'} />
+          <p class="panel-hint">Back to cancel</p>
+        </div>
+      </Show>
+
+      <Show when={mode() === 'files'}>
+        <div class="sources-panel choice">
+          <h2>Which file?</h2>
+          <p>This release has several videos and Bloob couldn't tell which one you want.</p>
+          <For each={files()}>{(file, i) =>
+            <button class="source-row" data-key={`file:${i()}`} classList={{ focused: focused(`file:${i()}`) }} onClick={() => continueWith(ctx => resolveFile(file, ctx, resolving() ?? undefined))}>
+              <div class="source-text"><b>{file.name}</b><small>{[bytes(file.size), file.path && file.path !== file.name ? file.path.split('/').slice(0, -1).join(' / ') : ''].filter(Boolean).join(' · ')}</small></div>
+              <span class="source-chevron">›</span>
+            </button>
+          }</For>
+          <p class="panel-hint">Back to sources</p>
+        </div>
+      </Show>
+
+      <Show when={mode() === 'qualities'}>
+        <div class="sources-panel choice">
+          <h2>Which version?</h2>
+          <p>This link offers several versions.</p>
+          <For each={qualities().options}>{(option, i) =>
+            <button class="source-row" data-key={`quality:${i()}`} classList={{ focused: focused(`quality:${i()}`) }} onClick={() => continueWith(ctx => resolveQuality(qualities().linkId, option, ctx, resolving() ?? undefined))}>
+              <div class="source-badges"><span class="badge">{String(option.quality || 'Video')}</span></div>
+              <div class="source-text"><b>{option.ext ? option.ext.toUpperCase() : 'Video stream'}</b><small>{bytes(option.filesize)}</small></div>
+              <span class="source-chevron">›</span>
+            </button>
+          }</For>
+          <p class="panel-hint">Back to sources</p>
+        </div>
+      </Show>
     </div>
   </div>;
+}
+
+function CandidateRow(props: { ranked: RankedCandidate; focused: boolean; onChoose: () => void }) {
+  const c = () => props.ranked.candidate;
+  return <button class="source-row" data-key={`cand:${c().id}`} classList={{ focused: props.focused, dim: props.ranked.excluded }} onClick={props.onChoose}>
+    <div class="source-badges">
+      <span class="badge strong">{c().claims.resolution ?? '?'}</span>
+      <Show when={c().claims.hdr?.length}><span class="badge">{c().claims.hdr!.includes('DV') ? 'DV' : c().claims.hdr![0]}</span></Show>
+      <Show when={c().claims.audio?.includes('Atmos')}><span class="badge">Atmos</span></Show>
+    </div>
+    <div class="source-text">
+      <b>{details(c(), bytes) || 'No details reported'}</b>
+      <small>
+        <Show when={props.ranked.warnings.length}><em>{props.ranked.warnings[0]} · </em></Show>
+        {c().release}
+      </small>
+    </div>
+    <span class="source-chevron">›</span>
+  </button>;
+}
+
+function AccountChip(props: { account: AccountStatus | null }) {
+  return <div class="account-chip" classList={{ ok: !!props.account?.paired, warn: !!props.account?.paired && !props.account.persistent }}>
+    <span class="dot" />
+    {!props.account ? 'AllDebrid…' : props.account.paired ? (props.account.persistent ? 'AllDebrid connected' : 'AllDebrid · not saved') : 'AllDebrid not connected'}
+  </div>;
+}
+
+const STEPS: { step: ResolveProgress['step']; label: string; magnetOnly?: boolean }[] = [
+  { step: 'adding', label: 'Send to AllDebrid', magnetOnly: true },
+  { step: 'caching', label: 'Download on AllDebrid', magnetOnly: true },
+  { step: 'files', label: 'Find the video file', magnetOnly: true },
+  { step: 'unlocking', label: 'Get the stream' },
+];
+
+function Steps(props: { progress: ResolveProgress | null; magnet: boolean }) {
+  const steps = () => STEPS.filter(s => props.magnet || !s.magnetOnly);
+  const current = () => {
+    const step = props.progress?.step === 'preparing' ? 'unlocking' : props.progress?.step;
+    return Math.max(0, steps().findIndex(s => s.step === step));
+  };
+  return <ol class="resolve-steps">
+    <For each={steps()}>{(s, i) =>
+      <li classList={{ done: i() < current(), active: i() === current() }}>
+        <span class="marker" />
+        <span>{i() === current() && props.progress ? props.progress.label : s.label}</span>
+        <Show when={i() === current() && props.progress?.fraction !== undefined}>
+          <span class="resolve-meter"><span style={{ transform: `scaleX(${props.progress!.fraction})` }} /></span>
+          <small>{Math.round((props.progress!.fraction || 0) * 100)}%</small>
+        </Show>
+      </li>
+    }</For>
+  </ol>;
+}
+
+function pairedMessage(status: AccountStatus) {
+  if (!status.paired) return 'Not connected';
+  switch (status.storage) {
+    case 'app-data': case 'home': case 'configured': return 'Saved on this TV. You will not need the code again.';
+    case 'service': return 'Saved on this TV until the app is reinstalled.';
+    case 'temporary': return 'Saved until the TV restarts. Longer-term storage was unavailable.';
+    default: return `Connected for now, but this TV refused to save it (${status.attempts.map(a => `${a.location}: ${a.result}`).join(', ') || 'no storage'}).`;
+  }
+}
+
+function countdown(ms: number) {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 }

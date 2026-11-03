@@ -4,6 +4,8 @@ This is a map of the reference application's bundled **Luna** runtime, not the w
 
 ## End-to-end runtime path
 
+**Deeper resource study, completed 16 October 2026:** [CPU, memory and graphics implementation map](Elements-of-A-CPU-memory-GPU-map.md). It traces 135 selected native entry points and adds recovered arena allocation, graphics budget/admission/eviction, frame coalescing, target reuse, draw batching, upload, shader lifetime and synchronization behavior. The older overview below retains its original evidence boundaries; use the new study for the expanded resource findings.
+
 ```text
 native launcher / AppEngine::setup
   -> create graphics engine, performance counters, NodeJsMT, configuration
