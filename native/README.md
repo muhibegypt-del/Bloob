@@ -2,7 +2,6 @@
 
 A native webOS app (`com.muhib.bloob`, "Bloob Native") written in C++ against the community webOS NDK. It is the whole app: catalogue, search, details with seasons and episodes, source choice, AllDebrid pairing and resolution, and playback through the TV's own media pipeline. It draws its own UI and owns playback with the native Buna session. The map of every layer of the app, with its current state, gaps and next increments, is in [`APP-MAP.md`](APP-MAP.md). The visual system (Glass since 2.0), with screen layouts and states, is in [`DESIGN.md`](DESIGN.md); how Glass was built, phase by phase, is in [`GLASS-PLAN.md`](GLASS-PLAN.md). The TV test script, including the hand-the-remote-over acceptance task, is in [`TV-TEST.md`](TV-TEST.md).
 
-It installs alongside the web app (`com.muhib.tvprototype`) and does not replace it.
 
 ## How it fits together
 
@@ -17,7 +16,7 @@ bloob (C++)                                   com.muhib.bloob.service (Node, bun
   com.webos.media (uMediaServer) → hardware video plane under the UI
 ```
 
-The service is the same code as the web app's (`tv-app/service`), staged as the app's own JS service with its own ID and port (`scripts/stage-service.mjs`). It reads the web app's saved AllDebrid pairing if there is one, and keeps its own copy. The app starts the service over the system bus. If the bus refuses, it runs the service directly with the TV's Node as a child process. The app stops the service when it exits.
+The service (`tv-app/service`) is staged as the app's own JS service with its own ID and port (`scripts/stage-service.mjs`). It reads the web app's saved AllDebrid pairing if there is one, and keeps its own copy. The app starts the service over the system bus. If the bus refuses, it runs the service directly with the TV's Node as a child process. The app stops the service when it exits.
 
 | Part | Files | What it does |
 | --- | --- | --- |

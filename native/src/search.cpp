@@ -273,7 +273,14 @@ class SearchScreen : public Screen {
     int kx = KX - static_cast<int>((1.0f - k) * (KW + 120));
     if (k > 0.02f) draw_keyboard(kx, k);
     // Browsing results: the query stays in view as a compact glass chip.
-    // 4.1 Swiss: while browsing results the query is in the results' heading.
+    if (k < 0.98f) {
+      GlassButton chip;
+      chip.label = query_;
+      chip.icon = static_cast<int>(Icon::Search);
+      chip.variant = ButtonStyle::Default;
+      chip.alpha = 1.0f - k;
+      draw_glass_button(safe_x, TOP - 84, chip);
+    }
     draw_results();
   }
 
@@ -294,14 +301,13 @@ class SearchScreen : public Screen {
     draw_glass(g);
     // Field.
     // Field 85 high, White10, padding 20 [EoA S5].
-    // 4.1 Swiss: the query large in Bold , with a red caret.
-    Font &bold = c.fonts.bold;
-    int qx = x0, qy = iy - 6;
-    std::string shown = ellipsize(bold, query_, 72, KW - 20);
-    int qw = bold.measure(shown, 72);
-    if (query_.empty()) bold.draw("Search", qx, qy, 72, label(Label::Tertiary, a));
-    else bold.draw(shown, qx, qy, 72, fade(rgba(0xffffff), a));
-    if (zone_ == Zone::Keys && !tabs_ && caret_) c.gfx.fill_rect(qx + (query_.empty() ? 0 : qw + 6), iy + 6, 6, FIELD_H - 22, fade(theme::signal, a));
+    c.gfx.fill_round(x0, iy, KW, FIELD_H, FIELD_H / 2, fade(rgba(0xffffff, 26), a));
+    c.icons.draw(Icon::Search, x0 + 20, iy + (FIELD_H - 34) / 2, 34, label(Label::Secondary, a));
+    int qx = x0 + 70;
+    int qy = text_y_centered(Text::Title3Std, iy + FIELD_H / 2);
+    int qw = text(Text::Title3Std, query_, qx, qy, label(Label::Primary, a), KW - 90);
+    if (query_.empty()) text(Text::Title3Std, "Search", qx, qy, label(Label::Tertiary, a));
+    if (zone_ == Zone::Keys && !tabs_ && caret_) c.gfx.fill_rect(qx + qw + 4, iy + 20, 3, FIELD_H - 40, fade(rgba(0xffffff), a));
 
     // Keys.
     for (int r = 0; r < key_rows(); r++)
@@ -356,15 +362,14 @@ class SearchScreen : public Screen {
     std::string q = current_query();
     int rx = results_x(), rw = results_w(), cols = results_cols(), tw = tile_w(), th = tile_h(), rh = row_h();
     if (q.size() < 2) {
-      c.fonts.bold.draw("Find something to watch", rx, TOP - 4, 64, rgba(0xffffff));
+      text(Text::Title2, "Find something to watch", rx, TOP + 4, label(Label::Primary));
       paragraph(Text::Body, "Type a few letters of a film or series. Results appear as you type.", rx, TOP + 84, label(Label::Secondary), rw, 2);
       if (!ctx().recent_searches.empty())
         paragraph(Text::Callout, "Or press Down from the keyboard to search again for something recent.", rx, TOP + 172, label(Label::Tertiary), rw, 2);
       return;
     }
     bool waiting = searching_ || due_at_;
-    text(Text::Caption1Semi, "Results for \xE2\x80\x9C" + q + "\xE2\x80\x9D", rx, TOP + 18, label(Label::Primary), rw - 120);
-    if (!waiting) text_right(Text::Caption1, std::to_string(results_.size()), rx + rw, TOP + 18, label(Label::Secondary));
+    text(Text::Title3, "Results for \xE2\x80\x9C" + q + "\xE2\x80\x9D", rx, TOP + 14, label(Label::Primary), rw - 80);
     if (waiting) draw_spinner(rx + rw - 24, TOP + 40, 34, label(Label::Secondary), searching_ ? searching_since_ : 0);
     if (!error_.empty()) {
       paragraph(Text::Body, error_, rx, TOP + 90, problem, rw, 3);

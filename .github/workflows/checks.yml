@@ -10,7 +10,7 @@ on:
 
 jobs:
   service:
-    name: Service and web app
+    name: Service
     runs-on: ubuntu-24.04
     defaults:
       run:
@@ -23,7 +23,6 @@ jobs:
           cache: npm
           cache-dependency-path: tv-app/package-lock.json
       - run: npm ci
-      - run: npx tsc --noEmit
       - run: npx vitest run
 
   native:

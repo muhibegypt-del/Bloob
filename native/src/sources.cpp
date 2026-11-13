@@ -30,24 +30,14 @@ namespace {
 using namespace theme;
 
 constexpr long long kPollMs = 700;
-// 4.1 Swiss: the title column takes three grid columns, the versions the other nine.
-const int LX = safe_x, LW = span_w(3);
-const int RX = col_x(3), RW = span_w(9);
-constexpr int ROW = 56, ROW_GAP = 0;  // one-line table rows
+constexpr int LX = safe_x, LW = 600;           // title column
+constexpr int RX = 760, RW = W - safe_x - 760;  // options column
+constexpr int ROW = 96, ROW_GAP = 10;
 constexpr int PILLS_Y = 436;                  // the filter strip, under the best version
 constexpr int LIST_TOP = 530;
-constexpr int LIST_H = 8 * (ROW + ROW_GAP);  // the list's window
-constexpr int HEADER_H = 44;                  // a section title in the list
+constexpr int LIST_H = 4 * (ROW + ROW_GAP);  // the list's window
+constexpr int HEADER_H = 58;                  // a section title in the list
 
-// Source tiers, best first (the service's cinephile.js names them).
-// 4.1: SDR remuxes and season packs have sections of their own.
-const char *const kTiers[] = {"uhd-remux", "sdr-remux", "bd-remux", "uhd-encode", "web-4k", "bd-encode", "web-hd", "pack", "other"};
-constexpr int kTierCount = static_cast<int>(sizeof(kTiers) / sizeof(kTiers[0]));
-int tier_index(const std::string &tier) {
-  for (int k = 0; k < kTierCount; k++)
-    if (tier == kTiers[k]) return k;
-  return kTierCount;  // a service without tiers
-}
 bool is_more(const SourceOption &o) { return o.id.compare(0, 5, "more:") == 0; }
 
 std::string source_words(const std::string &s) {
@@ -60,12 +50,12 @@ std::string source_words(const std::string &s) {
 }
 
 // Resolution filters; a filter with no versions is not shown.
-// 4.1 (owner): SDR remuxes and season packs have tabs of their own; the
-// resolution tabs list single files, so a pack is only under Season packs.
+// 4.2: SDR remuxes and season packs have tabs of their own; versions likely
+// to fail are only under their own tab.
 enum class Filter { All, UHD, FullHD, Lower, SdrRemux, Packs, Problems };
 bool passes(Filter f, const SourceOption &o, bool problem) {
   switch (f) {
-    case Filter::All: return true;
+    case Filter::All: return !problem;
     case Filter::UHD: return !problem && !o.pack && o.resolution == "4K";
     case Filter::FullHD: return !problem && !o.pack && o.resolution == "1080p";
     case Filter::Lower: return !problem && !o.pack && o.resolution != "4K" && o.resolution != "1080p";
@@ -99,6 +89,16 @@ struct Availability {
   Color dot;
 };
 
+Availability availability(const SourceOption &o) {
+  if (!o.cautions.empty()) return {o.cautions[0], caution};
+  if (o.ready == 1) return {"Ready now", good};
+  if (o.availability == "Direct link") return {"Direct link", good};
+  int seeders = std::atoi(o.availability.c_str());
+  // 4.2: an ordinary, available version says nothing; only Ready now and warnings show.
+  if (seeders >= 5) return {"", good};
+  if (o.availability.find("seeder") != std::string::npos) return {"Slow to prepare", caution};
+  return {"Availability unknown", label(Label::Tertiary)};
+}
 
 class SourcesScreen : public Screen {
  public:
@@ -224,15 +224,11 @@ class SourcesScreen : public Screen {
 
   // The cut the list opens on: the one last chosen, else Theatrical, else the first.
   std::string initial_cut() const {
-    if (all_.cuts.size() < 2) return "";
-    for (auto &c : all_.cuts)
-      if (c.first == ctx().preferred_cut) return c.first;
-    for (auto &c : all_.cuts)
-      if (c.first == "Theatrical") return c.first;
-    return all_.cuts[0].first;
+    return "";  // 4.2: no edition tabs; the cut is a chip on each row
   }
   bool in_cut(const SourceOption &o) const {
-    return all_.cuts.size() < 2 || (o.cut.empty() ? std::string("Theatrical") : o.cut) == cut_;
+    (void)o;
+    return true;  // 4.2: every cut is listed; each row says which it is
   }
 
   // The list for the chosen cut: its best version first (the recommended one
@@ -264,21 +260,19 @@ class SourcesScreen : public Screen {
       options_.push_back(*ranking_.recommended);
       section_of_.push_back("best");
     }
-    std::map<std::string, int> folded;
-    for (size_t i = 0; i < pool.size(); i++) {
-      if (static_cast<int>(i) == best || !in_cut(pool[i].first) || pool[i].second == "best") continue;
+    // 4.2: one flat list, best first: versions that continue the show's last
+    // episode, then by score. Nothing is folded away.
+    std::vector<size_t> rest;
+    for (size_t i = 0; i < pool.size(); i++)
+      if (static_cast<int>(i) != best && pool[i].second != "best") rest.push_back(i);
+    std::stable_sort(rest.begin(), rest.end(), [&](size_t a, size_t b) {
+      bool ca = pool[a].second == "continue", cb = pool[b].second == "continue";
+      if (ca != cb) return ca;
+      return pool[a].first.score > pool[b].first.score;
+    });
+    for (size_t i : rest) {
       options_.push_back(pool[i].first);
       section_of_.push_back(pool[i].second);
-      if (folds(options_.size() - 1)) folded[pool[i].first.tier]++;
-    }
-    for (auto &f : folded) {
-      SourceOption more;
-      more.id = "more:" + f.first;
-      more.tier = f.first;
-      bool one = f.second == 1;
-      more.headline = "+" + std::to_string(f.second) + (f.first == "other" ? (one ? " lower-quality version" : " lower-quality versions") : (one ? " more like this" : " more like these"));
-      options_.push_back(more);
-      section_of_.push_back("more");
     }
     build_pills();
     build_rows();
@@ -286,27 +280,14 @@ class SourcesScreen : public Screen {
 
   // Folded behind "+N more" until that row is opened.
   bool folds(size_t i) const {
-    return options_[i].collapsed && section_of_[i] == "others" && !expanded_.count(options_[i].tier);
+    (void)i;
+    return false;  // 4.2: nothing folds
   }
 
   // The edition row when there are several cuts, else one pill per resolution
   // that has versions, with its count. Focus stays where it was.
   void build_pills() {
     pills_.clear();
-    if (all_.cuts.size() > 1) {
-      for (auto &c : all_.cuts) pills_.push_back({Filter::All, c.second, c.first});
-      // 4.1: the SDR Remux and Season packs tabs follow the editions (within the cut shown).
-      size_t first_cut = ranking_.recommended ? 1 : 0;
-      for (Filter f : {Filter::SdrRemux, Filter::Packs}) {
-        int count = 0;
-        for (size_t i = first_cut; i < options_.size(); i++) count += section_of_[i] != "more" && passes(f, options_[i], problem(i)) ? 1 : 0;
-        if (count) pills_.push_back({f, count, ""});
-      }
-      pill_ = 0;
-      for (size_t i = 0; i < pills_.size(); i++)
-        if (filter_ == Filter::All ? pills_[i].cut == cut_ : pills_[i].filter == filter_ && pills_[i].cut.empty()) pill_ = static_cast<int>(i);
-      return;
-    }
     size_t first = ranking_.recommended ? 1 : 0;
     for (Filter f : {Filter::All, Filter::UHD, Filter::FullHD, Filter::Lower, Filter::SdrRemux, Filter::Packs, Filter::Problems}) {
       int count = 0;
@@ -327,44 +308,12 @@ class SourcesScreen : public Screen {
     rows_.clear();
     int y = 0;
     size_t first = ranking_.recommended ? 1 : 0;
-    auto section = [&](const std::string &title, const std::string &kind, const std::vector<int> &items, int count) {
-      if (items.empty()) return;
-      rows_.push_back({-1, title + " \xC2\xB7 " + std::to_string(count), kind, y});
-      y += HEADER_H;
-      for (int i : items) {
-        rows_.push_back({i, "", kind, y});
-        y += ROW + ROW_GAP;
-      }
-    };
-    std::vector<int> continuing, problems;
-    std::vector<std::vector<int>> tiers(kTierCount + 1);
-    std::vector<int> counts(kTierCount + 1, 0);
-    std::vector<std::string> titles(kTierCount + 1, "Other versions");
-    std::map<std::string, int> more_row;
+    // 4.2: no section headers: the tab says what is listed, the rows are in order.
     for (size_t i = first; i < options_.size(); i++) {
-      if (section_of_[i] == "more") {
-        more_row[options_[i].tier] = static_cast<int>(i);
-        continue;
-      }
       if (!passes(filter_, options_[i], problem(i))) continue;
-      if (section_of_[i] == "continue") continuing.push_back(static_cast<int>(i));
-      else if (problem(i)) problems.push_back(static_cast<int>(i));
-      else {
-        int t = tier_index(options_[i].tier);
-        counts[static_cast<size_t>(t)]++;
-        if (!options_[i].tier_label.empty()) titles[static_cast<size_t>(t)] = options_[i].tier_label;
-        if (!folds(i)) tiers[static_cast<size_t>(t)].push_back(static_cast<int>(i));
-      }
+      rows_.push_back({static_cast<int>(i), "", section_of_[i], y});
+      y += ROW + ROW_GAP;
     }
-    for (auto &g : ranking_.groups)
-      if (g.kind == "continue") section(g.label, "continue", continuing, static_cast<int>(continuing.size()));
-    for (int t = 0; t <= kTierCount; t++) {
-      auto &items = tiers[static_cast<size_t>(t)];
-      auto more = more_row.find(t < kTierCount ? kTiers[t] : "");
-      if (more != more_row.end()) items.push_back(more->second);
-      section(titles[static_cast<size_t>(t)], "others", items, counts[static_cast<size_t>(t)]);
-    }
-    section("May not play well on this TV", "problems", problems, static_cast<int>(problems.size()));
     list_h_ = y;
     scroll_.snap(0);
   }
@@ -383,7 +332,6 @@ class SourcesScreen : public Screen {
     pill_ = std::max(0, std::min(static_cast<int>(pills_.size()) - 1, index));
     if (!pills_[static_cast<size_t>(pill_)].cut.empty()) {
       cut_ = pills_[static_cast<size_t>(pill_)].cut;
-      filter_ = Filter::All;  // an edition shows all its versions
       arrange();  // the best card and the list follow the cut
       focus_index_ = 0;
     } else {
@@ -459,7 +407,7 @@ class SourcesScreen : public Screen {
     }
     chosen_ = options_[static_cast<size_t>(index)];
     // The cut chosen here is where the next film's list opens.
-    if (all_.cuts.size() > 1 && cut_ != ctx().preferred_cut) {
+    if (false) {  // 4.2: no edition tabs, so no cut to remember
       ctx().preferred_cut = cut_;
       ctx().save_settings();
     }
@@ -771,51 +719,35 @@ class SourcesScreen : public Screen {
     pairing_.draw();
   }
 
-  // 4.1 Swiss title column: the logo, what is being chosen, then the count of
-  // versions as a big number , and AllDebrid's state at the foot.
   void draw_title_column() {
     Ctx &c = ctx();
-    int y = draw_title(req_.item, LX, 120, LW, 130) + 28;
+    int y = draw_title(req_.item, LX, 120, LW, 150);
+    y += 34;
+    text(Text::Headline, "All versions", LX, y, label(Label::Primary));
+    y += line_for(Text::Headline) + 8;
     if (req_.item.series()) {
-      std::string ep = episode_code(req_.season, req_.episode);
-      int w = text(Text::Caption1Semi, ep, LX, y, label(Label::Primary));
-      if (!req_.episode_title.empty()) text(Text::Caption1Semi, req_.episode_title, LX + w + 14, y, label(Label::Primary), LW - w - 14);
+      text(Text::Callout, episode_code(req_.season, req_.episode), LX, y, label(Label::Secondary));
+      y += line_for(Text::Callout) + 4;
+      if (!req_.episode_title.empty()) y = paragraph(Text::Callout, req_.episode_title, LX, y, label(Label::Secondary), LW, 2);
     } else {
-      text(Text::Caption1, meta_line(req_.item), LX, y, label(Label::Secondary), LW);
+      text(Text::Callout, meta_line(req_.item), LX, y, label(Label::Secondary), LW);
+      y += line_for(Text::Callout);
     }
-    y += line_for(Text::Caption1Semi) + 6;
-    text(Text::Caption1, "Choose how to watch", LX, y, label(Label::Secondary), LW);
-    if (req_.resume_ms > 0) text(Text::Caption1, "Continues from " + clock_text(req_.resume_ms), LX, y + 34, label(Label::Primary), LW);
-    if (state_ == State::Ready && ranking_.total > 0) {
-      int ready = 0;
-      for (auto &o : options_) ready += o.ready == 1 ? 1 : 0;
-      if (ranking_.recommended && ranking_.recommended->ready == 1) ready++;
-      int ry = 560;
-      c.fonts.bold.draw(std::to_string(ranking_.total), LX, ry + 14, 88, rgba(0xffffff));
-      text(Text::Caption1, ready > 0 ? "versions found, " + std::to_string(ready) + " ready" : "versions found", LX, ry + 118, label(Label::Secondary), LW);
-    }
+    if (req_.resume_ms > 0) text(Text::Callout, "Continues from " + clock_text(req_.resume_ms), LX, y + 16, label(Label::Primary));
     // AllDebrid connection, quietly.
     int ay = H - safe_y - 52;
     bool paired = c.paired;
-    c.gfx.fill_rect(LX, ay + 10, 12, 12, !account_known_ ? label(Label::Tertiary) : paired ? rgba(0xffffff) : theme::signal);
+    c.gfx.fill_circle(LX + 8, ay + 16, 6, !account_known_ ? label(Label::Tertiary) : paired ? good : caution);
     std::string status = !account_known_ ? "Checking AllDebrid\xE2\x80\xA6"
                          : paired ? (durable_ ? "AllDebrid connected" : "AllDebrid connected until restart")
                                   : "AllDebrid not connected. You\xE2\x80\x99ll pair once when you press Play.";
-    paragraph(Text::Caption2, status, LX + 24, ay, label(Label::Secondary), LW - 24, 2);
+    text(Text::Caption1, status, LX + 28, ay, label(Label::Secondary), LW);
   }
 
   void draw_options() {
     Ctx &c = ctx();
     if (has_recommended()) draw_best(*ranking_.recommended, focus_index_ == 0 && !pills_focused_);
     draw_pills();
-    // 4.1 Swiss: the table's column names  above the list.
-    {
-      int hy = LIST_TOP - 26;
-      const int cols[6] = {0, 1, 3, 5, 6, 8};
-      const char *names[6] = {"Resolution", "Picture", "Sound", "Size", "Group", "Ready"};
-      for (int k = 0; k < 5; k++) text(Text::Caption3, names[k], RX + 16 + cols[k] * (span_w(1) + grid_gutter), hy, label(Label::Secondary));
-      text_right(Text::Caption3, names[5], RX + RW - 16, hy, label(Label::Secondary));
-    }
     float sv = scroll_.value;
     for (auto &row : rows_) {
       float ry = LIST_TOP + row.y - sv;
@@ -824,7 +756,7 @@ class SourcesScreen : public Screen {
       if (row.option < 0) {
         bool problems = row.kind == "problems";
         if (problems) c.icons.draw(Icon::Warning, RX, static_cast<int>(ry) + 14, 24, caution);
-        text(Text::Caption2Bold, row.label, RX + (problems ? 34 : 0) + 16, static_cast<int>(ry) + 14, problems ? caution : label(Label::Primary));
+        text(Text::Caption1, row.label, RX + (problems ? 34 : 0), static_cast<int>(ry) + 14, problems ? caution : label(Label::Secondary));
       } else {
         draw_version(options_[static_cast<size_t>(row.option)], static_cast<int>(ry), row.option == focus_index_ && !pills_focused_);
       }
@@ -834,7 +766,7 @@ class SourcesScreen : public Screen {
     // What the keys do here, and where the versions came from.
     int hx = RX;
     if (pills_focused_) {
-      hx += draw_hint(hx, H - 82, "\xE2\x86\x90 \xE2\x86\x92", all_.cuts.size() > 1 ? "Edition" : "Filter") + 32;
+      hx += draw_hint(hx, H - 82, "\xE2\x86\x90 \xE2\x86\x92", "Filter") + 32;
       hx += draw_hint(hx, H - 82, "\xE2\x86\x93", "Versions") + 32;
     } else {
       hx += draw_hint(hx, H - 82, "OK", "Play") + 32;
@@ -854,7 +786,7 @@ class SourcesScreen : public Screen {
     for (size_t i = 0; i < pills_.size(); i++) {
       bool selected = static_cast<int>(i) == pill_;
       GlassButton b;
-      b.label = (pills_[i].cut.empty() ? std::string(filter_name(pills_[i].filter)) : pills_[i].cut) + " \xC2\xB7 " + std::to_string(pills_[i].count);
+      b.label = std::string(filter_name(pills_[i].filter)) + " \xC2\xB7 " + std::to_string(pills_[i].count);
       b.pill = true;
       b.focused = pills_focused_ && selected;
       b.candidate = selected && !b.focused;
@@ -863,8 +795,7 @@ class SourcesScreen : public Screen {
       total += glass_button_width(b) + theme::control_gap;
       bs.push_back(b);
     }
-    // 4.1: more tabs than fit (SDR Remux, Season packs): the row slides so the
-    // chosen tab is always in view; tabs outside the column are not drawn.
+    // More tabs than fit: the row slides so the chosen tab stays in view.
     int shift = 0;
     if (pill_ >= 0 && pill_ < static_cast<int>(bs.size())) {
       int right = at[static_cast<size_t>(pill_)] + glass_button_width(bs[static_cast<size_t>(pill_)]);
@@ -877,76 +808,85 @@ class SourcesScreen : public Screen {
     }
   }
 
-  // A value set large in Bold, shrunk until it fits `w`.
-  static void big(const std::string &v, int x, int y, int w, int size, Color color) {
-    Font &f = ctx().fonts.bold;
-    while (size > 28 && f.measure(v, size) > w) size -= 4;
-    f.draw(ellipsize(f, v, size, w), x, y, size, color);
-  }
-
-  // 4.1 Swiss best version: a white rule, what it is and whether it's ready, the
-  // facts as big numbers in columns with small words under them, and Play.
   void draw_best(const SourceOption &o, bool focused) {
     Ctx &c = ctx();
-    int y = 120;
+    int x = RX, y = 120, w = RW, h = 290;
+    float lift = focused ? lift_.value : 0;
+    // Frosted at rest, white when focused (the frost stays put; the white lifts).
+    sheet(x, y, w, h, 1.0f);
+    if (focused) {
+      float k = 1.0f + 0.02f * lift;
+      int fw = static_cast<int>(w * k), fh = static_cast<int>(h * k);
+      int fx = x - (fw - w) / 2, fy = y - (fh - h) / 2;
+      c.gfx.shadow(fx, fy, fw, fh, glass_radius, 30, 14, static_cast<Uint8>(150 * lift));
+      c.gfx.fill_round(fx, fy, fw, fh, glass_radius, rgba(0xffffff));
+    }
+    Color fg = focused ? rgba(0x000000) : label(Label::Primary);
+    Color fg2 = focused ? rgba(0x000000, 166) : label(Label::Secondary);
     std::string kind = o.match == "same" ? "Same as your last episode" : o.match == "like" ? "Like your last episode"
-                       : all_.cuts.size() > 1 ? "Best " + cut_ + " version" : "Best for this TV";
-    text(Text::Caption1Semi, kind, RX, y + 14, label(Label::Primary));
-    if (o.ready == 1) {
-      int rw = text_right(Text::Caption1, "Ready", RX + RW, y + 14, label(Label::Primary));
-      c.gfx.fill_rect(RX + RW - rw - 26, y + 22, 14, 14, theme::signal);
-    } else if (!o.cautions.empty()) {
-      text_right(Text::Caption1, o.cautions[0], RX + RW, y + 14, caution);
+                       : "Best version";
+    if (o.ready == 1) kind += " \xC2\xB7 Ready now";
+    text(Text::Caption1, kind, x + 40, y + 36, fg2);
+    text(Text::Title2, o.headline, x + 40, y + 72, fg, w - 260);
+    text(Text::Body, o.line.empty() ? picture_words(o) + " \xC2\xB7 " + o.audio : o.line, x + 40, y + 146, fg2, w - 260);
+    paragraph(Text::Caption1, ranking_.why, x + 40, y + 190, fg2, w - 260, 2);
+    // Play affordance.
+    int r = 52, cx = x + w - 40 - r, cy = y + h / 2;
+    c.gfx.fill_circle(cx, cy, r, focused ? rgba(0x000000) : candidate);
+    c.gfx.triangle_right(cx - 16, cy - 20, 40, focused ? rgba(0xffffff) : label(Label::Primary));
+    if (!o.cautions.empty()) {
+      c.icons.draw(Icon::Warning, x + 40, y + h - 46, 26, focused ? caution_ink : caution);
+      text(Text::Caption2, o.warnings[0], x + 76, y + h - 46, focused ? caution_ink : caution, w - 360);
     }
-    // Columns on the nine-column grid: resolution 2, picture 2, sound 3, size 2.
-    int cx[4] = {col_x(3), col_x(5), col_x(7), col_x(10)}, cw[4] = {span_w(2), span_w(2), span_w(3), span_w(2)};
-    std::string picture = o.family == "DV" ? "Dolby Vision" : o.family == "HDR" ? (o.picture.empty() ? "HDR" : o.picture.substr(0, o.picture.find(" ("))) : "SDR";
-    std::string sound = o.audio;
-    for (auto &r : std::vector<std::pair<std::string, std::string>>{{"Dolby Digital Plus", "DD+"}, {"Dolby Digital", "DD"}}) {
-      size_t at = sound.find(r.first);
-      if (at != std::string::npos) sound.replace(at, r.first.size(), r.second);
-    }
-    std::string vals[4] = {o.resolution, picture, sound, o.size};
-    std::string subs[4] = {o.tier_label.empty() ? source_words(o.source) : o.tier_label, o.picture_name, o.cut.empty() ? "" : o.cut, o.group};
-    for (int k = 0; k < 4; k++) {
-      big(vals[k], cx[k], y + 54, cw[k], 56, k == 3 ? label(Label::Secondary) : label(Label::Primary));
-      text(Text::Caption2, subs[k], cx[k], y + 126, label(Label::Secondary), cw[k]);
-    }
-    GlassButton b;
-    b.label = "Play";
-    b.icon = kPlayIcon;
-    b.h = 60;
-    b.focused = focused;
-    b.lift = lift_.value;
-    draw_glass_button(RX, y + 176, b);
-    if (!ranking_.why.empty()) text(Text::Caption2, ranking_.why, RX + glass_button_width(b) + 24, y + 176 + (60 - line_for(Text::Caption2)) / 2,
-                                    label(Label::Secondary), RW - glass_button_width(b) - 24);
   }
 
-  // 4.1 Swiss: one line per version in table columns; the focused row is a
-  // white block, the others sit on a hairline.
   void draw_version(const SourceOption &o, int y, bool focused) {
     Ctx &c = ctx();
     int x = RX, w = RW;
-    if (focused) c.gfx.fill_rect(x, y, w, ROW, rgba(0xffffff));
+    if (focused) {
+      c.gfx.shadow(x, y, w, ROW, 20, 18, 8, 120);
+      c.gfx.fill_round(x, y, w, ROW, 20, rgba(0xffffff));
+    } else {
+      c.gfx.fill_round(x, y, w, ROW, 20, rgba(0xffffff, is_more(o) ? 13 : 26));
+    }
     Color fg = focused ? rgba(0x000000) : label(o.excluded ? Label::Disabled : Label::Primary);
     Color fg2 = focused ? rgba(0x000000, 166) : label(o.excluded ? Label::Disabled : Label::Secondary);
-    int ty = y + (ROW - line_for(Text::Caption1)) / 2;
     if (is_more(o)) {  // "+N more": one quiet line
-      text(Text::Caption1, o.headline, x + 16, ty, focused ? fg : label(Label::Secondary), w - 32);
+      text(Text::BodySemi, o.headline, x + 28, y + (ROW - line_for(Text::BodySemi)) / 2, focused ? fg : label(Label::Secondary), w - 56);
       return;
     }
-    std::string picture = o.picture_name.empty() ? o.picture : o.picture_name;
-    std::string group = o.group;
-    if (req_.item.series() && o.pack) group = join({group, "whole season"});
-    const int cols[6] = {0, 1, 3, 5, 6, 8};  // resolution, picture, sound, size, group, ready
-    std::string cells[5] = {o.resolution, picture, o.audio, o.size, group};
-    for (int k = 0; k < 5; k++) {
-      int cxk = x + 16 + (cols[k] * (span_w(1) + grid_gutter)), cwk = (cols[k + 1] - cols[k]) * (span_w(1) + grid_gutter) - grid_gutter;
-      text(Text::Caption1, cells[k], cxk, ty, k == 0 || k == 2 ? fg : fg2, cwk);
+    Availability a = availability(o);
+    int aw = measure(Text::Caption1, a.words);
+    int ax = x + w - 28 - aw;
+    if (!a.words.empty()) {
+      text(Text::Caption1, a.words, ax, y + (ROW - line_for(Text::Caption1)) / 2, focused && a.dot.r == caution.r ? caution_ink : fg2, 300);
+      c.gfx.fill_circle(ax - 18, y + ROW / 2, 6, a.dot);
     }
-    if (o.ready == 1) c.gfx.fill_rect(x + w - 16 - 12, y + (ROW - 12) / 2, 12, 12, theme::signal);
-    else if (!o.cautions.empty()) text_right(Text::Caption2, o.cautions[0], x + w - 16, y + (ROW - line_for(Text::Caption2)) / 2, focused ? caution_ink : caution);
+    int right = a.words.empty() ? x + w - 28 : ax - 44;
+    // 4.2: line one is what you will see and hear; line two is a row of chips
+    // saying what this release is: its source, its cut (IMAX, Extended…), its
+    // tags, its group, and whether it is a season pack.
+    int block = line_for(Text::BodySemi) + 8 + 34;
+    int ty = y + (ROW - block) / 2;
+    std::string picture = o.picture_name.empty() ? picture_words(o) : o.picture_name;
+    text(Text::BodySemi, join({o.resolution, picture, o.audio}), x + 28, ty, fg, right - x - 28 - 110);
+    if (!o.size.empty()) text_right(Text::Caption1, o.size, right, ty + 3, fg2);
+    std::vector<std::string> chips;
+    if (o.match == "same") chips.push_back("Same as your last episode");
+    if (o.pack) chips.push_back("Season pack");
+    if (o.tier != "pack" && o.tier != "other" && !o.tier_label.empty()) chips.push_back(o.tier_label);
+    else if (!o.source.empty()) chips.push_back(source_words(o.source));
+    if (!o.cut.empty()) chips.push_back(o.cut);
+    for (auto &t : o.tags) chips.push_back(t);
+    if (!o.group.empty()) chips.push_back(o.group);
+    int cx = x + 28, cy = ty + line_for(Text::BodySemi) + 8;
+    for (auto &chip : chips) {
+      int cw = measure(Text::Caption2, chip) + 24;
+      if (cx + cw > right) break;
+      c.gfx.fill_round(cx, cy, cw, 34, 8, focused ? rgba(0x000000, 28) : rgba(0xffffff, 30));
+      text(Text::Caption2, chip, cx + 12, cy + (34 - line_for(Text::Caption2)) / 2, focused ? rgba(0x000000, 200) : label(Label::Secondary));
+      cx += cw + 8;
+    }
   }
 
   // Release details for the focused version: everything technical, on request.
@@ -1005,70 +945,54 @@ class SourcesScreen : public Screen {
     c.gfx.fill_rect(0, 0, W, H, with_alpha(black, static_cast<int>(200 * a)));
     int w = 920, x = (W - w) / 2;
     if (modal_ == Modal::Resolving) {
-      // 4.1 Swiss starting sheet: the whole screen, dimmed; the logo top left;
-      // at the foot how far along it is as a big number over a red bar, the
-      // steps as numbered columns on rules, the version, and the buttons.
-      c.gfx.fill_rect(0, 0, W, H, with_alpha(black, static_cast<int>(40 * a)));
-      draw_title(req_.item, LX, 80, span_w(4), 120, a);
       struct StepRow { const char *id; const char *label; };
-      std::vector<StepRow> steps = {{"adding", "Sent to AllDebrid"}};
+      std::vector<StepRow> steps = {{"adding", "Sending to AllDebrid"}};
       if (saw_caching_) steps.push_back({"caching", "AllDebrid is fetching it"});
       steps.push_back({"files", "Finding the right file"});
       steps.push_back({"unlocking", "Getting the stream"});
+      int h = 330 + static_cast<int>(steps.size()) * 58 + (saw_caching_ ? 34 : 0), y = (H - h) / 2;
+      sheet(x, y, w, h, a);
+      std::string starting = chosen_.match == "same" ? "Starting \xC2\xB7 same version as your last episode"
+                             : chosen_.match == "like" ? "Starting \xC2\xB7 like your last episode" : "Starting";
+      text(Text::Caption1, starting, x + 56, y + 48, label(Label::Secondary, a));
+      text(Text::Title3, chosen_.headline, x + 56, y + 84, label(Label::Primary, a), w - 112);
       static const char *order[] = {"starting", "adding", "caching", "files", "unlocking", "preparing", "ready"};
       auto rank = [](const std::string &id) {
         for (int i = 0; i < 7; i++) if (id == order[i]) return i;
         return 0;
       };
-      int now_rank = rank(step_), done_count = 0;
-      std::string current_label = "Starting";
+      int now_rank = rank(step_);
+      int sy = y + 162;
       for (auto &st : steps) {
-        bool preparing = std::string(st.id) == "unlocking" && step_ == "preparing";
-        if (now_rank > rank(st.id) && !preparing) done_count++;
-        else if (now_rank == rank(st.id) || preparing) current_label = st.label;
-      }
-      double frac = (done_count + (step_ == "caching" && fraction_ >= 0 ? fraction_ : 0.5)) / static_cast<double>(steps.size() + 1);
-      int pct = static_cast<int>(std::min(99.0, frac * 100));
-      int y = H - safe_y - 360;
-      int pw = c.fonts.bold.measure(std::to_string(pct) + "%", 120);
-      c.fonts.bold.draw(std::to_string(pct) + "%", LX, y, 120, fade(rgba(0xffffff), a));
-      text(Text::Callout, current_label, LX + pw + 28, y + 70, label(Label::Primary, a), span_w(8));
-      int by = y + 140;
-      c.gfx.fill_rect(LX, by, span_w(12), 8, fade(rgba(0xffffff, 64), a));
-      c.gfx.fill_rect(LX, by, static_cast<int>(span_w(12) * frac), 8, fade(theme::signal, a));
-      int n = static_cast<int>(steps.size()) + 1, cw = (span_w(12) - (n - 1) * grid_gutter) / n;
-      for (int k = 0; k < n; k++) {
-        bool is_last = k == n - 1;
-        std::string id = is_last ? "ready" : steps[static_cast<size_t>(k)].id;
-        std::string lab = is_last ? "First picture" : steps[static_cast<size_t>(k)].label;
+        std::string id = st.id;
+        int r = rank(id);
         bool preparing = id == "unlocking" && step_ == "preparing";
-        bool done = !is_last && now_rank > rank(id) && !preparing;
-        bool current = !is_last && (now_rank == rank(id) || preparing);
-        int sx = LX + k * (cw + grid_gutter), sy = by + 40;
-        c.gfx.fill_rect(sx, sy, cw, current ? 3 : 2, fade(current ? theme::signal : done ? rgba(0xffffff) : rgba(0xffffff, 77), a));
-        char num[16];
-        std::snprintf(num, sizeof num, "%02d", k + 1);
-        int nw = text(Text::Caption1Semi, num, sx, sy + 14, label(done || current ? Label::Primary : Label::Tertiary, a));
-        text(current ? Text::Caption1Semi : Text::Caption1, lab, sx + nw + 12, sy + 14, label(done || current ? Label::Primary : Label::Tertiary, a), cw - nw - 12);
+        bool done = now_rank > r && !preparing;
+        bool current = now_rank == r || preparing;
+        if (done) c.icons.draw(Icon::Check, x + 56, sy, 30, fade(good, a));
+        else if (current) draw_spinner(x + 71, sy + 15, 30, label(Label::Primary, a));
+        else c.gfx.fill_circle(x + 71, sy + 15, 5, label(Label::Tertiary, a));
+        text(Text::Body, st.label, x + 108, sy - 2, label(done ? Label::Secondary : current ? Label::Primary : Label::Tertiary, a));
+        if (id == "caching" && fraction_ >= 0 && current) {
+          draw_progress(x + 108, sy + 44, 520, 8, fraction_);
+          text(Text::Callout, std::to_string(static_cast<int>(fraction_ * 100)) + "%", x + 648, sy + 32, label(Label::Secondary, a));
+        }
+        sy += id == "caching" ? 92 : 58;
       }
-      std::string facts = join({chosen_.resolution, chosen_.picture, chosen_.audio, chosen_.size});
-      if (chosen_.match == "same") facts = join({"Same version as your last episode", facts});
-      text(Text::Caption1, facts, LX, by + 120, label(Label::Secondary, a), span_w(7));
       GlassButton cancel;
       cancel.label = "Cancel";
       cancel.focused = sheet_focus_ == 0;
+      cancel.variant = ButtonStyle::Default;
       cancel.alpha = a;
-      cancel.h = 60;
-      GlassButton others;
-      others.label = "Other versions";
-      others.focused = sheet_focus_ == 1;
-      others.alpha = a;
-      others.h = 60;
-      int total = glass_button_width(cancel) + (can_show_others() ? 12 + glass_button_width(others) : 0);
-      int bx = W - safe_x - total;
-      bx += draw_glass_button(bx, by + 106, cancel) + 12;
-      if (can_show_others()) draw_glass_button(bx, by + 106, others);
-      c.redraw_at(c.now + 100);
+      int bx = x + 56 + draw_glass_button(x + 56, y + h - 100, cancel) + theme::stack_gap;
+      if (can_show_others()) {
+        GlassButton others;
+        others.label = "Other versions";
+        others.focused = sheet_focus_ == 1;
+        others.variant = ButtonStyle::Default;
+        others.alpha = a;
+        draw_glass_button(bx, y + h - 100, others);
+      }
       return;
     }
     if (modal_ == Modal::ChooseFile || modal_ == Modal::ChooseQuality) {
