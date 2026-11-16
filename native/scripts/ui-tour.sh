@@ -76,10 +76,13 @@ run states 1 \
   "wait:8000" "snap:29-welcome" "key:right" "key:ok" "wait:400" "key:down" "wait:1500" "key:ok" "wait:4000" "snap:30-details-film" \
   "key:down" "wait:1500" "snap:30a-how-to-watch" "key:up" \
   "key:right" "key:ok" "wait:2500" "snap:10-sources-all-versions" \
-  "key:down" "wait:500" "snap:11-sources-filters" \
-  "key:right" "wait:500" "snap:11b-sources-filter-4k" \
-  "key:down" "key:down" "wait:500" "snap:11c-sources-row" \
-  "key:right" "wait:600" "snap:11a-sources-release-details" "key:left" "key:back" "wait:800" \
+  "key:down" "wait:500" "snap:11-sources-quality" \
+  "key:down" "wait:500" "snap:11b-sources-4k" \
+  "key:right" "key:down" "wait:500" "snap:11c-sources-dolby-vision" \
+  "key:right" "wait:500" "snap:11d-sources-which-dolby-vision" \
+  "key:right" "wait:500" "snap:11e-sources-list" \
+  "key:right" "wait:600" "snap:11a-sources-release-details" "key:left" \
+  "key:up" "key:up" "key:up" "key:up" "key:up" "key:up" "key:back" "wait:800" \
   "key:left" "key:ok" "wait:2500" "snap:31-pairing" \
   "key:back" "wait:800" "key:back" "wait:800" \
   "key:up" "key:up" "key:up" "wait:300" "key:right" "key:right" "key:right" "wait:800" "snap:32-settings" \

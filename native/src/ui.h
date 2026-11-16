@@ -260,6 +260,9 @@ struct GlassSpec {
   std::string art;        // Frost: the full-screen artwork under the panel
   float alpha = 1.0f;
   bool shadow = true;
+  // 5.0: a dark layer over the frost, for controls on bright artwork (Apple's
+  // guidance for glass over bright content: dim it about 35%).
+  float dim = 0;
 };
 void draw_glass(const GlassSpec &g);
 // Glass control (button or pill): focused = white with dark label and lift;

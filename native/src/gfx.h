@@ -171,6 +171,7 @@ class Gfx {
   void sheen(int x, int y, int w, int h, int radius, int base_w, int base_h, Uint8 alpha);
   // Colour with alpha running from a0 to a1, left→right or top→bottom.
   void gradient_h(int x, int y, int w, int h, Color color, Uint8 a0, Uint8 a1);
+  void dither(int x, int y, int w, int h);  // 5.0: faint noise over a large gradient
   void gradient_v(int x, int y, int w, int h, Color color, Uint8 a0, Uint8 a1);
   // Draw a texture at (x, y), scaled to w×h when given.
   void texture(SDL_Texture *texture, int x, int y, int w, int h, Uint8 alpha = 255);
@@ -217,6 +218,7 @@ class Gfx {
   SDL_Texture *shadow_texture(int radius, int blur);
   SDL_Texture *ramp_h_ = nullptr;    // 256×1 alpha ramp
   SDL_Texture *ramp_v_ = nullptr;    // 1×256 alpha ramp
+  SDL_Texture *noise_ = nullptr;     // 5.0: 256×256 grey noise that dithers large gradients
   SDL_Texture *canvas_ = nullptr;
   SDL_Texture *layer_ = nullptr;
   TexCache<std::pair<int, int>> rings_{GpuClass::Shapes};  // (radius, width) -> anti-aliased annulus

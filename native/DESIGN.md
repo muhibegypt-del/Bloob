@@ -65,7 +65,7 @@ Bloob draws with SDL2 and no shaders. Video plays in LG's hardware plane under t
 
 ## Type
 
-Inter, rasterised at exact sizes, on Apple's public tvOS scale. Nothing is smaller than 23 px.
+Inter, rasterised at exact sizes, on Apple's public tvOS scale. Nothing is smaller than 24 px (5.0: the stricter of Microsoft's and Apple's TV minimums).
 
 | Style | Weight | Size / line | Use |
 | --- | --- | --- | --- |

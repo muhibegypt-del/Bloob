@@ -1,4 +1,4 @@
-# Bloob: handover for the next developer (13 November 2026)
+# Bloob: handover for the next developer (16 November 2026)
 
 Read this first, then `CLAUDE.md` (the rules), then the code.
 This file is the short version: what Bloob is, how to build and ship it, the
@@ -12,10 +12,10 @@ A private film and series app for **one owner's rooted LG OLED55G26LA**
 indexes, the owner's own **AllDebrid** account turns one into a stream, and
 Bloob plays it with its own engine on the TV's hardware decoders.
 
-Current version: **4.2.0**, `native/artifacts/com.muhib.bloob_4.2.0_arm.ipk`.
-The owner reports (13 November 2026) that the app works well on the TV:
-everything loads and plays. 4.2.0 itself was built and checked on a Linux
-desktop only.
+Current version: **5.0.0**, `native/artifacts/com.muhib.bloob_5.0.0_arm.ipk`.
+The owner reported (13 November 2026) that 4.2 works well on the TV:
+everything loads and plays. 5.0.0 was built and checked on a Linux desktop
+only (screenshots from `scripts/ui-tour.sh`); it has not been seen on the TV.
 
 ## The two halves
 
@@ -78,8 +78,8 @@ The owner runs these from Windows. `ares-install -d rootedTV` currently fails
 authentication; plain SSH as root works:
 
 ```
-scp com.muhib.bloob_4.2.0_arm.ipk root@192.168.1.26:/tmp/
-ssh root@192.168.1.26 "luna-send -i -f luna://com.webos.appInstallService/dev/install '{\"id\":\"com.muhib.bloob\",\"ipkUrl\":\"/tmp/com.muhib.bloob_4.2.0_arm.ipk\",\"subscribe\":true}'"
+scp com.muhib.bloob_5.0.0_arm.ipk root@192.168.1.26:/tmp/
+ssh root@192.168.1.26 "luna-send -i -f luna://com.webos.appInstallService/dev/install '{\"id\":\"com.muhib.bloob\",\"ipkUrl\":\"/tmp/com.muhib.bloob_5.0.0_arm.ipk\",\"subscribe\":true}'"
 ```
 
 The app's log on the TV is `/tmp/bloob-native.log`; the live state is
@@ -117,6 +117,25 @@ seamless minimalistic glass with full bleed art, and very nice snappy menus".
   available version says nothing about availability; only *Ready now* and
   warnings show.
 
+### The 5.0 rulebook (public TV guidelines; the stricter source wins)
+
+5.0 checked the whole app against Microsoft's *Designing for Xbox and TV*,
+Apple's tvOS guidelines, Google TV's design guides and quality checklist,
+Material's motion timing and Hearst's *Search User Interfaces* (faceted
+navigation). Hold new work to it:
+
+- **Text:** nothing below 24 px; body 29-30 px; no light weights.
+- **Focus:** grows at most 1.1× (`card_grow` 32 on a 320 card); white fill and
+  size, never colour alone; the app never moves focus or changes what a focused
+  control does by itself (the home banner no longer pages while you are on it).
+- **Layout:** focused items never overlap other content; safe area 80/60.
+- **Glass:** on controls and panels; darkened (about 35%) over bright art
+  (`GlassSpec::dim`, the tab bar); white only for what is focused.
+- **Motion:** small changes 100-200 ms, entering slower than leaving.
+- **Gradients:** large ones get a faint noise (`Gfx::dither`) against banding.
+- **Density:** a TV screen holds about a phone's worth: on the series page only
+  the focused episode shows its description.
+
 ## Sources: how versions are found
 
 `sources.js` asks Torrentio, Comet, Meteor, Zilean, Bitmagnet, TorrentsDB,
@@ -141,23 +160,34 @@ AllDebrid is worth just under one resolution step) and `cinephile.js` labels
 each one: its source kind, its cut (IMAX, Extended, Director's Cut…), tags
 (Hybrid, Criterion…) and release group.
 
-**How the list is shown (4.2, `native/src/sources.cpp`):** the owner found the
-old list "nightmarish". Now:
+**How the versions are shown (5.0, `native/src/sources.cpp`, Columns):** the
+owner found the 4.2 tabs-and-flat-list hard to drill into ("click 4K, see
+4K SDR, 4K DV, which DV"). Now one screen narrows in steps:
 
-- The best version sits in a card at the top with Play.
-- Tabs: All · 4K · 1080p · 720p and below · SDR Remux · Season packs · May not
-  play well. The row of tabs slides if it is too wide.
-- Under a tab, **one flat list, best first**. No section headers, no folded
-  "+17 more like these" rows, no edition tabs. Every release is one row:
-  line one is resolution · picture · sound with the size on the right; line
-  two is chips (source kind, cut, tags, group, *Season pack*, *Same as your
-  last episode*).
-- OK plays; Right opens the release details.
+- Top right, *Best for this TV* (glass; white when focused) with Play. It has
+  focus when the screen opens.
+- Above the columns, for a series whose episode comes both ways: *Episode* /
+  *Whole season* (season packs). *Ready only* appears once anything is ready.
+  Then the trail of what is chosen (`4K › Dolby Vision › Profile 8`).
+- Columns: **Quality** (Any, 4K, 1080p, 720p and below, SDR Remux, May not
+  play), **Picture** (Any, Dolby Vision, HDR10+, HDR10, SDR), then **Which
+  Dolby Vision** (Profile 7 disc, Profile 8, Profile 5, each with how it plays
+  here) or, for other pictures, **Source** (UHD Blu-ray Remux, 4K web…). Every
+  choice shows its count and how many are ready; empty choices never show;
+  each column starts at Any, so the list opens as everything, best first.
+- The list: one row per release; line one says only what the columns have not
+  (sound, and resolution or picture while those are Any), size on the right;
+  line two is chips (Ready now, Season pack, source, cut, tags, group).
+- Remote: Up/Down in a column chooses (the list follows at once); Right or OK
+  goes in; Left goes back a column; Back steps out one column, then leaves.
+  In the list OK plays, Right opens release details.
+- The service sends `dvProfile` (the profile read from the name) for this.
 
 ## Open work, most important first
 
-1. **See 4.2.0 on the TV** and adjust Glass and the versions list to the
-   owner's taste from real screenshots.
+1. **See 5.0.0 on the TV** and adjust Home, the series page, the player and
+   the Columns versions screen to the owner's taste from real screenshots;
+   check the dither pass costs nothing noticeable on the TV's GPU.
 2. **One release-name parser.** `release.js`, `match.js`, `sources.js`
    (`fitsEpisode`) and `anime.js` each read release names with their own
    patterns. Merge them into one parser that returns one record per name.

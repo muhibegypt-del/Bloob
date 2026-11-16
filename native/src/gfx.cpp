@@ -452,6 +452,23 @@ bool Gfx::init(SDL_Renderer *renderer, int w, int h) {
     if (t) SDL_SetTextureBlendMode(t, SDL_BLENDMODE_BLEND);
     (dir ? ramp_v_ : ramp_h_) = t;
   }
+  {
+    // 5.0: dither for large gradients. An 8-bit alpha ramp stretched over half
+    // the screen bands on a TV panel; a faint grey noise on top breaks the
+    // steps up (Google TV colour guidance: dither gradients).
+    std::vector<Uint32> noise(256 * 256);
+    Uint32 seed = 0x9e3779b9u;
+    for (Uint32 &px : noise) {
+      seed ^= seed << 13; seed ^= seed >> 17; seed ^= seed << 5;
+      Uint32 v = seed & 0xFF;
+      px = 0xFF000000u | (v << 16) | (v << 8) | v;
+    }
+    SDL_Surface *surface = SDL_CreateRGBSurfaceFrom(noise.data(), 256, 256, 32, 256 * 4, 0x00FF0000, 0x0000FF00,
+                                                    0x000000FF, 0xFF000000);
+    noise_ = surface ? SDL_CreateTextureFromSurface(renderer_, surface) : nullptr;
+    if (surface) SDL_FreeSurface(surface);
+    if (noise_) SDL_SetTextureBlendMode(noise_, SDL_BLENDMODE_BLEND);
+  }
 
   canvas_ = SDL_CreateTexture(renderer_, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_TARGET, w_, h_);
   if (canvas_) {
@@ -516,6 +533,8 @@ void Gfx::shutdown() {
   }
   if (ramp_h_) SDL_DestroyTexture(ramp_h_);
   if (ramp_v_) SDL_DestroyTexture(ramp_v_);
+  if (noise_) SDL_DestroyTexture(noise_);
+  noise_ = nullptr;
   canvas_ = ramp_h_ = ramp_v_ = nullptr;
 }
 
@@ -867,14 +886,28 @@ static void ramp_copy(SDL_Renderer *renderer, SDL_Texture *ramp, bool vertical, 
                    flip ? (vertical ? SDL_FLIP_VERTICAL : SDL_FLIP_HORIZONTAL) : SDL_FLIP_NONE);
 }
 
+void Gfx::dither(int x, int y, int w, int h) {
+  if (!noise_ || !shadows || w <= 0 || h <= 0) return;  // shadows off = Lite: skip the extra pass
+  SDL_SetTextureColorMod(noise_, 255, 255, 255);
+  SDL_SetTextureAlphaMod(noise_, 4);  // about ±1 level: breaks bands, no visible grain
+  for (int ty = y; ty < y + h; ty += 256)
+    for (int tx = x; tx < x + w; tx += 256) {
+      int cw = std::min(256, x + w - tx), ch = std::min(256, y + h - ty);
+      SDL_Rect src{0, 0, cw, ch}, dst{tx, ty, cw, ch};
+      SDL_RenderCopy(renderer_, noise_, &src, &dst);
+    }
+}
+
 void Gfx::gradient_h(int x, int y, int w, int h, Color color, Uint8 a0, Uint8 a1) {
   ramp_copy(renderer_, ramp_h_, false, x, y, w, h, color, a0, a1);
   color_known_ = false;  // ramp_copy may set the draw colour directly
+  if (w * h >= 200000 && a0 != a1) dither(x, y, w, h);
 }
 
 void Gfx::gradient_v(int x, int y, int w, int h, Color color, Uint8 a0, Uint8 a1) {
   ramp_copy(renderer_, ramp_v_, true, x, y, w, h, color, a0, a1);
   color_known_ = false;
+  if (w * h >= 200000 && a0 != a1) dither(x, y, w, h);
 }
 
 void Gfx::texture(SDL_Texture *texture, int x, int y, int w, int h, Uint8 alpha) {

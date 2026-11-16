@@ -98,6 +98,7 @@ struct SourceOption {
   std::string source, group;  // "REMUX", "BluRay", "WEB-DL"…; the release group
   std::string family;       // picture family: "DV", "HDR" or "SDR"
   int dolby_vision = 0;     // guessed Dolby Vision profile for the player's hint: 5, 8 or 0
+  std::string dv_profile;   // 5.0: "p5", "p7", "p8" or "" as the service read it from the name
   std::vector<std::string> sources;  // the indexes that listed it
   int seeders = -1;         // from the availability text; -1 unknown
   // 2.8, the cinephile list (service cinephile.js): cut ("" = theatrical), tier,

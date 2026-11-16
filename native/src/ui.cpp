@@ -197,7 +197,7 @@ struct Spec {
 };
 Spec spec(Text style) {
   switch (style) {
-    // Nothing below 22 px: the smallest size that stays readable at three metres.
+    // 5.0: nothing below 24 px, the stricter of Microsoft's and Apple's TV minimums.
     // Headings are the Emphasized roles (Bold); text is Standard (Medium) [EoA T12].
     case Text::Display: return {3, 104, 112};
     case Text::Title1: return {3, 76, 96};
@@ -210,11 +210,11 @@ Spec spec(Text style) {
     case Text::BodyBold: return {3, 29, 36};        // Emphasized.Body: player controls
     case Text::BodySemi: return {2, 29, 36};        // Regular.Body: settings titles, buttons
     case Text::Caption1Semi: return {2, 25, 32};    // Regular.Caption1: settings subtitles
-    case Text::Caption2Bold: return {3, 23, 30};    // Emphasized.Caption2: player times
+    case Text::Caption2Bold: return {3, 24, 30};  // 5.0: 24 is the floor (Microsoft TV minimum; Apple 23)    // Emphasized.Caption2: player times
     case Text::Body: return {1, 29, 36};
     case Text::Caption1: return {1, 25, 32};
-    case Text::Caption2: return {1, 23, 30};
-    case Text::Caption3: return {1, 21, 28};  // [EoA T9]; only where text is fitted, never body copy
+    case Text::Caption2: return {1, 24, 30};
+    case Text::Caption3: return {1, 24, 30};  // 5.0: nothing below 24 px
     case Text::Button: return {2, 29, 36};
     case Text::Pill: return {3, 31, 38};      // Emphasized.Callout, Bold [EoA P2]
   }
@@ -426,6 +426,7 @@ void draw_glass(const GlassSpec &g) {
   // Solid underneath until the frost has faded in.
   if (!f.texture || f.alpha < 255) c.gfx.fill_round(g.x, g.y, g.w, g.h, g.radius, fade(theme::solid, g.alpha));
   if (f.texture) c.gfx.texture(f.texture, g.x, g.y, g.w, g.h, static_cast<Uint8>(f.alpha * g.alpha));
+  if (g.dim > 0) c.gfx.fill_round(g.x, g.y, g.w, g.h, g.radius, fade(rgba(0x000000, static_cast<Uint8>(255 * g.dim)), g.alpha));
   c.gfx.stroke_round(g.x, g.y, g.w, g.h, g.radius, 1, fade(theme::frost_hairline, g.alpha));
 }
 

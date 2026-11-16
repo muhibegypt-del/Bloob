@@ -14,6 +14,15 @@
 // source (UHD Blu-ray Remux first); each row is one release on one line, then
 // how it compares with the best of its cut; repetition folds behind "+N more";
 // versions already on the owner's AllDebrid say "Ready now".
+//
+// 5.0, Columns: the versions are narrowed in steps, each answering one question,
+// side by side on one screen: Quality, then Picture, then which Dolby Vision (or,
+// for other pictures, the kind of release), then the releases themselves. Every
+// choice shows how many versions it holds and how many are ready; a choice with
+// none is never offered; every column starts at Any, so the list opens as the
+// whole flat list, best first. Above: Episode or Whole season (season packs)
+// and Ready only. Faceted navigation as Hearst's Search User Interfaces (ch. 8)
+// describes it: query previews, no dead ends, the trail of what is chosen.
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
@@ -30,13 +39,20 @@ namespace {
 using namespace theme;
 
 constexpr long long kPollMs = 700;
-constexpr int LX = safe_x, LW = 600;           // title column
-constexpr int RX = 760, RW = W - safe_x - 760;  // options column
-constexpr int ROW = 96, ROW_GAP = 10;
-constexpr int PILLS_Y = 436;                  // the filter strip, under the best version
-constexpr int LIST_TOP = 530;
-constexpr int LIST_H = 4 * (ROW + ROW_GAP);  // the list's window
-constexpr int HEADER_H = 58;                  // a section title in the list
+constexpr int LX = safe_x, LW = 760;            // title, top left
+constexpr int RX = 760, RW = W - safe_x - 760;  // loading and error messages
+constexpr int BEST_X = 1000, BEST_Y = 56, BEST_W = W - safe_x - 1000, BEST_H = 150;
+constexpr int TOP_Y = 236;                      // Episode / Whole season, Ready only, the trail
+constexpr int COLS_Y = 330, COLS_B = H - safe_y; // the columns and the list
+constexpr int COL_GAP = 20;
+constexpr int COL_W[3] = {300, 290, 370};
+constexpr int OPT_H = 62, OPT_NOTE_H = 94, OPT_GAP = 6, COL_HEAD = 64;
+constexpr int LIST_X = safe_x + 300 + 290 + 370 + 3 * COL_GAP;
+constexpr int LIST_W = W - safe_x - LIST_X;
+constexpr int ROW = 96, ROW_GAP = 8;
+constexpr int LIST_TOP = COLS_Y + 68;
+constexpr int LIST_H = ((COLS_B - 56 - LIST_TOP) / (ROW + ROW_GAP)) * (ROW + ROW_GAP);
+constexpr int HEADER_H = 58;
 
 bool is_more(const SourceOption &o) { return o.id.compare(0, 5, "more:") == 0; }
 
@@ -49,33 +65,62 @@ std::string source_words(const std::string &s) {
   return s;
 }
 
-// Resolution filters; a filter with no versions is not shown.
-// 4.2: SDR remuxes and season packs have tabs of their own; versions likely
-// to fail are only under their own tab.
-enum class Filter { All, UHD, FullHD, Lower, SdrRemux, Packs, Problems };
-bool passes(Filter f, const SourceOption &o, bool problem) {
-  switch (f) {
-    case Filter::All: return !problem;
-    case Filter::UHD: return !problem && !o.pack && o.resolution == "4K";
-    case Filter::FullHD: return !problem && !o.pack && o.resolution == "1080p";
-    case Filter::Lower: return !problem && !o.pack && o.resolution != "4K" && o.resolution != "1080p";
-    case Filter::SdrRemux: return !problem && o.tier == "sdr-remux";
-    case Filter::Packs: return !problem && o.pack;
-    case Filter::Problems: return problem;
-  }
-  return true;
+bool has(const std::string &s, const char *part) { return s.find(part) != std::string::npos; }
+
+// Column 1, Quality. A version can be in two (an SDR remux is also 1080p).
+const char *kQualityKeys[] = {"4K", "1080p", "lower", "sdr-remux", "problems"};
+std::string quality_name(const std::string &k) {
+  if (k == "lower") return "720p and below";
+  if (k == "sdr-remux") return "SDR Remux";
+  if (k == "problems") return "May not play";
+  return k;
 }
-const char *filter_name(Filter f) {
-  switch (f) {
-    case Filter::All: return "All";
-    case Filter::UHD: return "4K";
-    case Filter::FullHD: return "1080p";
-    case Filter::Lower: return "720p and below";
-    case Filter::SdrRemux: return "SDR Remux";
-    case Filter::Packs: return "Season packs";
-    case Filter::Problems: return "May not play well";
-  }
-  return "";
+bool quality_match(const std::string &k, const SourceOption &o, bool problem) {
+  if (k == "problems") return problem;
+  if (problem) return false;
+  if (k.empty()) return true;
+  if (k == "4K" || k == "1080p") return o.resolution == k;
+  if (k == "lower") return o.resolution != "4K" && o.resolution != "1080p";
+  if (k == "sdr-remux") return o.tier == "sdr-remux";
+  return false;
+}
+
+// Column 2, Picture: what the release carries, whatever this TV makes of it.
+const char *kPictureKeys[] = {"dv", "hdr10+", "hdr10", "sdr"};
+const char *picture_key_name(const std::string &k) {
+  if (k == "dv") return "Dolby Vision";
+  if (k == "hdr10+") return "HDR10+";
+  if (k == "hdr10") return "HDR10";
+  return "SDR";
+}
+std::string picture_key(const SourceOption &o) {
+  if (!o.dv_profile.empty() || o.family == "DV") return "dv";
+  if (has(o.picture, "HDR10+") || has(o.picture_name, "HDR10+")) return "hdr10+";
+  if (o.family == "HDR") return "hdr10";
+  return "sdr";
+}
+
+// Column 3: which Dolby Vision (profile), else the kind of release.
+std::string kind_key(const SourceOption &o, bool dv) {
+  if (dv) return o.dv_profile.empty() ? "dv" : o.dv_profile;
+  if (!o.tier_label.empty() && o.tier != "pack" && o.tier != "other") return o.tier_label;
+  return o.source.empty() ? "Other" : source_words(o.source);
+}
+std::string kind_name(const std::string &k, bool dv) {
+  if (!dv) return k;
+  if (k == "p7") return "Disc \xC2\xB7 Profile 7";
+  if (k == "p8") return "Profile 8";
+  if (k == "p5") return "Profile 5";
+  return "Dolby Vision";
+}
+// How a Dolby Vision kind plays on this TV, from the service's picture label.
+std::string kind_note(const SourceOption &o) {
+  const std::string &p = o.picture.empty() ? o.picture_name : o.picture;
+  if (has(p, "colours may be wrong")) return "Colours may be off here";
+  if (has(p, "as 8.1")) return "Plays as Dolby Vision";
+  if (has(p, "skipped")) return "Plays as HDR10 (your setting)";
+  if (o.family == "DV") return "Plays as Dolby Vision";
+  return "Plays as HDR10 here";
 }
 
 // Plain words for a version's picture and how easy it is to get.
@@ -84,24 +129,19 @@ std::string picture_words(const SourceOption &o) {
   return o.picture;
 }
 
-struct Availability {
-  std::string words;
-  Color dot;
-};
-
-Availability availability(const SourceOption &o) {
-  if (!o.cautions.empty()) return {o.cautions[0], caution};
-  if (o.ready == 1) return {"Ready now", good};
-  if (o.availability == "Direct link") return {"Direct link", good};
-  int seeders = std::atoi(o.availability.c_str());
-  // 4.2: an ordinary, available version says nothing; only Ready now and warnings show.
-  if (seeders >= 5) return {"", good};
-  if (o.availability.find("seeder") != std::string::npos) return {"Slow to prepare", caution};
-  return {"Availability unknown", label(Label::Tertiary)};
-}
-
 class SourcesScreen : public Screen {
  public:
+  // 5.0, Columns.
+  enum class Zone { Best, Top, Column, List };
+  struct Facet {
+    std::string key, label, note;
+    int count = 0, ready = 0;
+  };
+  struct Toggle {
+    std::string label;
+    bool on;
+    int id;  // 0 Episode, 1 Whole season, 2 Ready only
+  };
   SourcesScreen(const PlayRequest &request, bool autostart) : req_(request), autostart_(autostart) {
     backdrop_.set(request.item.backdrop, true);
     load();
@@ -130,15 +170,17 @@ class SourcesScreen : public Screen {
     }
     if (state_ == State::Loading) return "Finding versions";
     if (state_ != State::Ready) return state_ == State::Empty ? "Nothing to play yet" : error_;
-    if (pills_focused_ && !pills_.empty()) {
-      const Pill &p = pills_[static_cast<size_t>(pill_)];
-      return std::string("Show ") + filter_name(p.filter) + ", " + std::to_string(p.count) + " versions, " +
-             position(pill_, static_cast<int>(pills_.size()));
+    if (zone_ == Zone::Column) {
+      const Facet &f = columns_[col_][static_cast<size_t>(sel_[col_])];
+      return std::string(column_title(col_)) + ": " + f.label + ", " + std::to_string(f.count) + " versions" +
+             (f.ready ? ", " + std::to_string(f.ready) + " ready now" : "") + (f.note.empty() ? "" : ". " + f.note);
     }
-    const SourceOption &o = options_[static_cast<size_t>(focus_index_)];
-    std::string head = focus_index_ == 0 && has_recommended() ? "Best version, " : "";
-    for (size_t i = 1; i < rows_.size(); i++)
-      if (rows_[i].option == focus_index_ && rows_[i - 1].option < 0) head = rows_[i - 1].label + ". ";
+    if (zone_ == Zone::Top && !toggles_.empty()) {
+      const Toggle &t = toggles_[static_cast<size_t>(toggle_)];
+      return t.label + (t.on ? ", on" : ", off");
+    }
+    const SourceOption &o = options_[static_cast<size_t>(zone_ == Zone::Best ? 0 : focus_index_)];
+    std::string head = zone_ == Zone::Best ? "Best for this TV, " : "";
     return head + o.headline + ", " + picture_words(o) + ", " + o.audio + ", " + position(focus_index_, static_cast<int>(options_.size()));
   }
 
@@ -195,11 +237,14 @@ class SourcesScreen : public Screen {
       all_ = ranking_;
       expanded_.clear();
       cut_ = initial_cut();
-      filter_ = Filter::All;
-      pills_focused_ = false;
+      sel_[0] = sel_[1] = sel_[2] = 0;
+      keys_[0] = keys_[1] = keys_[2] = "";
+      ready_only_ = false;
       arrange();
       state_ = options_.empty() ? State::Empty : State::Ready;
       focus_index_ = 0;
+      zone_ = has_recommended() ? Zone::Best : Zone::Column;
+      col_ = 0;
       lift_.snap(0);
       lift_.to(1);
       logf("sources", "%d sources, recommended=%d", ranking_.total, ranking_.recommended ? 1 : 0);
@@ -274,8 +319,12 @@ class SourcesScreen : public Screen {
       options_.push_back(pool[i].first);
       section_of_.push_back(pool[i].second);
     }
-    build_pills();
-    build_rows();
+    // Episode or Whole season: offered when this episode comes both ways.
+    bool singles = false, packs = false;
+    for (auto &o : options_) (o.pack ? packs : singles) = true;
+    both_scopes_ = req_.item.series() && singles && packs;
+    if (!both_scopes_) season_ = packs && !singles;
+    build_columns();
   }
 
   // Folded behind "+N more" until that row is opened.
@@ -284,66 +333,135 @@ class SourcesScreen : public Screen {
     return false;  // 4.2: nothing folds
   }
 
-  // The edition row when there are several cuts, else one pill per resolution
-  // that has versions, with its count. Focus stays where it was.
-  void build_pills() {
-    pills_.clear();
-    size_t first = ranking_.recommended ? 1 : 0;
-    for (Filter f : {Filter::All, Filter::UHD, Filter::FullHD, Filter::Lower, Filter::SdrRemux, Filter::Packs, Filter::Problems}) {
-      int count = 0;
-      for (size_t i = first; i < options_.size(); i++) count += section_of_[i] != "more" && passes(f, options_[i], problem(i)) ? 1 : 0;
-      if (count || f == Filter::All) pills_.push_back({f, count, ""});
-    }
-    // Nothing to choose between: no strip.
-    if (pills_.size() <= 2 && (pills_.size() < 2 || pills_[1].count == pills_[0].count)) pills_.clear();
-    pill_ = 0;
-    for (size_t i = 0; i < pills_.size(); i++)
-      if (pills_[i].filter == filter_) pill_ = static_cast<int>(i);
+  // ---------------------------------------------------------------- columns (5.0)
+
+  static const char *column_title(int c) { return c == 0 ? "Quality" : c == 1 ? "Picture" : "Source"; }
+  bool dv_mode() const { return keys_[1] == "dv"; }
+  const char *third_title() const { return dv_mode() ? "Which Dolby Vision" : "Source"; }
+
+  // Episode or Whole season, then Ready only.
+  bool in_scope(const SourceOption &o) const {
+    if (both_scopes_ && o.pack != season_) return false;
+    return !ready_only_ || o.ready == 1;
+  }
+  bool passes(size_t i, int upto) const {
+    const SourceOption &o = options_[i];
+    if (is_more(o) || !in_scope(o)) return false;
+    if (upto >= 0 && !quality_match(keys_[0], o, problem(i))) return false;
+    if (upto >= 1 && !keys_[1].empty() && picture_key(o) != keys_[1]) return false;
+    if (upto >= 2 && !keys_[2].empty() && kind_key(o, dv_mode()) != keys_[2]) return false;
+    return true;
   }
 
-  // The list for the current filter: versions that continue the show's last
-  // episode first, then a section per source tier (each ending with its
-  // "+N more" row), then those likely to fail. The service's order holds within.
+  // Each column's choices from what the columns to its left leave: Any first,
+  // then every choice that holds at least one version, with its counts. A
+  // choice that no longer exists falls back to Any.
+  void build_columns() {
+    for (int c = 0; c < 3; c++) {
+      std::vector<Facet> col;
+      Facet any;
+      any.label = "Any";
+      std::vector<std::string> keys;
+      if (c == 0) for (const char *k : kQualityKeys) keys.push_back(k);
+      if (c == 1) for (const char *k : kPictureKeys) keys.push_back(k);
+      std::map<std::string, Facet> found;
+      for (size_t i = 0; i < options_.size(); i++) {
+        if (!passes(i, c - 1)) continue;
+        const SourceOption &o = options_[i];
+        bool prob = problem(i);
+        if (!prob || (c > 0 && keys_[0] == "problems")) {
+          any.count++;
+          any.ready += o.ready == 1;
+        }
+        auto add = [&](const std::string &k) {
+          Facet &f = found[k];
+          if (f.count == 0) {
+            f.key = k;
+            f.label = c == 0 ? quality_name(k) : c == 1 ? picture_key_name(k) : kind_name(k, dv_mode());
+            if (c == 2 && dv_mode()) f.note = kind_note(o);
+            if (c == 2) keys.push_back(k);  // in order of their best version
+          }
+          f.count++;
+          f.ready += o.ready == 1;
+        };
+        if (c == 0) {
+          for (const char *k : kQualityKeys)
+            if (quality_match(k, o, prob)) add(k);
+        } else if (!prob || keys_[0] == "problems") {
+          add(c == 1 ? picture_key(o) : kind_key(o, dv_mode()));
+        }
+      }
+      col.push_back(any);
+      for (auto &k : keys) {
+        auto it = found.find(k);
+        if (it != found.end() && it->second.count > 0) col.push_back(it->second);
+      }
+      // One kind only under Any: nothing to choose, so just Any.
+      if (c > 0 && col.size() == 2 && col[1].count == col[0].count) col.resize(1);
+      columns_[c] = col;
+      int at = 0;
+      for (size_t i = 0; i < col.size(); i++)
+        if (col[i].key == keys_[c]) at = static_cast<int>(i);
+      sel_[c] = at;
+      keys_[c] = col[static_cast<size_t>(at)].key;
+    }
+    toggles_.clear();
+    if (both_scopes_) {
+      toggles_.push_back({"Episode", !season_, 0});
+      toggles_.push_back({"Whole season", season_, 1});
+    }
+    bool any_ready = false;
+    for (auto &o : options_) any_ready |= o.ready == 1;
+    if (any_ready) toggles_.push_back({"Ready only", ready_only_, 2});
+    toggle_ = std::min(toggle_, std::max(0, static_cast<int>(toggles_.size()) - 1));
+    build_rows();
+  }
+
+  // The releases the columns leave, best first.
   void build_rows() {
     rows_.clear();
     int y = 0;
-    size_t first = ranking_.recommended ? 1 : 0;
-    // 4.2: no section headers: the tab says what is listed, the rows are in order.
-    for (size_t i = first; i < options_.size(); i++) {
-      if (!passes(filter_, options_[i], problem(i))) continue;
+    for (size_t i = 0; i < options_.size(); i++) {
+      if (!passes(i, 2)) continue;
       rows_.push_back({static_cast<int>(i), "", section_of_[i], y});
       y += ROW + ROW_GAP;
     }
     list_h_ = y;
     scroll_.snap(0);
+    if (!rows_.empty() && zone_ != Zone::List) focus_index_ = rows_[0].option;
   }
 
-  // Versions in list order (for Up and Down), the best version first.
+  // Versions in list order (for Up and Down).
   std::vector<int> order() const {
     std::vector<int> list;
-    if (has_recommended()) list.push_back(0);
     for (auto &r : rows_)
       if (r.option >= 0) list.push_back(r.option);
     return list;
   }
 
-  void set_filter(int index) {
-    if (pills_.empty()) return;
-    pill_ = std::max(0, std::min(static_cast<int>(pills_.size()) - 1, index));
-    if (!pills_[static_cast<size_t>(pill_)].cut.empty()) {
-      cut_ = pills_[static_cast<size_t>(pill_)].cut;
-      arrange();  // the best card and the list follow the cut
-      focus_index_ = 0;
-    } else {
-      filter_ = pills_[static_cast<size_t>(pill_)].filter;
-      build_rows();
-    }
+  // Moving within a column chooses: the columns to its right and the list follow.
+  void choose_facet(int c, int index) {
+    const std::vector<Facet> &col = columns_[c];
+    index = std::max(0, std::min(static_cast<int>(col.size()) - 1, index));
+    if (index == sel_[c]) return;
+    sel_[c] = index;
+    keys_[c] = col[static_cast<size_t>(index)].key;
+    for (int r = c + 1; r < 3; r++) keys_[r] = "";
+    build_columns();
     lift_.snap(0);
     lift_.to(1);
   }
 
-  void focus_pills() {
-    pills_focused_ = true;
+  void flip(const Toggle &t) {
+    if (t.id == 0) season_ = false;
+    if (t.id == 1) season_ = true;
+    if (t.id == 2) ready_only_ = !ready_only_;
+    build_columns();
+  }
+
+  void focus(Zone z, int col = 0) {
+    zone_ = z;
+    col_ = col;
     details_ = false;
     lift_.snap(0);
     lift_.to(1);
@@ -580,43 +698,95 @@ class SourcesScreen : public Screen {
     int at = 0;
     for (size_t i = 0; i < list.size(); i++)
       if (list[i] == focus_index_) at = static_cast<int>(i);
-    int first_row = has_recommended() ? 1 : 0;
-    if (pills_focused_) {
-      switch (key) {
-        case Key::Left: set_filter(pill_ - 1); return true;
-        case Key::Right: set_filter(pill_ + 1); return true;
-        case Key::Up:
-          if (has_recommended()) {
-            pills_focused_ = false;
-            move_to(0);
-          }
-          return true;
-        case Key::Down:
-        case Key::Ok:
-          if (static_cast<int>(list.size()) > first_row) {
-            pills_focused_ = false;
-            move_to(list[static_cast<size_t>(first_row)]);
-          }
-          return true;
-        case Key::Back: ctx().pop(); return true;
-        default: return true;
+    // Where Up from the columns and the list goes: the toggles, else the best version.
+    auto up_from_body = [&]() {
+      if (!toggles_.empty()) focus(Zone::Top);
+      else if (has_recommended()) focus(Zone::Best);
+    };
+    auto into_list = [&]() {
+      if (list.empty()) return;
+      focus(Zone::List, 2);
+      move_to(list[0]);
+    };
+    switch (zone_) {
+      case Zone::Best:
+        if (key == Key::Down) {
+          if (!toggles_.empty()) focus(Zone::Top);
+          else focus(Zone::Column, 0);
+        } else if ((key == Key::Ok || key == Key::Play || key == Key::PlayPause) && !repeat) {
+          focus_index_ = 0;
+          choose(0);
+        } else if (key == Key::Back) {
+          ctx().pop();
+        }
+        return true;
+      case Zone::Top: {
+        int n = static_cast<int>(toggles_.size());
+        if (key == Key::Left) toggle_ = std::max(0, toggle_ - 1);
+        if (key == Key::Right) toggle_ = std::min(n - 1, toggle_ + 1);
+        if (key == Key::Up && has_recommended()) focus(Zone::Best);
+        if (key == Key::Down) focus(Zone::Column, 0);
+        if (key == Key::Ok && !repeat && n) flip(toggles_[static_cast<size_t>(toggle_)]);
+        if (key == Key::Back) ctx().pop();
+        return true;
       }
+      case Zone::Column: {
+        int n = static_cast<int>(columns_[col_].size());
+        switch (key) {
+          case Key::Up:
+            if (sel_[col_] == 0) up_from_body();
+            else choose_facet(col_, sel_[col_] - 1);
+            return true;
+          case Key::Down:
+            if (sel_[col_] + 1 < n) choose_facet(col_, sel_[col_] + 1);
+            return true;
+          case Key::Right:
+          case Key::Ok: {
+            if (repeat && key == Key::Ok) return true;
+            // In: the next column that has something to choose, else the list.
+            int next = col_ + 1;
+            while (next < 3 && columns_[next].size() < 2) next++;
+            if (next < 3) focus(Zone::Column, next);
+            else into_list();
+            return true;
+          }
+          case Key::Left: {
+            int prev = col_ - 1;
+            while (prev > 0 && columns_[prev].size() < 2) prev--;
+            if (prev >= 0) focus(Zone::Column, prev);
+            return true;
+          }
+          case Key::Back: {
+            // Out one column; from the first, leave.
+            int prev = col_ - 1;
+            while (prev > 0 && columns_[prev].size() < 2) prev--;
+            if (prev >= 0) focus(Zone::Column, prev);
+            else ctx().pop();
+            return true;
+          }
+          default:
+            return true;
+        }
+      }
+      case Zone::List:
+        break;
     }
+    int last_col = 2;
+    while (last_col > 0 && columns_[last_col].size() < 2) last_col--;
     switch (key) {
       case Key::Up:
-        // The list's first version goes up to the filters, the filters to the best version.
-        if (!pills_.empty() && at == first_row) focus_pills();
-        else if (at > 0) move_to(list[static_cast<size_t>(at - 1)]);
+        if (at == 0) up_from_body();
+        else move_to(list[static_cast<size_t>(at - 1)]);
         return true;
       case Key::Down:
-        if (!pills_.empty() && has_recommended() && at == 0) focus_pills();
-        else if (at + 1 < static_cast<int>(list.size())) move_to(list[static_cast<size_t>(at + 1)]);
+        if (at + 1 < static_cast<int>(list.size())) move_to(list[static_cast<size_t>(at + 1)]);
         return true;
       case Key::Right:
         details_ = true;  // release details, on request
         return true;
       case Key::Left:
-        details_ = false;
+        if (details_) details_ = false;
+        else focus(Zone::Column, last_col);
         return true;
       case Key::Ok:
       case Key::Play:
@@ -625,7 +795,7 @@ class SourcesScreen : public Screen {
         return true;
       case Key::Back:
         if (details_) details_ = false;
-        else ctx().pop();
+        else focus(Zone::Column, last_col);
         return true;
       default:
         return true;
@@ -656,7 +826,6 @@ class SourcesScreen : public Screen {
       if (top < target) target = static_cast<float>(top);
       if (bottom > target + LIST_H) target = static_cast<float>(bottom - LIST_H);
     }
-    if (index == 0 && has_recommended()) target = 0;
     scroll_.to(target);
   }
 
@@ -700,14 +869,14 @@ class SourcesScreen : public Screen {
         break;
       case State::Error:
       case State::Empty: {
-        text(Text::Title3, state_ == State::Empty ? "Nothing to play yet" : "Couldn\xE2\x80\x99t find versions", RX, 140, label(Label::Primary));
-        paragraph(Text::Body, state_ == State::Empty ? "No versions of this are available right now. Try again later." : error_, RX, 210,
-                  label(Label::Secondary), RW, 3);
+        text(Text::Title3, state_ == State::Empty ? "Nothing to play yet" : "Couldn\xE2\x80\x99t find versions", LX, COLS_Y, label(Label::Primary));
+        paragraph(Text::Body, state_ == State::Empty ? "No versions of this are available right now. Try again later." : error_, LX, COLS_Y + 70,
+                  label(Label::Secondary), W - 2 * LX, 3);
         GlassButton b;
         b.label = "Try again";
         b.focused = true;
         b.lift = lift_.value;
-        draw_glass_button(RX, 340, b);
+        draw_glass_button(LX, COLS_Y + 200, b);
         break;
       }
       case State::Ready:
@@ -719,103 +888,154 @@ class SourcesScreen : public Screen {
     pairing_.draw();
   }
 
+  // Top left: the title's logo and what is being played (5.0: compact, so the
+  // columns get the room).
   void draw_title_column() {
     Ctx &c = ctx();
-    int y = draw_title(req_.item, LX, 120, LW, 150);
-    y += 34;
-    text(Text::Headline, "All versions", LX, y, label(Label::Primary));
-    y += line_for(Text::Headline) + 8;
+    int y = draw_title(req_.item, LX, BEST_Y, LW - 120, 88);
+    y += 16;
+    std::string what;
     if (req_.item.series()) {
-      text(Text::Callout, episode_code(req_.season, req_.episode), LX, y, label(Label::Secondary));
-      y += line_for(Text::Callout) + 4;
-      if (!req_.episode_title.empty()) y = paragraph(Text::Callout, req_.episode_title, LX, y, label(Label::Secondary), LW, 2);
+      what = episode_code(req_.season, req_.episode);
+      if (!req_.episode_title.empty()) what += " \xC2\xB7 " + req_.episode_title;
     } else {
-      text(Text::Callout, meta_line(req_.item), LX, y, label(Label::Secondary), LW);
-      y += line_for(Text::Callout);
+      what = meta_line(req_.item);
     }
-    if (req_.resume_ms > 0) text(Text::Callout, "Continues from " + clock_text(req_.resume_ms), LX, y + 16, label(Label::Primary));
-    // AllDebrid connection, quietly.
-    int ay = H - safe_y - 52;
-    bool paired = c.paired;
-    c.gfx.fill_circle(LX + 8, ay + 16, 6, !account_known_ ? label(Label::Tertiary) : paired ? good : caution);
-    std::string status = !account_known_ ? "Checking AllDebrid\xE2\x80\xA6"
-                         : paired ? (durable_ ? "AllDebrid connected" : "AllDebrid connected until restart")
-                                  : "AllDebrid not connected. You\xE2\x80\x99ll pair once when you press Play.";
-    text(Text::Caption1, status, LX + 28, ay, label(Label::Secondary), LW);
+    if (req_.resume_ms > 0) what += " \xC2\xB7 from " + clock_text(req_.resume_ms);
+    text(Text::Callout, what, LX, y, label(Label::Primary), BEST_X - LX - 40);
+    // AllDebrid, quietly, only when it needs saying.
+    if (account_known_ && !c.paired) {
+      int ay = y + line_for(Text::Callout) + 10;
+      c.gfx.fill_circle(LX + 8, ay + 15, 6, caution);
+      text(Text::Caption1, "AllDebrid not connected: you\xE2\x80\x99ll pair once when you press Play", LX + 26, ay, label(Label::Secondary),
+           BEST_X - LX - 66);
+    }
   }
 
   void draw_options() {
+    if (has_recommended()) draw_best(*ranking_.recommended, zone_ == Zone::Best);
+    draw_top();
+    int x = LX;
+    for (int col = 0; col < 3; col++) {
+      draw_column(col, x);
+      x += COL_W[col] + COL_GAP;
+    }
+    draw_list();
+  }
+
+  // Episode / Whole season and Ready only, then the trail of what is chosen.
+  void draw_top() {
+    int x = LX;
+    for (size_t i = 0; i < toggles_.size(); i++) {
+      const Toggle &t = toggles_[i];
+      GlassButton b;
+      b.label = t.label;
+      b.pill = true;
+      b.focused = zone_ == Zone::Top && static_cast<int>(i) == toggle_;
+      b.candidate = t.on && !b.focused;
+      b.lift = lift_.value;
+      x += draw_glass_button(x, TOP_Y, b) + (i + 1 < toggles_.size() && toggles_[i + 1].id == 2 ? 36 : theme::control_gap);
+    }
+    if (!toggles_.empty()) x += 24;
+    // The trail: the choices made, in order; the count when nothing is chosen.
+    std::vector<std::string> trail;
+    for (int col = 0; col < 3; col++)
+      if (sel_[col] > 0) trail.push_back(columns_[col][static_cast<size_t>(sel_[col])].label);
+    int ty = TOP_Y + (theme::pill_h - line_for(Text::CalloutBold)) / 2;
+    if (trail.empty()) {
+      text(Text::CalloutBold, "All versions", x, ty, label(Label::Secondary));
+      return;
+    }
+    for (size_t i = 0; i < trail.size(); i++) {
+      if (i) x += text(Text::Callout, "\xE2\x80\xBA", x + 12, ty, label(Label::Tertiary)) + 24;
+      x += text(Text::CalloutBold, trail[i], x, ty, label(i + 1 == trail.size() ? Label::Primary : Label::Secondary), W - safe_x - x);
+    }
+  }
+
+  void draw_column(int col, int x) {
     Ctx &c = ctx();
-    if (has_recommended()) draw_best(*ranking_.recommended, focus_index_ == 0 && !pills_focused_);
-    draw_pills();
+    const std::vector<Facet> &facets = columns_[col];
+    int w = COL_W[col];
+    sheet(x, COLS_Y, w, COLS_B - COLS_Y, 1.0f);
+    const char *title = col == 2 ? third_title() : column_title(col);
+    text(Text::Caption1Semi, title, x + 24, COLS_Y + 22, label(Label::Secondary), w - 48);
+    bool active = zone_ == Zone::Column && col_ == col;
+    int y = COLS_Y + COL_HEAD;
+    for (size_t i = 0; i < facets.size(); i++) {
+      const Facet &f = facets[i];
+      bool chosen = static_cast<int>(i) == sel_[col];
+      bool focused = active && chosen;
+      int h = f.note.empty() ? OPT_H : OPT_NOTE_H;
+      int ox = x + 12, ow = w - 24;
+      if (y + h > COLS_B - 12) break;
+      if (focused) {
+        float k = 1.0f + 0.04f * lift_.value;
+        int fw = static_cast<int>(ow * k), fh = static_cast<int>(h * k);
+        c.gfx.shadow(ox - (fw - ow) / 2, y - (fh - h) / 2, fw, fh, 18, 18, 8, 110);
+        c.gfx.fill_round(ox - (fw - ow) / 2, y - (fh - h) / 2, fw, fh, 18, rgba(0xffffff));
+      } else if (chosen && (i > 0 || active)) {
+        c.gfx.fill_round(ox, y, ow, h, 18, candidate);
+      }
+      Color fg = focused ? rgba(0x000000) : label(chosen ? Label::Primary : Label::Primary);
+      Color fg2 = focused ? rgba(0x000000, 160) : label(Label::Secondary);
+      Color ready = focused ? rgba(0x0a7a3d) : good;
+      // Counts on the right: "3 ready · 6", the ready part green.
+      std::string total = std::to_string(f.count);
+      int tw = measure(Text::Caption1, total);
+      int cy = y + (OPT_H - line_for(Text::Caption1)) / 2;
+      text(Text::Caption1, total, ox + ow - 18 - tw, cy, fg2);
+      int right = ox + ow - 18 - tw;
+      if (f.ready > 0 && f.ready < f.count) {
+        std::string r = std::to_string(f.ready) + (active || col == 2 ? " ready \xC2\xB7 " : " \xC2\xB7 ");
+        int rw = measure(Text::Caption1, r);
+        text(Text::Caption1, r, right - rw, cy, ready);
+        right -= rw;
+      } else if (f.ready > 0) {
+        int rw = measure(Text::Caption1, "all ready \xC2\xB7 ");
+        text(Text::Caption1, "all ready \xC2\xB7 ", right - rw, cy, ready);
+        right -= rw;
+      }
+      bool warn = f.key == "problems";
+      int lx = ox + 18;
+      if (warn) {
+        c.icons.draw(Icon::Warning, lx, y + (OPT_H - 26) / 2, 26, focused ? caution_ink : caution);
+        lx += 36;
+      }
+      text(Text::BodySemi, f.label, lx, y + (OPT_H - line_for(Text::BodySemi)) / 2, fg, right - lx - 10);
+      if (!f.note.empty()) {
+        bool off = has(f.note, "off");
+        text(Text::Caption2, f.note, ox + 18, y + OPT_H - 6, off ? (focused ? caution_ink : caution) : fg2, ow - 36);
+      }
+      y += h + OPT_GAP;
+    }
+  }
+
+  void draw_list() {
+    Ctx &c = ctx();
+    sheet(LIST_X, COLS_Y, LIST_W, COLS_B - COLS_Y, 1.0f);
+    int n = static_cast<int>(rows_.size());
+    text(Text::Caption1Semi, std::to_string(n) + (n == 1 ? " version" : " versions"), LIST_X + 28, COLS_Y + 22, label(Label::Secondary));
+    if (n > 1) text_right(Text::Caption1, "Best first", LIST_X + LIST_W - 28, COLS_Y + 22, label(Label::Tertiary));
     float sv = scroll_.value;
     for (auto &row : rows_) {
       float ry = LIST_TOP + row.y - sv;
-      int h = row.option < 0 ? HEADER_H : ROW;
-      if (ry < LIST_TOP - 8 || ry + h > LIST_TOP + LIST_H + 8) continue;  // only whole rows, inside the window
-      if (row.option < 0) {
-        bool problems = row.kind == "problems";
-        if (problems) c.icons.draw(Icon::Warning, RX, static_cast<int>(ry) + 14, 24, caution);
-        text(Text::Caption1, row.label, RX + (problems ? 34 : 0), static_cast<int>(ry) + 14, problems ? caution : label(Label::Secondary));
-      } else {
-        draw_version(options_[static_cast<size_t>(row.option)], static_cast<int>(ry), row.option == focus_index_ && !pills_focused_);
-      }
+      if (ry < LIST_TOP - 8 || ry + ROW > LIST_TOP + LIST_H + 8) continue;  // only whole rows, inside the window
+      draw_version(options_[static_cast<size_t>(row.option)], static_cast<int>(ry), zone_ == Zone::List && row.option == focus_index_);
     }
-    if (rows_.empty()) text(Text::Callout, "No other versions.", RX, LIST_TOP + 14, label(Label::Secondary));
-    if (sv + LIST_H < list_h_ - ROW_GAP) c.icons.draw(Icon::ChevronDown, RX + RW / 2 - 18, LIST_TOP + LIST_H - 4, 36, label(Label::Tertiary));
-    // What the keys do here, and where the versions came from.
-    int hx = RX;
-    if (pills_focused_) {
-      hx += draw_hint(hx, H - 82, "\xE2\x86\x90 \xE2\x86\x92", "Filter") + 32;
-      hx += draw_hint(hx, H - 82, "\xE2\x86\x93", "Versions") + 32;
-    } else {
-      hx += draw_hint(hx, H - 82, "OK", "Play") + 32;
-      hx += draw_hint(hx, H - 82, "\xE2\x86\x92", details_ ? "Hide details" : "Release details") + 32;
-    }
-    std::string found = ranking_.provider.empty() ? "" : "Found by " + ranking_.provider;
-    if (ranking_.total > 0) found += (found.empty() ? "" : " \xC2\xB7 ") + std::to_string(ranking_.total) + " versions";
-    text(Text::Caption2, found, hx + 8, H - 78, label(Label::Tertiary), std::max(0, RX + RW - hx - 8));
+    if (rows_.empty()) text(Text::Callout, "Nothing here.", LIST_X + 28, LIST_TOP + 14, label(Label::Secondary));
+    if (sv + LIST_H < list_h_ - ROW_GAP) c.icons.draw(Icon::ChevronDown, LIST_X + LIST_W / 2 - 18, LIST_TOP + LIST_H - 2, 36, label(Label::Tertiary));
+    if (zone_ == Zone::List) draw_hint(LIST_X + 28, COLS_B - 50, "\xE2\x86\x92", details_ ? "Hide details" : "Release details");
   }
 
-  // The filter strip: All, 4K, 1080p, 720p and below, May not play well.
-  void draw_pills() {
-    if (pills_.empty()) return;
-    std::vector<GlassButton> bs;
-    std::vector<int> at;
-    int total = 0;
-    for (size_t i = 0; i < pills_.size(); i++) {
-      bool selected = static_cast<int>(i) == pill_;
-      GlassButton b;
-      b.label = std::string(filter_name(pills_[i].filter)) + " \xC2\xB7 " + std::to_string(pills_[i].count);
-      b.pill = true;
-      b.focused = pills_focused_ && selected;
-      b.candidate = selected && !b.focused;
-      b.lift = lift_.value;
-      at.push_back(total);
-      total += glass_button_width(b) + theme::control_gap;
-      bs.push_back(b);
-    }
-    // More tabs than fit: the row slides so the chosen tab stays in view.
-    int shift = 0;
-    if (pill_ >= 0 && pill_ < static_cast<int>(bs.size())) {
-      int right = at[static_cast<size_t>(pill_)] + glass_button_width(bs[static_cast<size_t>(pill_)]);
-      if (right > RW) shift = right - RW;
-    }
-    for (size_t i = 0; i < bs.size(); i++) {
-      int x = RX + at[i] - shift, w = glass_button_width(bs[i]);
-      if (x < RX || x + w > RX + RW) continue;
-      draw_glass_button(x, PILLS_Y, bs[i]);
-    }
-  }
-
+  // The best version: frosted glass at rest, white only when focused (5.0:
+  // no white slab on an OLED unless it is where you are).
   void draw_best(const SourceOption &o, bool focused) {
     Ctx &c = ctx();
-    int x = RX, y = 120, w = RW, h = 290;
+    int x = BEST_X, y = BEST_Y, w = BEST_W, h = BEST_H;
     float lift = focused ? lift_.value : 0;
-    // Frosted at rest, white when focused (the frost stays put; the white lifts).
     sheet(x, y, w, h, 1.0f);
     if (focused) {
-      float k = 1.0f + 0.02f * lift;
+      float k = 1.0f + 0.03f * lift;
       int fw = static_cast<int>(w * k), fh = static_cast<int>(h * k);
       int fx = x - (fw - w) / 2, fy = y - (fh - h) / 2;
       c.gfx.shadow(fx, fy, fw, fh, glass_radius, 30, 14, static_cast<Uint8>(150 * lift));
@@ -823,68 +1043,67 @@ class SourcesScreen : public Screen {
     }
     Color fg = focused ? rgba(0x000000) : label(Label::Primary);
     Color fg2 = focused ? rgba(0x000000, 166) : label(Label::Secondary);
-    std::string kind = o.match == "same" ? "Same as your last episode" : o.match == "like" ? "Like your last episode"
-                       : "Best version";
-    if (o.ready == 1) kind += " \xC2\xB7 Ready now";
-    text(Text::Caption1, kind, x + 40, y + 36, fg2);
-    text(Text::Title2, o.headline, x + 40, y + 72, fg, w - 260);
-    text(Text::Body, o.line.empty() ? picture_words(o) + " \xC2\xB7 " + o.audio : o.line, x + 40, y + 146, fg2, w - 260);
-    paragraph(Text::Caption1, ranking_.why, x + 40, y + 190, fg2, w - 260, 2);
-    // Play affordance.
-    int r = 52, cx = x + w - 40 - r, cy = y + h / 2;
+    std::string kind = o.match == "same" ? "Same as your last episode" : o.match == "like" ? "Like your last episode" : "Best for this TV";
+    text(Text::Caption1Semi, kind, x + 32, y + 22, fg2, w - 220);
+    text(Text::Title3, o.headline, x + 32, y + 52, fg, w - 220);
+    std::vector<std::string> facts;
+    if (o.ready == 1) facts.push_back("Ready now");
+    facts.push_back(o.size);
+    facts.push_back(o.tier_label.empty() ? source_words(o.source) : o.tier_label);
+    if (!o.cautions.empty()) facts.push_back(o.cautions[0]);
+    text(Text::Caption1, join(facts), x + 32, y + 108, o.cautions.empty() ? fg2 : (focused ? caution_ink : caution), w - 220);
+    // Play.
+    int r = 40, cx = x + w - 32 - r, cy = y + h / 2;
     c.gfx.fill_circle(cx, cy, r, focused ? rgba(0x000000) : candidate);
-    c.gfx.triangle_right(cx - 16, cy - 20, 40, focused ? rgba(0xffffff) : label(Label::Primary));
-    if (!o.cautions.empty()) {
-      c.icons.draw(Icon::Warning, x + 40, y + h - 46, 26, focused ? caution_ink : caution);
-      text(Text::Caption2, o.warnings[0], x + 76, y + h - 46, focused ? caution_ink : caution, w - 360);
-    }
+    c.gfx.triangle_right(cx - 12, cy - 16, 32, focused ? rgba(0xffffff) : label(Label::Primary));
   }
 
   void draw_version(const SourceOption &o, int y, bool focused) {
     Ctx &c = ctx();
-    int x = RX, w = RW;
+    int x = LIST_X + 14, w = LIST_W - 28;
     if (focused) {
       c.gfx.shadow(x, y, w, ROW, 20, 18, 8, 120);
       c.gfx.fill_round(x, y, w, ROW, 20, rgba(0xffffff));
-    } else {
-      c.gfx.fill_round(x, y, w, ROW, 20, rgba(0xffffff, is_more(o) ? 13 : 26));
     }
     Color fg = focused ? rgba(0x000000) : label(o.excluded ? Label::Disabled : Label::Primary);
     Color fg2 = focused ? rgba(0x000000, 166) : label(o.excluded ? Label::Disabled : Label::Secondary);
-    if (is_more(o)) {  // "+N more": one quiet line
-      text(Text::BodySemi, o.headline, x + 28, y + (ROW - line_for(Text::BodySemi)) / 2, focused ? fg : label(Label::Secondary), w - 56);
-      return;
-    }
-    Availability a = availability(o);
-    int aw = measure(Text::Caption1, a.words);
-    int ax = x + w - 28 - aw;
-    if (!a.words.empty()) {
-      text(Text::Caption1, a.words, ax, y + (ROW - line_for(Text::Caption1)) / 2, focused && a.dot.r == caution.r ? caution_ink : fg2, 300);
-      c.gfx.fill_circle(ax - 18, y + ROW / 2, 6, a.dot);
-    }
-    int right = a.words.empty() ? x + w - 28 : ax - 44;
-    // 4.2: line one is what you will see and hear; line two is a row of chips
-    // saying what this release is: its source, its cut (IMAX, Extended…), its
-    // tags, its group, and whether it is a season pack.
-    int block = line_for(Text::BodySemi) + 8 + 34;
+    int right = x + w - 18;
+    // 5.0: line one says only what the columns have not already said.
+    int block = line_for(Text::BodySemi) + 8 + 36;
     int ty = y + (ROW - block) / 2;
-    std::string picture = o.picture_name.empty() ? picture_words(o) : o.picture_name;
-    text(Text::BodySemi, join({o.resolution, picture, o.audio}), x + 28, ty, fg, right - x - 28 - 110);
+    std::string picture = o.picture_name.empty() ? (o.picture.empty() ? "SDR" : o.picture) : o.picture_name;
+    std::vector<std::string> what;
+    if (keys_[0].empty() || keys_[0] == "sdr-remux" || keys_[0] == "problems" || keys_[0] == "lower") what.push_back(o.resolution);
+    if (keys_[1].empty()) what.push_back(picture);
+    what.push_back(o.audio);
+    int sw = o.size.empty() ? 0 : measure(Text::Caption1, o.size);
+    text(Text::BodySemi, join(what), x + 18, ty, fg, right - x - 18 - sw - 24);
     if (!o.size.empty()) text_right(Text::Caption1, o.size, right, ty + 3, fg2);
-    std::vector<std::string> chips;
-    if (o.match == "same") chips.push_back("Same as your last episode");
-    if (o.pack) chips.push_back("Season pack");
-    if (o.tier != "pack" && o.tier != "other" && !o.tier_label.empty()) chips.push_back(o.tier_label);
-    else if (!o.source.empty()) chips.push_back(source_words(o.source));
-    if (!o.cut.empty()) chips.push_back(o.cut);
-    for (auto &t : o.tags) chips.push_back(t);
-    if (!o.group.empty()) chips.push_back(o.group);
-    int cx = x + 28, cy = ty + line_for(Text::BodySemi) + 8;
+    struct Chip {
+      std::string text;
+      int kind;  // 0 plain, 1 ready, 2 caution
+    };
+    std::vector<Chip> chips;
+    if (o.ready == 1) chips.push_back({"Ready now", 1});
+    if (!o.cautions.empty()) chips.push_back({o.cautions[0], 2});
+    if (o.match == "same") chips.push_back({"Same as your last episode", 0});
+    if (o.pack) chips.push_back({"Season pack", 0});
+    if (keys_[2].empty() || dv_mode()) {
+      if (o.tier != "pack" && o.tier != "other" && !o.tier_label.empty()) chips.push_back({o.tier_label, 0});
+      else if (!o.source.empty()) chips.push_back({source_words(o.source), 0});
+    }
+    if (!o.cut.empty()) chips.push_back({o.cut, 0});
+    for (auto &t : o.tags) chips.push_back({t, 0});
+    if (!o.group.empty()) chips.push_back({o.group, 0});
+    int cx = x + 18, cy = ty + line_for(Text::BodySemi) + 8;
     for (auto &chip : chips) {
-      int cw = measure(Text::Caption2, chip) + 24;
+      int cw = measure(Text::Caption2, chip.text) + 24;
       if (cx + cw > right) break;
-      c.gfx.fill_round(cx, cy, cw, 34, 8, focused ? rgba(0x000000, 28) : rgba(0xffffff, 30));
-      text(Text::Caption2, chip, cx + 12, cy + (34 - line_for(Text::Caption2)) / 2, focused ? rgba(0x000000, 200) : label(Label::Secondary));
+      Color bg = chip.kind == 1 ? (focused ? rgba(0xd6f7e4) : rgba(0x50d28c, 60)) : focused ? rgba(0x000000, 28) : rgba(0xffffff, 34);
+      Color ink = chip.kind == 1 ? (focused ? rgba(0x0a7a3d) : rgba(0xa6f3c6)) : chip.kind == 2 ? (focused ? caution_ink : caution)
+                                                                        : focused ? rgba(0x000000, 200) : label(Label::Secondary);
+      c.gfx.fill_round(cx, cy, cw, 36, 18, bg);
+      text(Text::Caption2, chip.text, cx + 12, cy + (36 - line_for(Text::Caption2)) / 2, ink);
       cx += cw + 8;
     }
   }
@@ -1065,18 +1284,17 @@ class SourcesScreen : public Screen {
   std::vector<SourceOption> options_;
   std::vector<ListRow> rows_;
   std::vector<std::string> section_of_;  // per option: the service's section ("best", "continue", "others", "problems")
-  struct Pill {
-    Filter filter;
-    int count;
-    std::string cut;  // an edition pill (2.8), else ""
-  };
   Ranking all_;  // the service's whole answer; ranking_ is the chosen cut's view of it
   std::string cut_;
   std::set<std::string> expanded_;  // tiers whose folded versions are shown
-  std::vector<Pill> pills_;
-  int pill_ = 0;
-  bool pills_focused_ = false;
-  Filter filter_ = Filter::All;
+  Zone zone_ = Zone::Best;
+  int col_ = 0;
+  std::vector<Facet> columns_[3];
+  int sel_[3] = {0, 0, 0};
+  std::string keys_[3];
+  std::vector<Toggle> toggles_;
+  int toggle_ = 0;
+  bool both_scopes_ = false, season_ = false, ready_only_ = false;
   int list_h_ = 0;
   int sheet_focus_ = 0;  // starting sheet: 0 Cancel, 1 Other versions
   int focus_index_ = 0, prev_index_ = -1;

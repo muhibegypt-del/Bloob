@@ -495,7 +495,9 @@ class BrowseScreen : public Screen {
       else c.redraw_at(pending_at_ + dwell_ms);
     }
     // The featured title pages on by itself while nobody is using the remote.
-    if (state_ == State::Ready && hero_ && featured_.size() > 1 && !c.reduce_motion && !speech().on()) {  // no slideshow while focus is read aloud
+    // 5.0: never while focus rests on the banner's own buttons: what Play starts must not
+    // change under the viewer (Apple: never change focus without the viewer acting).
+    if (state_ == State::Ready && hero_ && tabs_ && featured_.size() > 1 && !c.reduce_motion && !speech().on()) {  // no slideshow while focus is read aloud
       if (c.now - idle_since_ >= kAutoAdvanceMs) {
         idle_since_ = c.now;
         feature_ = (feature_ + 1) % static_cast<int>(featured_.size());
@@ -709,10 +711,14 @@ class BrowseScreen : public Screen {
       cs.pass = pass;
       draw_card(x, y, cs);
       if (focused && (pass == CardPass::All || pass == CardPass::Text)) {
-        int ly = y + card_h + 24;  // 14 for the focused card's growth, then 10 [EoA K8]
-        text(Text::Caption1, it.name, x, ly, label(Label::Primary, alpha), card_w + 40);
+        // 5.0: one line under the focused card (title, then year and kind), so
+        // it never reaches the next shelf's header (Apple tvOS layout: focused
+        // items must not overlap other content).
+        int ly = y + card_h + 22;  // 9 for the focused card's 1.1x growth, then 13
         std::string under = row.continue_row() ? sub : join({it.year, it.series() ? "Series" : "Film"});
-        if (!under.empty()) text(Text::Caption2, under, x, ly + 34, label(Label::Secondary, alpha), card_w + 40);
+        int max_w = STRIDE * 2 - card_gap;
+        int tw = text(Text::Caption1Semi, it.name, x - card_grow / 2, ly, label(Label::Primary, alpha), under.empty() ? max_w : max_w * 2 / 3);
+        if (!under.empty()) text(Text::Caption2, under, x - card_grow / 2 + tw + 14, ly + 1, label(Label::Secondary, alpha), max_w - tw - 14);
       }
     }
   }

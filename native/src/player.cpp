@@ -1643,7 +1643,7 @@ class PlayerScreen : public Screen {
   static constexpr int kControlsGap = 22;                        // bar to controls
   static constexpr int kControlGap = 25;                         // between controls
   static constexpr int kHeaderGap = 12;                          // header to subheader
-  static constexpr int kGradientH = 384;                         // protection gradient [EoA V15]
+  static constexpr int kGradientH = 480;                         // 5.0: taller and darker, so text stays readable on bright pictures
   const Color kGray92 = rgba(0xebebeb);                          // header colour [EoA V16]
 
   int track_y() const { return H - kTrackBottom - kTrackH; }
@@ -1654,7 +1654,7 @@ class PlayerScreen : public Screen {
   void draw_hud(float a, Phase phase) {
     bool reduced = hud_mode_ == HudMode::Reduced;
     // Black 0 → 60% behind the transport [EoA V15].
-    ctx().gfx.gradient_v(0, H - kGradientH, W, kGradientH, rgba(0x000000), 0, static_cast<Uint8>(153 * a));
+    ctx().gfx.gradient_v(0, H - kGradientH, W, kGradientH, rgba(0x000000), 0, static_cast<Uint8>(204 * a));  // 0 to 80%
     if (!reduced) {
       draw_clock_pill(a, phase);
       draw_controls(a, phase, controls_y());

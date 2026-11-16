@@ -414,6 +414,9 @@ function view(ranked, prefs) {
     // version Bloob's engine converts (4.0) is signalled as the 8.1 it becomes).
     family: ranked.picture.family,
     dolbyVision: ranked.picture.dolbyVision === 'p7' ? (ranked.picture.discConverted ? 'p8' : '') : ranked.picture.dolbyVision,
+    // 5.0: the profile the release carries, as read from its name, for the
+    // versions screen's "Which Dolby Vision" column ('p5', 'p7', 'p8' or '').
+    dvProfile: dolbyVisionProfile(c),
     container: (c.claims || {}).container || '',
     sources: (c.providers || [c.provider]).filter(Boolean),
   });

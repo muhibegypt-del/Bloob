@@ -759,6 +759,7 @@ class App {
     bar.h = bh;
     bar.radius = bh / 2;
     bar.alpha = a;
+    bar.dim = 0.35f;  // 5.0: tab labels stay readable over bright skies
     top()->shell_glass(bar);
     int x = bx + pad;
     for (int i = 0; i < kTabCount; i++)

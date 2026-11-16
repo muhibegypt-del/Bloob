@@ -583,15 +583,24 @@ class DetailsScreen : public Screen {
         c.gfx.fill_circle(box.x + box.w - 30, box.y + 30, 18, with_alpha(rgba(0x000000), 170));
         c.icons.draw(Icon::Check, box.x + box.w - 43, box.y + 17, 26, rgba(0xffffff));
       }
-      // Under the card: number, title, then a short summary once the page has risen.
-      // The 16:9 lockup with description [EoA K9, inferred]: eyebrow Caption3,
-      // title Caption1, description Caption2 in up to 5 lines, 2 apart; text 4
-      // below the card at rest, 24 when focused (growth 14 + separation 10).
-      int ty = ey + episode_h + (focused ? 24 : 4);
-      text(Text::Caption3, e.season == 0 ? "Special" : "Episode " + std::to_string(e.episode), x, ty, label(Label::Secondary));
-      ty += line_for(Text::Caption3) + 2;
-      text(Text::Caption1, e.title.empty() ? "Episode " + std::to_string(e.episode) : e.title, x, ty, label(focused ? Label::Primary : Label::Secondary), episode_w);
-      if (p > 0.05f) paragraph(Text::Caption2, e.overview, x, ty + line_for(Text::Caption1) + 2, label(Label::Secondary, p * (focused ? 1.0f : 0.75f)), episode_w, 5);
+      // Under the card (5.0): at rest just the number and title on one line; the
+      // focused episode alone adds its runtime and a short summary, so the row
+      // never becomes a wall of text (Microsoft: TV density close to a phone's;
+      // Google TV: no long descriptions on cards).
+      std::string name = e.title.empty() ? "Episode " + std::to_string(e.episode) : e.title;
+      std::string num = e.season == 0 ? "Special" : std::to_string(e.episode);
+      if (!focused) {
+        int ty = ey + episode_h + 12;
+        int nw = text(Text::Caption1, num, x, ty, label(Label::Secondary));
+        text(Text::Caption1Semi, name, x + nw + 14, ty, label(Label::Secondary), episode_w - nw - 14);
+      } else {
+        int ty = ey + episode_h + 22;
+        std::string eyebrow = e.season == 0 ? "Special" : "Episode " + std::to_string(e.episode);
+        text(Text::Caption2, eyebrow, x, ty, label(Label::Secondary));
+        ty += line_for(Text::Caption2) + 2;
+        text(Text::BodyBold, name, x, ty, label(Label::Primary), episode_w + 30);
+        if (p > 0.05f) paragraph(Text::Caption1, e.overview, x, ty + line_for(Text::BodyBold) + 4, label(Label::Secondary, p), episode_w + 30, 3);
+      }
     }
     if (count > 4 && hs + 4 < count) c.icons.draw(Icon::ChevronRight, W - 64, ey + episode_h / 2 - 20, 40, label(Label::Tertiary));
 
@@ -599,7 +608,7 @@ class DetailsScreen : public Screen {
     if (p > 0.6f) {
       float a = (p - 0.6f) / 0.4f;
       int ay = H - safe_y - 96;
-      c.gfx.fill_rect(X0, ay - 26, W - 2 * X0, 1, fade(frost_hairline, a));
+      // 5.0: no divider line above (the owner removed long lines in 4.1.1).
       std::vector<std::string> about = {meta_line(meta_.item)};
       for (auto &sc : meta_.item.scores) about.push_back(sc.label);
       if (meta_.item.scores.empty() && !meta_.item.rating.empty()) about.push_back("IMDb " + meta_.item.rating);

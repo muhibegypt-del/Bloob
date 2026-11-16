@@ -39,7 +39,7 @@ const Color problem = rgba(0xff453a);              // SystemRed [EoA C11]
 constexpr int safe_x = 80, safe_y = 60;            // [EoA S1, S2]
 constexpr int card_w = 320, card_h = 180, card_gap = 40;  // 16:9 cards, tvOS 5-column grid
 constexpr int card_radius = 20;                    // grid preset D, radius M [EoA K1]
-constexpr int card_grow = 50;                      // focused cards grow 50 wider, height in proportion [EoA K2]
+constexpr int card_grow = 32;                      // 5.0: focused cards grow 1.1x (Google TV focus scale 1.025-1.1)
 constexpr int episode_w = 410, episode_h = 231;    // 4-column grid item (inferred episode card) [EoA K3]
 constexpr int glass_radius = 32, badge_radius = 6;
 constexpr int button_grow = 8;                     // focused buttons grow 8 wider; no scale [EoA B4]

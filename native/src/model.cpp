@@ -153,6 +153,7 @@ static SourceOption parse_option(const Json &j) {
   o.group = j["group"].as_string();
   std::string dv = j["dolbyVision"].as_string();
   o.dolby_vision = dv == "p8" ? 8 : dv == "p5" ? 5 : 0;
+  o.dv_profile = j["dvProfile"].as_string();
   // The indexes that found it, by name ("Found by SeaDex, Nyaa").
   static const std::map<std::string, std::string> kNames = {
       {"torrentio", "Torrentio"}, {"torrentsdb", "TorrentsDB"}, {"stremthru", "StremThru"}, {"apibay", "The Pirate Bay"},
